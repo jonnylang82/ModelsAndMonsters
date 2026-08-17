@@ -126,6 +126,7 @@ public sealed class TurnCoordinator
 
         character.BeginTurn(_prompts.Render("character.turn", new Dictionary<string, string?>
         {
+            ["name"] = character.Name,
             ["state"] = selfState,
             ["narration"] = pendingNarration.Count == 0
                 ? "Nothing has changed since you last looked."
@@ -230,6 +231,14 @@ public sealed class TurnCoordinator
                             acceptedAction = attempt.Action?.Describe();
                         }
 
+                        break;
+                    }
+
+                    case CharacterTools.EndTurnName:
+                    {
+                        await HandleEndTurnAsync(character, call, cancellationToken).ConfigureAwait(false);
+                        turnEnded = true;
+                        outcome = TurnOutcome.EndedByCharacter;
                         break;
                     }
 
@@ -350,6 +359,74 @@ public sealed class TurnCoordinator
 
         // Private: this answer enters only the asking character's history.
         RecordToolResult(character, call, answer);
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // end_turn
+    // -----------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// A character choosing to do nothing. No engine action is involved, but the world still has to
+    /// describe it so the other character can perceive that they held back.
+    /// </summary>
+    private async Task HandleEndTurnAsync(
+        CharacterAgent character,
+        FunctionCallContent call,
+        CancellationToken cancellationToken)
+    {
+        var reason = ToolArguments.GetString(call, CharacterTools.ReasonParameter)
+            ?? "They do nothing.";
+
+        _trace.Emit(TraceEventType.ToolCallDispatched, new ToolCallDispatchPayload
+        {
+            AgentName = character.Name,
+            CallId = call.CallId,
+            ToolName = call.Name,
+            Arguments = ChatTraceMapper.MapArguments(call.Arguments),
+            DispatchDecision = "Character chose to do nothing. The turn ends with no engine action."
+        });
+
+        _console.CharacterPasses(character.Name, reason);
+
+        _trace.Emit(TraceEventType.CharacterPassed, new CharacterPassedPayload
+        {
+            CharacterId = character.CharacterId,
+            CharacterName = character.Name,
+            Reason = reason
+        });
+
+        var stateText = WorldStateFormatter.FormatAuthoritativeState(_engine.State);
+        var narration = await _dungeonMaster
+            .NarratePassAsync(character.Name, reason, stateText, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (string.IsNullOrWhiteSpace(narration))
+        {
+            narration = $"{character.Name} does nothing.";
+        }
+
+        var entry = _narrationLog.Record("character-passed", narration);
+        entry.MarkDeliveredTo(character.CharacterId);
+
+        _trace.Emit(TraceEventType.Narration, new NarrationPayload
+        {
+            Purpose = "character-passed",
+            StateSuppliedToDungeonMaster = stateText,
+            ContextSuppliedToDungeonMaster = reason,
+            Narration = narration,
+            NarrationId = entry.Id
+        }, DungeonMasterAgent.AgentIdentifier);
+
+        _trace.Emit(TraceEventType.NarrationDelivered, new NarrationDeliveredPayload
+        {
+            NarrationId = entry.Id,
+            Narration = narration,
+            DeliveredTo = [character.CharacterId],
+            DeliveryMechanism = "end_turn tool result"
+        });
+
+        _console.DungeonMaster(narration);
+        RecordToolResult(character, call, narration);
     }
 
     // -----------------------------------------------------------------------------------------
@@ -661,21 +738,59 @@ public sealed class TurnCoordinator
     }
 
     /// <summary>Captures the tool arguments and turns them into a structured engine action.</summary>
-    private static GameAction BuildAction(FunctionCallContent call, CharacterAgent character) => call.Name switch
+    private GameAction BuildAction(FunctionCallContent call, CharacterAgent character)
     {
-        DungeonMasterTools.AttackCharacterName => new AttackCharacterAction(
-            // The DM is adjudicating this character's intent, so an omitted attacker is unambiguous.
-            ToolArguments.GetString(call, DungeonMasterTools.AttackerParameter) ?? character.Name,
-            ToolArguments.GetRequiredString(call, DungeonMasterTools.TargetParameter),
-            ToolArguments.GetRequiredString(call, DungeonMasterTools.WeaponParameter)),
+        switch (call.Name)
+        {
+            case DungeonMasterTools.AttackCharacterName:
+                return new AttackCharacterAction(
+                    ResolveActingCharacter(call, DungeonMasterTools.AttackerParameter, character),
+                    ToolArguments.GetRequiredString(call, DungeonMasterTools.TargetParameter),
+                    ToolArguments.GetRequiredString(call, DungeonMasterTools.WeaponParameter));
 
-        DungeonMasterTools.UseItemName => new UseItemAction(
-            ToolArguments.GetString(call, DungeonMasterTools.ActorParameter) ?? character.Name,
-            ToolArguments.GetRequiredString(call, DungeonMasterTools.ItemParameter),
-            ToolArguments.GetString(call, DungeonMasterTools.TargetParameter)),
+            case DungeonMasterTools.UseItemName:
+                return new UseItemAction(
+                    ResolveActingCharacter(call, DungeonMasterTools.ActorParameter, character),
+                    ToolArguments.GetRequiredString(call, DungeonMasterTools.ItemParameter),
+                    ToolArguments.GetString(call, DungeonMasterTools.TargetParameter));
 
-        _ => throw new ArgumentException($"No engine action is mapped to tool '{call.Name}'.")
-    };
+            default:
+                throw new ArgumentException($"No engine action is mapped to tool '{call.Name}'.");
+        }
+    }
+
+    /// <summary>
+    /// The actor of an adjudicated action is always the character whose turn it is.
+    /// </summary>
+    /// <remarks>
+    /// This is a structural fact of the turn system, not an interpretation of intent, so the harness
+    /// asserts it rather than trusting the argument. It matters because a character that loses track of
+    /// its own identity will describe itself by the wrong name, and the Dungeon Master translates that
+    /// confusion faithfully — which previously produced actions where the attacker was also the target.
+    /// Any correction is traced, so the DM's original argument is never silently discarded.
+    /// </remarks>
+    private string ResolveActingCharacter(FunctionCallContent call, string parameter, CharacterAgent character)
+    {
+        var named = ToolArguments.GetString(call, parameter);
+
+        var namesActingCharacter = named is null
+            || string.Equals(named, character.Name, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(named, character.CharacterId, StringComparison.OrdinalIgnoreCase);
+
+        if (!namesActingCharacter)
+        {
+            _trace.Emit(TraceEventType.AdjudicationCorrected, new AdjudicationCorrectionPayload
+            {
+                ToolName = call.Name,
+                Parameter = parameter,
+                DungeonMasterValue = named,
+                CorrectedValue = character.Name,
+                Justification = $"Only {character.Name} may act on {character.Name}'s turn."
+            }, DungeonMasterAgent.AgentIdentifier);
+        }
+
+        return character.Name;
+    }
 
     // -----------------------------------------------------------------------------------------
     // Trace helpers
@@ -728,7 +843,7 @@ public sealed class TurnCoordinator
 
     private void RecordDungeonMasterToolResult(FunctionCallContent call, object? result)
     {
-        _dungeonMaster.AppendToolResult(call, result);
+        _dungeonMaster.AppendAdjudicationToolResult(call, result);
 
         _trace.Emit(TraceEventType.ToolCallResult, new ToolCallResultPayload
         {

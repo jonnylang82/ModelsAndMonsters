@@ -53,5 +53,26 @@ public static class CharacterTools
         """),
         returnJsonSchema: null);
 
-    public static readonly IReadOnlyList<AITool> All = [AskDm, TakeAction];
+    /// <summary>
+    /// Lets a character choose to do nothing. Without it, a character who has decided to hold back,
+    /// give up or wait has no way to say so, and burns its whole turn on attempts the world refuses.
+    /// </summary>
+    public static readonly AIFunctionDeclaration EndTurn = AIFunctionFactory.CreateDeclaration(
+        EndTurnName,
+        "Choose to do nothing this turn. Use this when holding still, waiting, giving up or standing down is genuinely what you want to do. This ends your turn.",
+        ToolSchema.Parse($$"""
+        {
+          "type": "object",
+          "properties": {
+            "{{ReasonParameter}}": {
+              "type": "string",
+              "description": "Why you do nothing, in your own words. For example: 'I have no strength left, and I stay where I am.'"
+            }
+          },
+          "required": ["{{ReasonParameter}}"]
+        }
+        """),
+        returnJsonSchema: null);
+
+    public static readonly IReadOnlyList<AITool> All = [AskDm, TakeAction, EndTurn];
 }

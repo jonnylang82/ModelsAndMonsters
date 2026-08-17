@@ -44,6 +44,9 @@ public enum TurnOutcome
     /// <summary>The character attempted something that took effect.</summary>
     ActionResolved,
 
+    /// <summary>The character deliberately chose to do nothing. A decision, not a failure.</summary>
+    EndedByCharacter,
+
     /// <summary>A harness limit stopped the turn before anything took effect.</summary>
     AbandonedAtLimit,
 

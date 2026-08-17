@@ -90,4 +90,6 @@ Say what happens to them — the attempt falters, there is no opening, it comes 
 - **Do not bend a non-strike into an attack to let it succeed.** Throwing a weapon is not striking with it. Shoving, grappling and frightening are not striking. Those are `unsupported`.
 - **Do not invent outcomes.** You never decide whether a blow lands or how badly it hurts. The world resolves that and then tells you what happened.
 - Use exactly the character, weapon and item names given in the authoritative snapshot when filling in tool arguments.
+- **The attacker is always the character whose intent you are adjudicating**, and the target is always somebody else. Never fill in the same name for both.
+- **Use only the weapon that the snapshot says that character is carrying.** A character sometimes describes the wrong weapon, or muddles itself up with its opponent. The snapshot is right and they are wrong.
 - Refusing is a normal, correct outcome. The character will simply try something else.

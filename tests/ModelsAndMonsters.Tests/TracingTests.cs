@@ -60,7 +60,7 @@ public sealed class TracingTests
         Assert.Equal(20, request.RequestedOptions.TopK);
         Assert.Equal(42, request.RequestedOptions.Seed);
 
-        Assert.Equal(2, request.Tools.Count);
+        Assert.Equal(3, request.Tools.Count);
         var askDm = request.Tools.First(t => t.Name == CharacterTools.AskDmName);
         Assert.NotNull(askDm.JsonSchema);
         Assert.True(askDm.JsonSchema!.Value.GetProperty("properties").TryGetProperty("question", out _));

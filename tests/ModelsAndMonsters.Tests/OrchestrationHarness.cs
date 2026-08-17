@@ -40,6 +40,8 @@ internal sealed class RecordingConsole : IGameConsole
 
     public void CharacterActs(string characterName, string intent) => Lines.Add($"acts:{characterName}:{intent}");
 
+    public void CharacterPasses(string characterName, string reason) => Lines.Add($"passes:{characterName}:{reason}");
+
     public void CharacterRefused(string characterName, string explanation) => Lines.Add($"refused:{characterName}:{explanation}");
 
     public void Notice(string text) => Lines.Add($"notice:{text}");
@@ -79,7 +81,8 @@ internal sealed class OrchestrationHarness
         DungeonMaster = new DungeonMasterAgent(
             Profile(DungeonMasterAgent.AgentIdentifier),
             new TracingChatClient(dungeonMasterClient, Profile(DungeonMasterAgent.AgentIdentifier), Trace),
-            SharedPrompts);
+            SharedPrompts,
+            Limits.IsolateAdjudicationContext);
 
         Hero = new CharacterAgent(
             heroDefinition,

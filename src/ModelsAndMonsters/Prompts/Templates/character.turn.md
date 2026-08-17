@@ -4,4 +4,8 @@ Current situation:
 
 {{narration}}
 
-It is your turn. Ask the Dungeon Master anything you truly need to know, then attempt one thing.
+---
+
+You are {{name}}. Everything above about "{{name}}" describes **you**; anyone else named is somebody else, and you carry only the weapon and belongings listed as yours.
+
+It is your turn. Ask the Dungeon Master anything you truly need to know, then either attempt one thing or end your turn.

@@ -7,6 +7,22 @@ using ModelsAndMonsters.Configuration;
 using ModelsAndMonsters.Orchestration;
 using ModelsAndMonsters.Presentation;
 using ModelsAndMonsters.Prompts;
+using ModelsAndMonsters.Tracing;
+
+// Re-render report.md for a run that already happened, without starting a simulation.
+if (args is ["--report", var runDirectory, ..])
+{
+    try
+    {
+        Console.WriteLine($"Report written to {RunReportWriter.Write(runDirectory)}");
+        return 0;
+    }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+    {
+        Console.Error.WriteLine($"Could not write a report for '{runDirectory}': {ex.Message}");
+        return 1;
+    }
+}
 
 var builder = Host.CreateApplicationBuilder(args);
 

@@ -63,7 +63,7 @@ public sealed class SimulationRunner
         var harness = _options.Harness;
         var paths = RunPaths.Create(harness.RunOutputDirectory, startedAt);
 
-        using var sink = new JsonlTraceSink(paths.TraceJsonl);
+        var sink = new JsonlTraceSink(paths.TraceJsonl);
         var trace = new ExperimentTrace(paths.RunId, sink);
 
         var initialState = ScenarioFactory.CreateInitialState(_scenario);
@@ -81,7 +81,10 @@ public sealed class SimulationRunner
         try
         {
             var dungeonMaster = new DungeonMasterAgent(
-                dungeonMasterProfile, CreateTracingClient(dungeonMasterProfile, trace, clients), _prompts);
+                dungeonMasterProfile,
+                CreateTracingClient(dungeonMasterProfile, trace, clients),
+                _prompts,
+                harness.IsolateAdjudicationContext);
 
             var characterPrompts = new CharacterPromptFactory(_prompts);
             var hero = new CharacterAgent(
@@ -129,6 +132,26 @@ public sealed class SimulationRunner
             {
                 client.Dispose();
             }
+
+            // The report is rendered from the finished artefacts, so the trace file must be closed
+            // first. It is written even when the run failed, because a failed run is still evidence.
+            sink.Dispose();
+            WriteReport(paths);
+        }
+    }
+
+    private void WriteReport(RunPaths paths)
+    {
+        try
+        {
+            var reportPath = RunReportWriter.Write(paths.Directory);
+            _console.Notice($"Report written to {reportPath}");
+        }
+        catch (Exception ex)
+        {
+            // Reporting is a convenience over artefacts that are already safely on disk. It must never
+            // replace the real outcome of the run, including a real exception on its way out.
+            _console.Notice($"Could not write report.md: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -154,6 +177,7 @@ public sealed class SimulationRunner
             cancellationToken).ConfigureAwait(false);
 
         var turnNumber = 0;
+        var idleRounds = 0;
 
         while (true)
         {
@@ -178,6 +202,7 @@ public sealed class SimulationRunner
             _console.RoundHeader(round);
 
             // Fixed order, no initiative: Hero then Monster.
+            var anythingHappened = false;
             foreach (var character in new[] { hero, monster })
             {
                 if (IsEncounterOver(engine.State, out _))
@@ -186,12 +211,28 @@ public sealed class SimulationRunner
                 }
 
                 turnNumber++;
-                await coordinator.RunTurnAsync(character, round, turnNumber, cancellationToken).ConfigureAwait(false);
+                var turn = await coordinator.RunTurnAsync(character, round, turnNumber, cancellationToken)
+                    .ConfigureAwait(false);
+
+                anythingHappened |= turn.Outcome == TurnOutcome.ActionResolved;
             }
 
             if (IsEncounterOver(engine.State, out var fallen))
             {
                 terminalCondition = $"{fallen!.Name} was defeated.";
+                break;
+            }
+
+            idleRounds = anythingHappened ? 0 : idleRounds + 1;
+            if (idleRounds >= harness.MaxConsecutiveIdleRounds)
+            {
+                terminalCondition = $"Stalemate: {idleRounds} consecutive rounds in which nothing took effect.";
+                trace.Emit(TraceEventType.HarnessLimitReached, new HarnessLimitPayload
+                {
+                    Limit = nameof(HarnessOptions.MaxConsecutiveIdleRounds),
+                    Value = harness.MaxConsecutiveIdleRounds,
+                    Effect = "The encounter was stopped because neither character could change anything."
+                }, "harness");
                 break;
             }
 

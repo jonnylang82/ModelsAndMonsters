@@ -19,6 +19,9 @@ public interface IGameConsole
 
     void CharacterActs(string characterName, string intent);
 
+    /// <summary>A character choosing to do nothing this turn.</summary>
+    void CharacterPasses(string characterName, string reason);
+
     /// <summary>The Dungeon Master telling a character an attempt did not happen.</summary>
     void CharacterRefused(string characterName, string explanation);
 

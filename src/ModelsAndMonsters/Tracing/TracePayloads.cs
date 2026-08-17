@@ -247,6 +247,32 @@ public sealed record DungeonMasterAnswerPayload
     public required string Answer { get; init; }
 }
 
+public sealed record CharacterPassedPayload
+{
+    public required string CharacterId { get; init; }
+
+    public required string CharacterName { get; init; }
+
+    public required string Reason { get; init; }
+}
+
+/// <summary>
+/// Records where the harness overrode a Dungeon Master tool argument on structural grounds, so the
+/// correction is never invisible in the experiment.
+/// </summary>
+public sealed record AdjudicationCorrectionPayload
+{
+    public required string ToolName { get; init; }
+
+    public required string Parameter { get; init; }
+
+    public string? DungeonMasterValue { get; init; }
+
+    public required string CorrectedValue { get; init; }
+
+    public required string Justification { get; init; }
+}
+
 public sealed record DmAdjudicationPayload
 {
     public required string CharacterId { get; init; }

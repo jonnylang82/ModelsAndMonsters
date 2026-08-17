@@ -32,6 +32,12 @@ public enum TraceEventType
     CharacterQuestion,
     DungeonMasterAnswer,
 
+    /// <summary>A character deliberately chose to do nothing with its turn.</summary>
+    CharacterPassed,
+
+    /// <summary>The harness corrected a tool argument the Dungeon Master got structurally wrong.</summary>
+    AdjudicationCorrected,
+
     /// <summary>The DM's ruling on a character's natural-language intent.</summary>
     DmAdjudication,
 

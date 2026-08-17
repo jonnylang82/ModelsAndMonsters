@@ -86,5 +86,20 @@ public sealed class HarnessOptions
     /// <summary>Extra attempts allowed when the DM answers an adjudication without calling a tool.</summary>
     public int MaxAdjudicationRetries { get; set; } = 1;
 
+    /// <summary>
+    /// When true, the Dungeon Master adjudicates on a conversation separate from its narration
+    /// history. Measured to matter a great deal: with narration history attached, one traced
+    /// adjudication was misclassified every time; on a clean context it was correct every time.
+    /// Set false to compare the two.
+    /// </summary>
+    public bool IsolateAdjudicationContext { get; set; } = true;
+
+    /// <summary>
+    /// How many consecutive rounds may pass with nothing taking effect before the encounter is
+    /// declared a stalemate. Stops two characters grinding to the round limit when neither can, or
+    /// wants to, do anything the world can resolve.
+    /// </summary>
+    public int MaxConsecutiveIdleRounds { get; set; } = 2;
+
     public string RunOutputDirectory { get; set; } = "runs";
 }

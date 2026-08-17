@@ -94,7 +94,7 @@ public sealed class ModelConfigurationTests
             Assert.IsNotAssignableFrom<AIFunction>(tool);
         }
 
-        Assert.Equal(5, allTools.Count);
+        Assert.Equal(6, allTools.Count);
     }
 
     [Fact]

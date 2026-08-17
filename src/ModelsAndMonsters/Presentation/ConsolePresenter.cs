@@ -28,6 +28,9 @@ public sealed class ConsolePresenter : IGameConsole
     public void CharacterActs(string characterName, string intent) =>
         Block(ConsoleColor.Green, $"{characterName}:", ConsoleColor.White, Quote(intent));
 
+    public void CharacterPasses(string characterName, string reason) =>
+        Block(ConsoleColor.DarkGreen, $"{characterName} holds back:", ConsoleColor.Gray, Quote(reason));
+
     public void CharacterRefused(string characterName, string explanation) =>
         Block(ConsoleColor.Cyan, $"DM (to {characterName}):", ConsoleColor.DarkYellow, explanation);
 

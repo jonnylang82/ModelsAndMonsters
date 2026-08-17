@@ -1,6 +1,7 @@
 using Microsoft.Extensions.AI;
 using ModelsAndMonsters.Agents;
 using ModelsAndMonsters.Configuration;
+using ModelsAndMonsters.Engine;
 using ModelsAndMonsters.Orchestration;
 using ModelsAndMonsters.Tracing;
 
@@ -258,7 +259,7 @@ public sealed class TurnOrchestrationTests
     }
 
     [Fact]
-    public async Task Characters_are_given_only_their_own_two_tools_and_never_engine_tools()
+    public async Task Characters_are_given_only_their_own_three_tools_and_never_engine_tools()
     {
         var harness = new OrchestrationHarness(
             AcceptedAttackDungeonMaster(),
@@ -268,7 +269,9 @@ public sealed class TurnOrchestrationTests
         await harness.RunHeroTurn();
 
         var heroTools = harness.HeroClient.RequestOptions[0]!.Tools!.Select(t => t.Name).ToList();
-        Assert.Equal([CharacterTools.AskDmName, CharacterTools.TakeActionName], heroTools);
+        Assert.Equal(
+            [CharacterTools.AskDmName, CharacterTools.TakeActionName, CharacterTools.EndTurnName],
+            heroTools);
 
         var dungeonMasterTools = harness.DungeonMasterClient.RequestOptions[0]!.Tools!.Select(t => t.Name).ToList();
         Assert.Equal(
@@ -363,6 +366,169 @@ public sealed class TurnOrchestrationTests
         Assert.Contains(
             harness.Sink.Payloads<ToolCallErrorPayload>(TraceEventType.ToolCallError),
             e => e.AgentName == "DungeonMaster" && e.ToolName == "(none)");
+    }
+
+    [Fact]
+    public async Task A_character_can_end_its_turn_without_acting()
+    {
+        var harness = new OrchestrationHarness(
+            new ScriptedChatClient(ScriptedChatClient.Text("Aric lowers his blade and stands quite still.")),
+            new ScriptedChatClient(ScriptedChatClient.Call("h-1", CharacterTools.EndTurnName,
+                ("reason", "I have no strength left, and I stay where I am."))),
+            new ScriptedChatClient());
+
+        var result = await harness.RunHeroTurn();
+
+        Assert.Equal(TurnOutcome.EndedByCharacter, result.Outcome);
+        Assert.Equal(0, result.ActionAttempts);
+
+        // Choosing to do nothing reaches no engine action and changes nothing.
+        Assert.Empty(harness.Sink.OfType(TraceEventType.EngineAction));
+        Assert.Equal(0, harness.Engine.State.Version);
+
+        var passed = Assert.Single(harness.Sink.Payloads<CharacterPassedPayload>(TraceEventType.CharacterPassed));
+        Assert.Equal("Aric", passed.CharacterName);
+        Assert.Contains("no strength left", passed.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Ending_a_turn_is_narrated_so_the_other_character_can_perceive_it()
+    {
+        const string pass = "Aric lowers his blade and stands quite still, watching.";
+
+        var harness = new OrchestrationHarness(
+            new ScriptedChatClient(
+                ScriptedChatClient.Text(pass),
+                ScriptedChatClient.Call("dm-1", DungeonMasterTools.AttackCharacterName,
+                    ("attacker", "Grik"), ("target", "Aric"), ("weapon", "Rusty Axe")),
+                ScriptedChatClient.Text("The axe bites into Aric's shoulder.")),
+            new ScriptedChatClient(ScriptedChatClient.Call("h-1", CharacterTools.EndTurnName, ("reason", "I wait."))),
+            new ScriptedChatClient(ScriptedChatClient.Call("m-1", CharacterTools.TakeActionName,
+                ("intent", "I swing at him while he hesitates."))));
+
+        await harness.RunHeroTurn();
+        await harness.RunMonsterTurn();
+
+        // The monster learned that the hero held back, through public narration rather than shared history.
+        var monsterContext = harness.MonsterClient.Requests[0].Last().Text!;
+        Assert.Contains(pass, monsterContext, StringComparison.Ordinal);
+        Assert.DoesNotContain("I wait.", monsterContext, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task The_acting_character_is_forced_as_the_actor_when_the_dungeon_master_names_another()
+    {
+        // Reproduces an observed failure: a confused character described itself by its opponent's name,
+        // and the Dungeon Master translated that faithfully into an attacker who was also the target.
+        var harness = new OrchestrationHarness(
+            new ScriptedChatClient(
+                ScriptedChatClient.Call("dm-1", DungeonMasterTools.AttackCharacterName,
+                    ("attacker", "Grik"), ("target", "Grik"), ("weapon", "Iron Sword")),
+                ScriptedChatClient.Text("Your blade opens a gash across the goblin's shoulder.")),
+            new ScriptedChatClient(ScriptedChatClient.Call("h-1", CharacterTools.TakeActionName,
+                ("intent", "I bring my sword down on the goblin."))),
+            new ScriptedChatClient());
+
+        var result = await harness.RunHeroTurn();
+
+        var correction = Assert.Single(
+            harness.Sink.Payloads<AdjudicationCorrectionPayload>(TraceEventType.AdjudicationCorrected));
+        Assert.Equal(DungeonMasterTools.AttackerParameter, correction.Parameter);
+        Assert.Equal("Grik", correction.DungeonMasterValue);
+        Assert.Equal("Aric", correction.CorrectedValue);
+
+        // Corrected to the acting character, so the attack resolves normally against the real target.
+        var engineAction = Assert.Single(harness.Sink.Payloads<EngineActionPayload>(TraceEventType.EngineAction));
+        Assert.True(engineAction.Accepted);
+        Assert.Equal(TurnOutcome.ActionResolved, result.Outcome);
+        Assert.Equal(5, harness.Engine.State.RequireById(TestWorld.MonsterId).Health);
+    }
+
+    [Fact]
+    public async Task A_character_that_targets_itself_is_rejected_by_the_engine_and_may_try_again()
+    {
+        var harness = new OrchestrationHarness(
+            new ScriptedChatClient(
+                ScriptedChatClient.Call("dm-1", DungeonMasterTools.AttackCharacterName,
+                    ("attacker", "Aric"), ("target", "Aric"), ("weapon", "Iron Sword")),
+                ScriptedChatClient.Text("You cannot turn your own blade on yourself."),
+                ScriptedChatClient.Call("dm-2", DungeonMasterTools.AttackCharacterName,
+                    ("attacker", "Aric"), ("target", "Grik"), ("weapon", "Iron Sword")),
+                ScriptedChatClient.Text("The blade lands.")),
+            new ScriptedChatClient(
+                ScriptedChatClient.Call("h-1", CharacterTools.TakeActionName, ("intent", "I strike at Aric.")),
+                ScriptedChatClient.Call("h-2", CharacterTools.TakeActionName, ("intent", "I strike at the goblin."))),
+            new ScriptedChatClient());
+
+        var result = await harness.RunHeroTurn();
+
+        var engineActions = harness.Sink.Payloads<EngineActionPayload>(TraceEventType.EngineAction).ToList();
+        Assert.Equal(EngineRejectionReason.TargetIsSelf.ToString(), engineActions[0].RejectionReason);
+        Assert.True(engineActions[1].Accepted);
+        Assert.Equal(TurnOutcome.ActionResolved, result.Outcome);
+    }
+
+    [Fact]
+    public async Task Adjudication_runs_on_a_context_free_of_narration_history()
+    {
+        const string chatter = "It keeps glancing nervously towards the exit.";
+
+        var harness = new OrchestrationHarness(
+            new ScriptedChatClient(
+                ScriptedChatClient.Text(chatter),
+                ScriptedChatClient.Call("dm-1", DungeonMasterTools.AttackCharacterName,
+                    ("attacker", "Aric"), ("target", "Grik"), ("weapon", "Iron Sword")),
+                ScriptedChatClient.Text("Your blade opens a gash across its shoulder.")),
+            new ScriptedChatClient(
+                ScriptedChatClient.Call("h-1", CharacterTools.AskDmName, ("question", "Is it frightened?")),
+                ScriptedChatClient.Call("h-2", CharacterTools.TakeActionName, ("intent", "I strike at it."))),
+            new ScriptedChatClient());
+
+        await harness.RunHeroTurn();
+
+        var adjudication = harness.Sink.Payloads<ModelRequestPayload>(TraceEventType.ModelRequest)
+            .First(r => r.Purpose == "dm.adjudicate");
+
+        // System prompt plus the adjudication task, and nothing else.
+        Assert.Equal(2, adjudication.Messages.Count);
+        Assert.DoesNotContain(chatter, string.Join("\n", adjudication.Messages.Select(m => m.Text)), StringComparison.Ordinal);
+
+        // Narration keeps its continuity: the outcome call still sees the earlier exchange.
+        var narration = harness.Sink.Payloads<ModelRequestPayload>(TraceEventType.ModelRequest)
+            .First(r => r.Purpose == "dm.narrate.outcome");
+        Assert.Contains(chatter, string.Join("\n", narration.Messages.Select(m => m.Text)), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Adjudication_can_be_configured_to_share_the_dungeon_masters_history()
+    {
+        const string chatter = "It keeps glancing nervously towards the exit.";
+
+        var harness = new OrchestrationHarness(
+            new ScriptedChatClient(
+                ScriptedChatClient.Text(chatter),
+                ScriptedChatClient.Call("dm-1", DungeonMasterTools.AttackCharacterName,
+                    ("attacker", "Aric"), ("target", "Grik"), ("weapon", "Iron Sword")),
+                ScriptedChatClient.Text("Your blade opens a gash across its shoulder.")),
+            new ScriptedChatClient(
+                ScriptedChatClient.Call("h-1", CharacterTools.AskDmName, ("question", "Is it frightened?")),
+                ScriptedChatClient.Call("h-2", CharacterTools.TakeActionName, ("intent", "I strike at it."))),
+            new ScriptedChatClient(),
+            new HarnessOptions
+            {
+                IsolateAdjudicationContext = false,
+                MaxQuestionsPerTurn = 2,
+                MaxActionAttemptsPerTurn = 3,
+                MaxModelCallsPerTurn = 8
+            });
+
+        await harness.RunHeroTurn();
+
+        var adjudication = harness.Sink.Payloads<ModelRequestPayload>(TraceEventType.ModelRequest)
+            .First(r => r.Purpose == "dm.adjudicate");
+
+        Assert.True(adjudication.Messages.Count > 2);
+        Assert.Contains(chatter, string.Join("\n", adjudication.Messages.Select(m => m.Text)), StringComparison.Ordinal);
     }
 
     [Fact]

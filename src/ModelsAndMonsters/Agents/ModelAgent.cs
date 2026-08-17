@@ -37,7 +37,18 @@ public abstract class ModelAgent
     /// </summary>
     /// <param name="purpose">Recorded in the trace so every call can be attributed to a task.</param>
     /// <param name="tools">Declaration-only tools exposed for this call, or null for none.</param>
+    protected Task<ChatResponse> CallModelAsync(
+        string purpose,
+        IReadOnlyList<AITool>? tools,
+        CancellationToken cancellationToken) =>
+        CallModelAsync(Conversation, purpose, tools, cancellationToken);
+
+    /// <summary>
+    /// Sends a specific conversation to the model. An agent normally has exactly one, but the Dungeon
+    /// Master can run a task on a separate short-lived conversation.
+    /// </summary>
     protected async Task<ChatResponse> CallModelAsync(
+        AgentConversation conversation,
         string purpose,
         IReadOnlyList<AITool>? tools,
         CancellationToken cancellationToken)
@@ -47,12 +58,12 @@ public abstract class ModelAgent
         using (_client.BeginCall(purpose, resolved.UnsupportedOptionsDropped))
         {
             var response = await _client
-                .GetResponseAsync(Conversation.BuildRequestMessages(), resolved.Options, cancellationToken)
+                .GetResponseAsync(conversation.BuildRequestMessages(), resolved.Options, cancellationToken)
                 .ConfigureAwait(false);
 
             foreach (var message in response.Messages)
             {
-                Conversation.Append(message);
+                conversation.Append(message);
             }
 
             return response;
