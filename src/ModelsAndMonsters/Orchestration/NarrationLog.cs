@@ -1,0 +1,60 @@
+namespace ModelsAndMonsters.Orchestration;
+
+/// <summary>One piece of Dungeon Master narration and who has already heard it.</summary>
+public sealed class NarrationEntry
+{
+    private readonly HashSet<string> _deliveredTo = new(StringComparer.OrdinalIgnoreCase);
+
+    public NarrationEntry(int id, string purpose, string text)
+    {
+        Id = id;
+        Purpose = purpose;
+        Text = text;
+    }
+
+    public int Id { get; }
+
+    public string Purpose { get; }
+
+    public string Text { get; }
+
+    public IReadOnlyCollection<string> DeliveredTo => _deliveredTo;
+
+    public bool HasBeenDeliveredTo(string characterId) => _deliveredTo.Contains(characterId);
+
+    public void MarkDeliveredTo(string characterId) => _deliveredTo.Add(characterId);
+}
+
+/// <summary>
+/// The public channel: narration every character in the room may hear.
+/// </summary>
+/// <remarks>
+/// This exists so that what a character learns is an explicit harness decision rather than a side
+/// effect of shared state. Private question-and-answer exchanges never pass through here, so one
+/// character cannot learn something merely because another character asked about it.
+/// </remarks>
+public sealed class NarrationLog
+{
+    private readonly List<NarrationEntry> _entries = [];
+
+    public IReadOnlyList<NarrationEntry> Entries => _entries;
+
+    public NarrationEntry Record(string purpose, string text)
+    {
+        var entry = new NarrationEntry(_entries.Count + 1, purpose, text);
+        _entries.Add(entry);
+        return entry;
+    }
+
+    /// <summary>Returns everything this character has not yet heard, and marks it as delivered.</summary>
+    public IReadOnlyList<NarrationEntry> TakeUndelivered(string characterId)
+    {
+        var pending = _entries.Where(e => !e.HasBeenDeliveredTo(characterId)).ToList();
+        foreach (var entry in pending)
+        {
+            entry.MarkDeliveredTo(characterId);
+        }
+
+        return pending;
+    }
+}

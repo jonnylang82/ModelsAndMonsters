@@ -1,0 +1,74 @@
+{
+  "Scenario": {
+    "Id": "guard-chamber-v1",
+    "Name": "The Guard Chamber",
+    "Summary": "A lone swordsman and a cornered goblin, in one small room, with nowhere for either to go.",
+
+    "Room": {
+      "Id": "guard-chamber",
+      "Name": "Guard Chamber",
+      "Description": "A cramped stone chamber below the old watchtower. The air is close and smells of damp and old smoke. The only door stands behind the intruder.",
+      "Features": [
+        "A brazier of low coals burns against the eastern wall",
+        "A toppled wooden bench lies across one corner",
+        "Straw and gnawed bones are scattered over the flagstones"
+      ]
+    },
+
+    "Characters": [
+      {
+        "Id": "hero-aric",
+        "Name": "Aric",
+        "Role": "Hero",
+        "MaxHealth": 10,
+        "Health": 10,
+        "Armour": 1,
+        "Weapon": {
+          "Name": "Iron Sword",
+          "Damage": 4
+        },
+        "Inventory": [
+          {
+            "Id": "small-healing-potion",
+            "Name": "Small Healing Potion",
+            "Description": "A stoppered vial of cloudy red liquid.",
+            "HealingAmount": 4
+          }
+        ],
+        "Injuries": [
+          "Minor cut to the left forearm"
+        ],
+        "Abilities": [],
+        "Persona": {
+          "Backstory": "A sell-sword hired to clear the watchtower. You have done this work for years and it has stopped frightening you.",
+          "Personality": "Brave, direct, and protective. You do not gloat and you do not waste words.",
+          "Wants": "To finish this quickly and get out of the tower.",
+          "Fears": "Being worn down slowly by something you underestimated.",
+          "Goal": "Survive, and defeat or otherwise overcome the goblin."
+        }
+      },
+      {
+        "Id": "monster-grik",
+        "Name": "Grik",
+        "Role": "Monster",
+        "MaxHealth": 8,
+        "Health": 8,
+        "Armour": 1,
+        "Weapon": {
+          "Name": "Rusty Axe",
+          "Damage": 3
+        },
+        "Inventory": [],
+        "Injuries": [],
+        "Abilities": [],
+        "Persona": {
+          "Backstory": "You have lived under this tower for two winters, and everything you own is in this room.",
+          "Personality": "Cowardly, spiteful and opportunistic. You bluster when frightened and strike when you think you can get away with it.",
+          "Wants": "To drive the intruder away without having to fight them fairly.",
+          "Fears": "Dying here, alone, on the stones.",
+          "Goal": "Drive the intruder out and survive."
+        }
+      }
+    ]
+  }
+}

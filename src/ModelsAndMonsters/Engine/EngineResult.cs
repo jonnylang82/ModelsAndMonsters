@@ -1,0 +1,63 @@
+using ModelsAndMonsters.Domain;
+
+namespace ModelsAndMonsters.Engine;
+
+/// <summary>Why the authoritative engine refused to apply an otherwise well-formed action.</summary>
+public enum EngineRejectionReason
+{
+    UnknownActor,
+    ActorIsDead,
+    UnknownTarget,
+    TargetIsDead,
+    TargetIsSelf,
+    ActorHasNoWeapon,
+    WeaponNotPossessed,
+    ItemNotPossessed,
+    ItemHasNoSupportedEffect,
+    ItemTargetNotSupported,
+    UnsupportedAction
+}
+
+/// <summary>
+/// The outcome of submitting a <see cref="GameAction"/> to the engine, including full before/after
+/// state snapshots. v0.1 state is tiny, so whole snapshots are traced rather than diffs.
+/// </summary>
+public sealed record EngineResult
+{
+    public required GameAction Action { get; init; }
+
+    public required bool Accepted { get; init; }
+
+    public EngineRejectionReason? RejectionReason { get; init; }
+
+    /// <summary>Plain explanation suitable for feeding back to the Dungeon Master.</summary>
+    public string? RejectionMessage { get; init; }
+
+    public required GameState StateBefore { get; init; }
+
+    /// <summary>Identical to <see cref="StateBefore"/> when the action was rejected.</summary>
+    public required GameState StateAfter { get; init; }
+
+    public ActionOutcome? Outcome { get; init; }
+
+    public static EngineResult Reject(GameAction action, GameState state, EngineRejectionReason reason, string message) =>
+        new()
+        {
+            Action = action,
+            Accepted = false,
+            RejectionReason = reason,
+            RejectionMessage = message,
+            StateBefore = state,
+            StateAfter = state
+        };
+
+    public static EngineResult Accept(GameAction action, GameState before, GameState after, ActionOutcome outcome) =>
+        new()
+        {
+            Action = action,
+            Accepted = true,
+            StateBefore = before,
+            StateAfter = after,
+            Outcome = outcome
+        };
+}

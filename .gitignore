@@ -1,0 +1,9 @@
+bin/
+obj/
+
+# Experiment output. Runs are reproducible artefacts, not source.
+runs/
+
+.vs/
+.idea/
+*.user
