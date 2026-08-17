@@ -75,4 +75,7 @@ public static class CharacterTools
         returnJsonSchema: null);
 
     public static readonly IReadOnlyList<AITool> All = [AskDm, TakeAction, EndTurn];
+
+    /// <summary>The three tool names, used to recognise a tool call a model wrote as prose.</summary>
+    public static readonly IReadOnlyList<string> Names = [AskDmName, TakeActionName, EndTurnName];
 }

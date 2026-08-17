@@ -15,6 +15,7 @@ public sealed class ContextTruncationTests
     [Theory]
     [InlineData(1872, 1713, false)] // call 0001: estimate slightly high, nothing dropped
     [InlineData(2519, 2871, false)] // call 0003: estimate low, reported higher
+    [InlineData(2888, 2583, false)] // DM pass-narration projection: ~305 estimate noise, not truncation
     [InlineData(4525, 5039, false)] // call 0009: estimate low
     [InlineData(8196, 7989, false)] // call 0020: at the ceiling but within estimation noise
     [InlineData(8882, 8154, true)]  // call 0022: first genuine drop (~728)

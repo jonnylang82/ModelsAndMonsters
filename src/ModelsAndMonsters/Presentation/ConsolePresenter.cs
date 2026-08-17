@@ -9,7 +9,7 @@ public sealed class ConsolePresenter : IGameConsole
 
     public void RunHeader(string runId, string scenarioName, string outputDirectory)
     {
-        Write(ConsoleColor.DarkGray, $"Models & Monsters v0.1 — {scenarioName}");
+        Write(ConsoleColor.DarkGray, $"Models & Monsters v0.2 — {scenarioName}");
         Write(ConsoleColor.DarkGray, $"run {runId} → {outputDirectory}");
         Console.WriteLine();
     }

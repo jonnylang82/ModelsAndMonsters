@@ -1,6 +1,7 @@
 using Microsoft.Extensions.AI;
 using ModelsAndMonsters.Agents;
 using ModelsAndMonsters.Configuration;
+using ModelsAndMonsters.Domain;
 using ModelsAndMonsters.Engine;
 using ModelsAndMonsters.Presentation;
 using ModelsAndMonsters.Prompts;
@@ -81,7 +82,8 @@ public sealed class TurnCoordinator
             StateSuppliedToDungeonMaster = stateText,
             ContextSuppliedToDungeonMaster = context,
             Narration = narration,
-            NarrationId = entry.Id
+            NarrationId = entry.Id,
+            IntendedRecipients = LivingRecipients()
         }, DungeonMasterAgent.AgentIdentifier);
 
         _console.DungeonMaster(narration);
@@ -99,6 +101,18 @@ public sealed class TurnCoordinator
         var self = _engine.State.RequireById(character.CharacterId);
         if (!self.IsAlive)
         {
+            // A dead actor is skipped without any model call, and the skip is traced so the fixed turn
+            // order stays visible and uncorrupted in the record rather than a turn simply going missing.
+            _trace.Emit(TraceEventType.TurnSkipped, new TurnSkippedPayload
+            {
+                CharacterId = character.CharacterId,
+                CharacterName = character.Name,
+                Team = self.Team,
+                Reason = $"{character.Name} is dead and cannot take a turn."
+            });
+
+            _console.Notice($"{character.Name} lies fallen; their turn passes.");
+
             return new TurnResult
             {
                 CharacterId = character.CharacterId,
@@ -168,27 +182,40 @@ public sealed class TurnCoordinator
                 // importantly, they must not be confused with each other in the trace.
                 var truncated = ModelAgent.WasTruncated(response);
 
-                _trace.Emit(TraceEventType.ToolCallError, new ToolCallErrorPayload
-                {
-                    AgentName = character.Name,
-                    ToolName = "(none)",
-                    Error = truncated
-                        ? "Character's reply was truncated at the output-token limit before any tool call was produced."
-                        // Naming the finish reason covers the other ways a reply can end early, such as
-                        // a provider content filter, without needing a case for each.
-                        : $"Character responded without calling ask_dm, take_action or end_turn " +
-                          $"(finish reason: {response.FinishReason?.Value ?? "none reported"})."
-                });
+                // A model may understand the protocol but write the call as prose rather than calling
+                // it. When recovery is enabled, salvage that call and dispatch it as if it had been made,
+                // rather than nudging. Truncated replies are never recovered — they may be incomplete.
+                var recovered = !truncated && _limits.RecoverTextToolCalls
+                    ? TryRecoverCharacterToolCall(character, response)
+                    : null;
 
-                if (truncated)
+                if (recovered is null)
                 {
-                    _console.Notice(
-                        $"{character.Name}'s reply hit the output-token limit. " +
-                        "Consider raising MaxOutputTokens for that agent.");
+                    _trace.Emit(TraceEventType.ToolCallError, new ToolCallErrorPayload
+                    {
+                        AgentName = character.Name,
+                        ToolName = "(none)",
+                        Error = truncated
+                            ? "Character's reply was truncated at the output-token limit before any tool call was produced."
+                            // Naming the finish reason covers the other ways a reply can end early, such as
+                            // a provider content filter, without needing a case for each.
+                            : $"Character responded without calling ask_dm, take_action or end_turn " +
+                              $"(finish reason: {response.FinishReason?.Value ?? "none reported"})."
+                    });
+
+                    if (truncated)
+                    {
+                        _console.Notice(
+                            $"{character.Name}'s reply hit the output-token limit. " +
+                            "Consider raising MaxOutputTokens for that agent.");
+                    }
+
+                    character.AppendNudge(_prompts.Render(truncated ? "character.truncated" : "character.nudge"));
+                    continue;
                 }
 
-                character.AppendNudge(_prompts.Render(truncated ? "character.truncated" : "character.nudge"));
-                continue;
+                // Fall through with the recovered call in hand, dispatched exactly like a real one.
+                calls = [recovered];
             }
 
             var turnEnded = false;
@@ -430,7 +457,8 @@ public sealed class TurnCoordinator
             StateSuppliedToDungeonMaster = stateText,
             ContextSuppliedToDungeonMaster = reason,
             Narration = narration,
-            NarrationId = entry.Id
+            NarrationId = entry.Id,
+            IntendedRecipients = LivingRecipients()
         }, DungeonMasterAgent.AgentIdentifier);
 
         _trace.Emit(TraceEventType.NarrationDelivered, new NarrationDeliveredPayload
@@ -662,8 +690,19 @@ public sealed class TurnCoordinator
             DispatchDecision = $"Translated to {action.Describe()} and submitted to the engine."
         }, DungeonMasterAgent.AgentIdentifier);
 
+        // Record how the natural-language target was resolved to a specific character before the engine
+        // decides the outcome, so targeting is auditable and never silently retargets.
+        EmitTargetResolution(character, action, engineResultStateBefore: _engine.State);
+
         // The engine, not the Dungeon Master, decides what actually happens.
         var engineResult = _engine.Execute(action);
+
+        // Every random draw the engine made, recorded in full before its consequence, so behaviour can
+        // be compared and reproduced from the trace alone rather than inferred from the final result.
+        foreach (var draw in engineResult.RngDraws)
+        {
+            _trace.Emit(TraceEventType.RngDraw, draw);
+        }
 
         _trace.Emit(TraceEventType.EngineAction, new EngineActionPayload
         {
@@ -730,7 +769,8 @@ public sealed class TurnCoordinator
             StateSuppliedToDungeonMaster = WorldStateFormatter.FormatAuthoritativeState(_engine.State),
             ContextSuppliedToDungeonMaster = engineResult.Outcome!.Summary,
             Narration = narration,
-            NarrationId = entry.Id
+            NarrationId = entry.Id,
+            IntendedRecipients = LivingRecipients()
         }, DungeonMasterAgent.AgentIdentifier);
 
         _trace.Emit(TraceEventType.NarrationDelivered, new NarrationDeliveredPayload
@@ -832,6 +872,56 @@ public sealed class TurnCoordinator
         return character.Name;
     }
 
+    /// <summary>
+    /// Records the target-resolution decision for an attack: the reference the Dungeon Master supplied,
+    /// the specific living character it names (if any), and whether that character is an ally. The
+    /// engine still owns the actual acceptance; this only makes the translation visible, and it never
+    /// changes the target — an unresolved or invalid reference is reported, not silently swapped.
+    /// </summary>
+    private void EmitTargetResolution(CharacterAgent character, GameAction action, GameState engineResultStateBefore)
+    {
+        if (action is not AttackCharacterAction attack)
+        {
+            return;
+        }
+
+        var attacker = engineResultStateBefore.FindById(character.CharacterId);
+        var target = engineResultStateBefore.Resolve(attack.TargetRef);
+
+        string note;
+        if (target is null)
+        {
+            note = $"'{attack.TargetRef}' does not name any character in the room; the world will refuse it.";
+        }
+        else if (!target.IsAlive)
+        {
+            note = $"'{attack.TargetRef}' names {target.Name}, who is already dead; the world will refuse it.";
+        }
+        else if (string.Equals(target.Id, character.CharacterId, StringComparison.OrdinalIgnoreCase))
+        {
+            note = $"'{attack.TargetRef}' names the attacker; the world will refuse a self-attack.";
+        }
+        else
+        {
+            var relationship = attacker is not null && attacker.IsAllyOf(target) ? "an ally" : "an enemy";
+            note = $"'{attack.TargetRef}' resolved to {target.Name} (id {target.Id}), {relationship} of {character.Name}.";
+        }
+
+        _trace.Emit(TraceEventType.TargetResolved, new TargetResolutionPayload
+        {
+            AttackerId = character.CharacterId,
+            AttackerName = character.Name,
+            RequestedTarget = attack.TargetRef,
+            ResolvedTargetId = target?.Id,
+            ResolvedTargetName = target?.Name,
+            Resolved = target is not null,
+            TargetAlive = target?.IsAlive,
+            TargetTeam = target?.Team,
+            TargetIsAlly = target is not null && attacker is not null ? attacker.IsAllyOf(target) : null,
+            Note = note
+        }, DungeonMasterAgent.AgentIdentifier);
+    }
+
     // -----------------------------------------------------------------------------------------
     // Trace helpers
     // -----------------------------------------------------------------------------------------
@@ -893,6 +983,49 @@ public sealed class TurnCoordinator
             Result = result
         }, DungeonMasterAgent.AgentIdentifier);
     }
+
+    /// <summary>
+    /// Parses a tool call a character wrote as prose and, if one is found, rewrites the character's last
+    /// reply to carry the structured call so the tool result that follows has a matching call in the
+    /// history. Returns the synthesised call, or null when nothing recoverable was written.
+    /// </summary>
+    private FunctionCallContent? TryRecoverCharacterToolCall(CharacterAgent character, ChatResponse response)
+    {
+        var text = ModelText.Clean(response);
+        if (ModelText.TryRecoverToolCall(text, CharacterTools.Names) is not { } parsed)
+        {
+            return null;
+        }
+
+        var callId = $"recovered-{Guid.NewGuid():N}";
+
+        // The argument is unnamed; ToolArguments reads a lone argument regardless of its key, so the
+        // dispatch handlers pick it up under whatever parameter each tool expects.
+        var call = new FunctionCallContent(callId, parsed.Name,
+            new Dictionary<string, object?> { ["argument"] = parsed.Argument });
+
+        character.ReplaceLastReplyWithToolCall(call);
+
+        _trace.Emit(TraceEventType.ToolCallRecovered, new ToolCallRecoveredPayload
+        {
+            AgentName = character.Name,
+            CallId = callId,
+            ToolName = parsed.Name,
+            RecoveredArgument = parsed.Argument,
+            OriginalText = text
+        });
+
+        _console.Notice($"{character.Name} wrote its move as text; recovered {parsed.Name}().");
+        return call;
+    }
+
+    /// <summary>
+    /// Everyone alive in the room, who is therefore an intended recipient of public narration. Recorded
+    /// on the narration event so the audience is explicit, even though each character actually receives
+    /// it at a different moment (the actor at once, the others as their own turn begins).
+    /// </summary>
+    private IReadOnlyList<string> LivingRecipients() =>
+        [.. _engine.State.Characters.Where(c => c.IsAlive).Select(c => c.Id)];
 
     private void EmitLimit(string limit, int value, string effect) =>
         _trace.Emit(TraceEventType.HarnessLimitReached, new HarnessLimitPayload

@@ -62,6 +62,7 @@ public static class ScenarioFactory
             Id = definition.Id,
             Name = definition.Name,
             Role = role,
+            Team = string.IsNullOrWhiteSpace(definition.Team) ? Character.DefaultTeamForRole(role) : definition.Team.Trim(),
             MaxHealth = maxHealth,
             Health = Math.Clamp(definition.Health ?? maxHealth, 0, maxHealth),
             Armour = Math.Max(0, definition.Armour),

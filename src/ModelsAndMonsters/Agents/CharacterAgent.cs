@@ -41,4 +41,12 @@ public sealed class CharacterAgent : ModelAgent
 
     /// <summary>Used when the model replied without calling either tool.</summary>
     public void AppendNudge(string text) => Conversation.AppendUser(text);
+
+    /// <summary>
+    /// Swaps this character's most recent (prose) reply for one carrying a structured tool call, when the
+    /// harness recovered a call the model wrote as text. Keeps the history valid for the tool result that
+    /// follows; the original prose remains in the trace.
+    /// </summary>
+    public void ReplaceLastReplyWithToolCall(FunctionCallContent call) =>
+        Conversation.ReplaceLastMessage(new ChatMessage(ChatRole.Assistant, [call]));
 }

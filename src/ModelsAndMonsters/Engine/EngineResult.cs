@@ -40,6 +40,13 @@ public sealed record EngineResult
 
     public ActionOutcome? Outcome { get; init; }
 
+    /// <summary>
+    /// Every random draw this action made, in order. Empty for actions that consult no randomness
+    /// (item use) and for rejected actions (validation happens before any roll). The orchestration
+    /// layer traces these so no draw is recorded only as its final effect.
+    /// </summary>
+    public IReadOnlyList<RngDraw> RngDraws { get; init; } = [];
+
     public static EngineResult Reject(GameAction action, GameState state, EngineRejectionReason reason, string message) =>
         new()
         {
@@ -51,13 +58,15 @@ public sealed record EngineResult
             StateAfter = state
         };
 
-    public static EngineResult Accept(GameAction action, GameState before, GameState after, ActionOutcome outcome) =>
+    public static EngineResult Accept(GameAction action, GameState before, GameState after, ActionOutcome outcome,
+        IReadOnlyList<RngDraw>? rngDraws = null) =>
         new()
         {
             Action = action,
             Accepted = true,
             StateBefore = before,
             StateAfter = after,
-            Outcome = outcome
+            Outcome = outcome,
+            RngDraws = rngDraws ?? []
         };
 }

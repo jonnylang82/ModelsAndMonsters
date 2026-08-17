@@ -29,8 +29,18 @@ public static class ContextTruncation
     private const double CharactersPerToken = 4.0;
     private const int PerMessageOverheadTokens = 4;
 
-    /// <summary>Absolute floor for the "sent minus received" gap that counts as truncation.</summary>
-    private const int MinimumDroppedTokens = 300;
+    /// <summary>
+    /// Absolute floor for the "sent minus received" gap that counts as truncation.
+    /// </summary>
+    /// <remarks>
+    /// Set above the estimation noise a small, bounded prompt produces. The Dungeon Master's projections
+    /// re-embed a ~2.6k-token state block; the estimator over-counts that particular content by ~10%
+    /// (~300 tokens), which is pure noise — those projections are far below any real context window and
+    /// cannot be truncated — so a floor of 300 misfired on every one. 500 sits above that noise while
+    /// staying below the smallest genuine drop measured (a half-window truncation of a small prompt
+    /// removes ~600+), so real truncation is still caught.
+    /// </remarks>
+    private const int MinimumDroppedTokens = 500;
 
     /// <summary>Gap as a fraction of what we sent, to absorb estimation error on larger prompts.</summary>
     private const double DroppedFractionThreshold = 0.08;

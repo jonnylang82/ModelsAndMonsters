@@ -99,6 +99,67 @@ public static partial class ModelText
     }
 
     /// <summary>
+    /// Recovers a tool call a model wrote as prose instead of calling.
+    /// </summary>
+    /// <remarks>
+    /// Some models (notably small ones under this harness's immersive character prompt) understand the
+    /// protocol but emit the call as text — <c>`take_action(I strike the goblin)`</c> or a bare JSON
+    /// object — rather than as a structured tool call. This parses the tool name and its single argument
+    /// out of that text so the orchestration can dispatch it. It is intentionally conservative: it only
+    /// matches one of the <paramref name="knownToolNames"/>, and returns null when nothing parses, so it
+    /// never invents a call. The returned argument is unnamed; callers rely on the tolerant single-argument
+    /// reading in <see cref="ToolArguments"/> to place it under the tool's real parameter.
+    /// </remarks>
+    public static (string Name, string Argument)? TryRecoverToolCall(string? text, IReadOnlyCollection<string> knownToolNames)
+    {
+        if (string.IsNullOrWhiteSpace(text) || knownToolNames.Count == 0)
+        {
+            return null;
+        }
+
+        var cleaned = Clean(text);
+        if (cleaned.Length == 0)
+        {
+            return null;
+        }
+
+        // Form 1: name(argument), optionally wrapped in backticks or code fences. The most common shape.
+        var alternation = string.Join("|", knownToolNames.Select(Regex.Escape));
+        var call = Regex.Match(cleaned, $@"\b({alternation})\s*\(", RegexOptions.IgnoreCase);
+        if (call.Success)
+        {
+            var name = Canonical(knownToolNames, call.Groups[1].Value);
+            var open = call.Index + call.Length - 1;
+            var close = cleaned.LastIndexOf(')');
+            if (close > open)
+            {
+                var argument = cleaned[(open + 1)..close].Trim().Trim('`', '"', '\'').Trim();
+                if (argument.Length > 0)
+                {
+                    return (name, argument);
+                }
+            }
+        }
+
+        // Form 2: a JSON object naming the tool and carrying its argument under any common key.
+        var jsonName = TryExtractJsonField(cleaned, "name", "tool", "function");
+        if (jsonName is not null && knownToolNames.Any(n => string.Equals(n, jsonName, StringComparison.OrdinalIgnoreCase)))
+        {
+            var argument = TryExtractJsonField(cleaned,
+                "intent", "question", "reason", "argument", "value", "input", "text", "content");
+            if (!string.IsNullOrWhiteSpace(argument))
+            {
+                return (Canonical(knownToolNames, jsonName), argument.Trim());
+            }
+        }
+
+        return null;
+    }
+
+    private static string Canonical(IReadOnlyCollection<string> knownToolNames, string matched) =>
+        knownToolNames.FirstOrDefault(n => string.Equals(n, matched, StringComparison.OrdinalIgnoreCase)) ?? matched;
+
+    /// <summary>
     /// Returns the assistant's prose. Reasoning models that emit literal think blocks in their text
     /// have them stripped: that content is the model's private working, not something a character in
     /// the world perceived. The unedited text is still recorded in the trace.

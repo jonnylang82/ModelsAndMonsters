@@ -1,70 +1,122 @@
 {
   "Scenario": {
-    "Id": "guard-chamber-v1",
-    "Name": "The Guard Chamber",
-    "Summary": "A lone swordsman and a cornered goblin, in one small room, with nowhere for either to go.",
+    "Id": "cellar-ambush-v1",
+    "Name": "The Flooded Cellar",
+    "Summary": "Two adventurers corner two goblins in a cramped, flooded cellar — a fighter and a cleric against a goblin captain and its grunt, with nowhere for anyone to go.",
 
     "Room": {
-      "Id": "guard-chamber",
-      "Name": "Guard Chamber",
-      "Description": "A cramped, bare stone chamber below the old watchtower. The air is close and smells of damp and old smoke. There is no room to manoeuvre and nowhere to go; the two of them stand face to face.",
-      "Features": []
+      "Id": "flooded-cellar",
+      "Name": "Flooded Cellar",
+      "Description": "A low, brick-vaulted cellar under the ruined mill. Ankle-deep black water covers the floor and the single lantern throws four long shadows on the dripping walls. The way out is behind the goblins, and the way in behind the adventurers; all four stand within a few paces of one another, face to face.",
+      "Features": [
+        "A guttering lantern hung from an iron hook",
+        "Ankle-deep cold water across the whole floor",
+        "Rotten crates stacked against one wall"
+      ]
     },
 
     "Characters": [
       {
-        "Id": "hero-aric",
-        "Name": "Aric",
+        "Id": "hero-rowan",
+        "Name": "Rowan",
         "Role": "Hero",
-        "MaxHealth": 10,
-        "Health": 10,
-        "Armour": 1,
+        "Team": "Heroes",
+        "MaxHealth": 14,
+        "Health": 14,
+        "Armour": 2,
         "HitChance": 80,
         "Weapon": {
-          "Name": "Iron Sword",
-          "Damage": 4
+          "Name": "Longsword",
+          "Damage": 5
+        },
+        "Inventory": [],
+        "Injuries": [],
+        "Abilities": [],
+        "Persona": {
+          "Backstory": "A veteran fighter who took this contract to clear the mill. You have stood in worse rooms than this one.",
+          "Personality": "Steady, brave and protective. You prefer to engage the most dangerous opponent and shield less martial companions from harm.",
+          "Wants": "To defeat the goblins without allowing Elara to be overwhelmed.",
+          "Fears": "Failing to protect a companion.",
+          "Goal": "Survive and defeat or otherwise overcome the goblins."
+        }
+      },
+      {
+        "Id": "hero-elara",
+        "Name": "Elara",
+        "Role": "Hero",
+        "Team": "Heroes",
+        "MaxHealth": 11,
+        "Health": 11,
+        "Armour": 2,
+        "HitChance": 70,
+        "Weapon": {
+          "Name": "Iron Mace",
+          "Damage": 3
         },
         "Inventory": [
           {
             "Id": "small-healing-potion",
             "Name": "Small Healing Potion",
             "Description": "A stoppered vial of cloudy red liquid.",
-            "HealingAmount": 4
+            "HealingAmount": 5
           }
         ],
-        "Injuries": [
-          "Minor cut to the left forearm"
-        ],
+        "Injuries": [],
         "Abilities": [],
         "Persona": {
-          "Backstory": "A sell-sword hired to clear the watchtower. You have done this work for years and it has stopped frightening you.",
-          "Personality": "Brave, direct, and protective. You do not gloat and you do not waste words.",
-          "Wants": "To finish this quickly and get out of the tower.",
-          "Fears": "Being worn down slowly by something you underestimated.",
-          "Goal": "Survive, and defeat or otherwise overcome the goblin."
+          "Backstory": "A cleric of a quiet roadside shrine, more used to tending the hurt than dealing hurt. You came because Rowan asked, and because someone had to.",
+          "Personality": "Compassionate, cautious and resolute. You avoid unnecessary risk but will fight when somebody depends on you.",
+          "Wants": "To keep yourself and Rowan alive.",
+          "Fears": "Being isolated and surrounded.",
+          "Goal": "Survive and help defeat or otherwise overcome the goblins."
         }
       },
       {
-        "Id": "monster-grik",
-        "Name": "Grik",
+        "Id": "goblin-vark",
+        "Name": "Vark",
         "Role": "Monster",
+        "Team": "Goblins",
+        "MaxHealth": 12,
+        "Health": 12,
+        "Armour": 2,
+        "HitChance": 75,
+        "Weapon": {
+          "Name": "Notched Sabre",
+          "Damage": 4
+        },
+        "Inventory": [],
+        "Injuries": [],
+        "Abilities": [],
+        "Persona": {
+          "Backstory": "The captain of this warren's last two survivors. The mill was yours before the humans came sniffing.",
+          "Personality": "Cunning, domineering and self-preserving. You expect the grunt to take the risks while you attack whoever looks most vulnerable.",
+          "Wants": "To kill or drive off the intruders while preserving your own life.",
+          "Fears": "Losing authority, or being left to fight alone.",
+          "Goal": "Survive and defeat or otherwise overcome the heroes."
+        }
+      },
+      {
+        "Id": "goblin-skrit",
+        "Name": "Skrit",
+        "Role": "Monster",
+        "Team": "Goblins",
         "MaxHealth": 8,
         "Health": 8,
         "Armour": 1,
-        "HitChance": 70,
+        "HitChance": 65,
         "Weapon": {
-          "Name": "Rusty Axe",
+          "Name": "Crude Spear",
           "Damage": 3
         },
         "Inventory": [],
         "Injuries": [],
         "Abilities": [],
         "Persona": {
-          "Backstory": "You have lived under this tower for two winters, and everything you own is in this room.",
-          "Personality": "Cowardly, spiteful and opportunistic. You bluster when frightened and strike when you think you can get away with it.",
-          "Wants": "To drive the intruder away without having to fight them fairly.",
-          "Fears": "Dying here, alone, on the stones.",
-          "Goal": "Drive the intruder out and survive."
+          "Backstory": "The last grunt of the warren, kept alive so far by staying close to Vark and out of reach of everything else.",
+          "Personality": "Reckless, nervous and eager to impress the captain. You act boldly while Vark appears in control but become frightened when isolated.",
+          "Wants": "Vark's approval, and a share of anything taken from the intruders.",
+          "Fears": "Being abandoned by the captain.",
+          "Goal": "Survive and help defeat or otherwise overcome the heroes."
         }
       }
     ]

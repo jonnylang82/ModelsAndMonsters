@@ -7,5 +7,6 @@ namespace ModelsAndMonsters.AI;
 public enum ModelProvider
 {
     Ollama,
-    OpenAI
+    OpenAI,
+    Anthropic
 }

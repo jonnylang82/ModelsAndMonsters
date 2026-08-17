@@ -27,11 +27,37 @@ public sealed record ProviderCapabilities
     public required bool SupportsContextWindow { get; init; }
 
     /// <summary>
-    /// Whether reasoning can be toggled with a simple on/off request field. Ollama takes a <c>think</c>
-    /// flag; OpenAI's reasoning models use a different mechanism (reasoning effort) that v0.1 does not
-    /// wire up, so the toggle is reported as unsupported there rather than silently ignored.
+    /// Whether reasoning can be toggled with a simple on/off request field — the legacy <c>Thinking</c>
+    /// bool. Ollama takes a <c>think</c> flag; OpenAI and Anthropic reach reasoning through an effort
+    /// level, not a bool, so the bare toggle is reported as unsupported there rather than silently
+    /// ignored. The cross-provider path is <see cref="AgentModelProfile.Effort"/>, which every provider
+    /// honours (mapped to the think flag on Ollama and to <c>ChatOptions.Reasoning</c> on the others).
     /// </summary>
     public required bool SupportsThinkingToggle { get; init; }
+
+    /// <summary>
+    /// Whether the provider honours a forced tool choice (<c>tool_choice: required</c>). Ollama's native
+    /// <c>/api/chat</c> silently ignores it (measured: the model still answers in prose), so it is
+    /// reported as unsupported; the OpenAI chat-completions API — including Ollama's own OpenAI-compatible
+    /// <c>/v1</c> endpoint — does honour it.
+    /// </summary>
+    public required bool SupportsForcedToolChoice { get; init; }
+
+    /// <summary>
+    /// Whether the provider accepts <c>temperature</c> and <c>top_p</c> in the same request. Anthropic
+    /// rejects both together ("use only one"), so when both are configured the harness keeps temperature
+    /// and drops top_p rather than failing the call.
+    /// </summary>
+    public required bool AllowsTemperatureAndTopPTogether { get; init; }
+
+    /// <summary>
+    /// Whether the provider silently drops the oldest messages when a request exceeds the context window.
+    /// Ollama does (and reports only the post-truncation size), which is why the harness infers it from the
+    /// sent-versus-reported gap. OpenAI does not: it rejects an over-long request with an error rather than
+    /// truncating, so that inference only produces false positives from tokenizer-estimate noise there and
+    /// must not run.
+    /// </summary>
+    public required bool SilentlyTruncatesHistory { get; init; }
 
     public static ProviderCapabilities For(ModelProvider provider) => provider switch
     {
@@ -43,7 +69,10 @@ public sealed record ProviderCapabilities
             SupportsMaxOutputTokens = true,
             SupportsSeed = true,
             SupportsContextWindow = true,
-            SupportsThinkingToggle = true
+            SupportsThinkingToggle = true,
+            SupportsForcedToolChoice = false,
+            AllowsTemperatureAndTopPTogether = true,
+            SilentlyTruncatesHistory = true
         },
 
         // OpenAI chat completions has no top_k equivalent, and its context window is fixed per model.
@@ -55,7 +84,27 @@ public sealed record ProviderCapabilities
             SupportsMaxOutputTokens = true,
             SupportsSeed = true,
             SupportsContextWindow = false,
-            SupportsThinkingToggle = false
+            SupportsThinkingToggle = false,
+            SupportsForcedToolChoice = true,
+            AllowsTemperatureAndTopPTogether = true,
+            SilentlyTruncatesHistory = false
+        },
+
+        // Anthropic supports top_k and a forced tool choice, but has no request seed, a fixed per-model
+        // window, and reaches "extended thinking" through a token budget rather than a simple on/off flag
+        // (which this harness does not wire up). max_tokens is required — always set MaxOutputTokens.
+        ModelProvider.Anthropic => new ProviderCapabilities
+        {
+            SupportsTemperature = true,
+            SupportsTopP = true,
+            SupportsTopK = true,
+            SupportsMaxOutputTokens = true,
+            SupportsSeed = false,
+            SupportsContextWindow = false,
+            SupportsThinkingToggle = false,
+            SupportsForcedToolChoice = true,
+            AllowsTemperatureAndTopPTogether = false,
+            SilentlyTruncatesHistory = false
         },
 
         _ => throw new ArgumentOutOfRangeException(nameof(provider), provider, "Unknown provider.")

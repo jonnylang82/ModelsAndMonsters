@@ -31,10 +31,27 @@ public static class RunReportWriter
     /// </remarks>
     private const int RawEventCharacterLimit = 3000;
 
+    /// <summary>The full report: everything, including the exhaustive event-by-event trace dump.</summary>
     public static string ReportPath(string runDirectory) => Path.Combine(runDirectory, "report.md");
 
-    /// <summary>Writes report.md for a run directory and returns its path.</summary>
-    public static string Write(string runDirectory)
+    /// <summary>The readable summary: the same report without the full per-event trace section.</summary>
+    public static string SummaryReportPath(string runDirectory) => Path.Combine(runDirectory, "report-summary.md");
+
+    /// <summary>Writes report.md (full, with the trace) for a run directory and returns its path.</summary>
+    public static string Write(string runDirectory) => Write(runDirectory, includeFullTrace: true);
+
+    /// <summary>
+    /// Writes report-summary.md — everything the full report has except the event-by-event <c>## Trace</c>
+    /// section — for a run directory, and returns its path. The transcript, per-agent activity and event
+    /// census remain, so it reads as the story without the megabytes of raw events.
+    /// </summary>
+    public static string WriteSummary(string runDirectory) => Write(runDirectory, includeFullTrace: false);
+
+    /// <summary>Writes both the full report and the summary, returning both paths.</summary>
+    public static (string Full, string Summary) WriteAll(string runDirectory) =>
+        (Write(runDirectory), WriteSummary(runDirectory));
+
+    private static string Write(string runDirectory, bool includeFullTrace)
     {
         var tracePath = Path.Combine(runDirectory, "trace.jsonl");
         if (!File.Exists(tracePath))
@@ -48,14 +65,35 @@ public static class RunReportWriter
 
         var report = new StringBuilder();
         WriteHeader(report, manifest, finalState, events, runDirectory);
+        WritePerAgentActivity(report, events);
         WriteScenario(report, manifest);
+        WriteTeams(report, manifest);
         WriteTranscript(report, events);
-        WriteTrace(report, events);
+        if (includeFullTrace)
+        {
+            WriteTrace(report, events);
+        }
+        else
+        {
+            WriteTracePointer(report);
+        }
+
         WriteFinalState(report, finalState);
 
-        var path = ReportPath(runDirectory);
+        var path = includeFullTrace ? ReportPath(runDirectory) : SummaryReportPath(runDirectory);
         File.WriteAllText(path, report.ToString(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         return path;
+    }
+
+    /// <summary>In the summary, points to where the omitted per-event detail can be found.</summary>
+    private static void WriteTracePointer(StringBuilder report)
+    {
+        report.AppendLine("## Full trace");
+        report.AppendLine();
+        report.AppendLine(
+            "Omitted from this summary. Every event with its raw JSON is in `report.md`; the raw event " +
+            "stream is in `trace.jsonl`.");
+        report.AppendLine();
     }
 
     // -------------------------------------------------------------------------------------------
@@ -89,7 +127,8 @@ public static class RunReportWriter
         var master = Text(manifest, "Seeds", "MasterSeed");
         if (master is not null)
         {
-            var provided = Text(manifest, "Seeds", "SeedWasProvided") == "True";
+            // The flag serialises as a JSON boolean, so match on the value kind rather than its text.
+            var provided = IsTrue(manifest, "Seeds", "SeedWasProvided");
             Row(report, "Run seed", $"{master} ({(provided ? "fixed" : "random")})");
             Row(report, "Replay", $"set `ModelsAndMonsters:Harness:Seed` to `{master}`");
         }
@@ -97,6 +136,24 @@ public static class RunReportWriter
         Row(report, "Terminal condition", Text(finalState, "TerminalCondition"));
         Row(report, "Rounds played", Text(finalState, "RoundsPlayed"));
         Row(report, "Trace events", events.Count.ToString(CultureInfo.InvariantCulture));
+
+        var tokens = SumTokens(events);
+        if (tokens.Input + tokens.Output > 0)
+        {
+            Row(report, "Model calls", events.Count(e => e.EventType == "ModelResponse").ToString(CultureInfo.InvariantCulture));
+            Row(report, "Total tokens",
+                $"{tokens.Input + tokens.Output:N0} ({tokens.Input:N0} input / {tokens.Output:N0} output)");
+            if (tokens.CacheRead > 0)
+            {
+                Row(report, "Cached input (read)", tokens.CacheRead.ToString("N0", CultureInfo.InvariantCulture));
+            }
+
+            if (tokens.CacheWrite > 0)
+            {
+                Row(report, "Cache writes", tokens.CacheWrite.ToString("N0", CultureInfo.InvariantCulture));
+            }
+        }
+
         report.AppendLine();
 
         WriteAgentProfiles(report, manifest);
@@ -148,6 +205,60 @@ public static class RunReportWriter
         report.AppendLine();
     }
 
+    /// <summary>
+    /// Sums the token usage the providers reported across every model response, including cache reads and
+    /// writes drawn from the usage's additional counts (OpenAI reports cached input automatically;
+    /// Anthropic reports cache reads and cache-creation writes when prompt caching is used).
+    /// </summary>
+    private static (long Input, long Output, long CacheRead, long CacheWrite) SumTokens(IReadOnlyList<TraceRow> events)
+    {
+        long input = 0;
+        long output = 0;
+        long cacheRead = 0;
+        long cacheWrite = 0;
+
+        foreach (var row in events)
+        {
+            if (row.EventType != "ModelResponse")
+            {
+                continue;
+            }
+
+            input += LongField(row.Data, "Usage", "InputTokenCount");
+            output += LongField(row.Data, "Usage", "OutputTokenCount");
+
+            if (!TryGet(row.Data, out var additional, "Usage", "AdditionalCounts") || additional.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            foreach (var count in additional.EnumerateObject())
+            {
+                if (count.Value.ValueKind != JsonValueKind.Number || !count.Value.TryGetInt64(out var value))
+                {
+                    continue;
+                }
+
+                var key = count.Name.ToLowerInvariant();
+                if (!key.Contains("cache"))
+                {
+                    continue;
+                }
+
+                if (key.Contains("creation") || key.Contains("write"))
+                {
+                    cacheWrite += value;
+                }
+                else if (key.Contains("read") || key.Contains("cached"))
+                {
+                    cacheRead += value;
+                }
+            }
+        }
+
+        return (input, output, cacheRead, cacheWrite);
+    }
+
     private static void WriteEventCensus(StringBuilder report, IReadOnlyList<TraceRow> events)
     {
         report.AppendLine("## Trace event census");
@@ -157,6 +268,155 @@ public static class RunReportWriter
         foreach (var group in events.GroupBy(e => e.EventType).OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal))
         {
             report.AppendLine($"| {group.Key} | {group.Count()} |");
+        }
+
+        report.AppendLine();
+    }
+
+    /// <summary>
+    /// Per-agent activity, aggregated from the trace: how much each of the five agents did and cost.
+    /// Questions, attempts, refusals, passes and skips come from the character-level events; model
+    /// calls, tokens and latency from the model responses, so the Dungeon Master's cost is counted too.
+    /// </summary>
+    private static void WritePerAgentActivity(StringBuilder report, IReadOnlyList<TraceRow> events)
+    {
+        var agents = new Dictionary<string, AgentActivity>(StringComparer.Ordinal);
+
+        AgentActivity For(string? name) =>
+            string.IsNullOrEmpty(name) ? new AgentActivity() : agents.TryGetValue(name, out var a) ? a : agents[name] = new AgentActivity();
+
+        foreach (var row in events)
+        {
+            var d = row.Data;
+            switch (row.EventType)
+            {
+                case "ModelResponse":
+                {
+                    var agent = For(Text(d, "AgentName"));
+                    agent.ModelCalls++;
+                    agent.InputTokens += LongField(d, "Usage", "InputTokenCount");
+                    agent.OutputTokens += LongField(d, "Usage", "OutputTokenCount");
+                    agent.LatencyMs += DoubleField(d, "ElapsedMilliseconds");
+                    break;
+                }
+
+                case "TurnEnded":
+                {
+                    var agent = For(Text(d, "CharacterName"));
+                    agent.Questions += (int)LongField(d, "QuestionsAsked");
+                    agent.Attempts += (int)LongField(d, "ActionAttempts");
+                    if (Text(d, "Result") == "EndedByCharacter")
+                    {
+                        agent.Passes++;
+                    }
+
+                    break;
+                }
+
+                case "TurnSkipped":
+                    For(Text(d, "CharacterName")).Skips++;
+                    break;
+
+                case "ToolCallRecovered":
+                    For(Text(d, "AgentName")).Recovered++;
+                    break;
+
+                case "DmAdjudication":
+                {
+                    var agent = For(Text(d, "CharacterName"));
+                    if (Text(d, "Category") == "EngineAccepted")
+                    {
+                        agent.AcceptedActions++;
+                    }
+                    else
+                    {
+                        agent.Rejections++;
+                    }
+
+                    break;
+                }
+            }
+        }
+
+        if (agents.Count == 0)
+        {
+            return;
+        }
+
+        var anyRecovered = agents.Values.Any(a => a.Recovered > 0);
+
+        report.AppendLine("## Per-agent activity");
+        report.AppendLine();
+        var recoveredHeader = anyRecovered ? " Recovered |" : "";
+        var recoveredDivider = anyRecovered ? " --- |" : "";
+        report.AppendLine("| Agent | Model calls | Input tokens | Output tokens | Latency (ms) | Questions | Attempts | Accepted | Rejected | Passes | Skips |" + recoveredHeader);
+        report.AppendLine("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |" + recoveredDivider);
+        foreach (var (name, a) in agents.OrderByDescending(kv => kv.Value.ModelCalls).ThenBy(kv => kv.Key, StringComparer.Ordinal))
+        {
+            var recoveredCell = anyRecovered ? $" {a.Recovered} |" : "";
+            report.AppendLine(
+                $"| {name} | {a.ModelCalls} | {a.InputTokens} | {a.OutputTokens} | {a.LatencyMs:N0} | " +
+                $"{a.Questions} | {a.Attempts} | {a.AcceptedActions} | {a.Rejections} | {a.Passes} | {a.Skips} |" + recoveredCell);
+        }
+
+        var t = agents.Values;
+        var totalRecoveredCell = anyRecovered ? $" {t.Sum(a => a.Recovered)} |" : "";
+        report.AppendLine(
+            $"| **Total** | {t.Sum(a => a.ModelCalls)} | {t.Sum(a => a.InputTokens)} | {t.Sum(a => a.OutputTokens)} | " +
+            $"{t.Sum(a => a.LatencyMs):N0} | {t.Sum(a => a.Questions)} | {t.Sum(a => a.Attempts)} | " +
+            $"{t.Sum(a => a.AcceptedActions)} | {t.Sum(a => a.Rejections)} | {t.Sum(a => a.Passes)} | {t.Sum(a => a.Skips)} |" + totalRecoveredCell);
+
+        report.AppendLine();
+        if (anyRecovered)
+        {
+            report.AppendLine(
+                "*Recovered = tool calls the model wrote as prose that the harness parsed and dispatched " +
+                "(`RecoverTextToolCalls`). The model did not make these as structured calls.*");
+            report.AppendLine();
+        }
+    }
+
+    private sealed class AgentActivity
+    {
+        public int ModelCalls;
+        public long InputTokens;
+        public long OutputTokens;
+        public double LatencyMs;
+        public int Questions;
+        public int Attempts;
+        public int AcceptedActions;
+        public int Rejections;
+        public int Passes;
+        public int Skips;
+        public int Recovered;
+    }
+
+    /// <summary>Team membership, taken from the recorded initial state so it is always present.</summary>
+    private static void WriteTeams(StringBuilder report, JsonElement? manifest)
+    {
+        if (!TryGet(manifest, out var state, "InitialState") ||
+            !state.TryGetProperty("Characters", out var characters) ||
+            characters.ValueKind != JsonValueKind.Array)
+        {
+            return;
+        }
+
+        var teams = characters.EnumerateArray()
+            .GroupBy(c => Scalar(c, "Team"), StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (teams.Count == 0)
+        {
+            return;
+        }
+
+        report.AppendLine("## Teams");
+        report.AppendLine();
+        report.AppendLine("| Team | Members |");
+        report.AppendLine("| --- | --- |");
+        foreach (var team in teams)
+        {
+            var members = team.Select(c => $"{Scalar(c, "Name")} ({Scalar(c, "Role")})");
+            report.AppendLine($"| {team.Key} | {string.Join(", ", members)} |");
         }
 
         report.AppendLine();
@@ -234,6 +494,8 @@ public static class RunReportWriter
 
             var line = row.EventType switch
             {
+                // A model's private reasoning, when it produced any, folded above the move it led to.
+                "ModelResponse" => TranscribeReasoning(row),
                 // The intent is transcribed where it was spoken, not where it was ruled on, so the
                 // reader sees the character act before the engine and the DM respond to it.
                 "ToolCallDispatched" => TranscribeIntent(row),
@@ -242,7 +504,13 @@ public static class RunReportWriter
                 "DungeonMasterAnswer" => $"**DM:** {Text(row.Data, "Answer")}",
                 "CharacterPassed" => $"**{Text(row.Data, "CharacterName")} holds back:** \"{Text(row.Data, "Reason")}\"",
                 "DmAdjudication" => TranscribeRuling(row),
+                "TargetResolved" => $"*[target — {Text(row.Data, "Note")}]*",
+                "RngDraw" =>
+                    $"*[{Text(row.Data, "Purpose")}: rolled {Text(row.Data, "RawRoll")} vs {Text(row.Data, "Threshold")} " +
+                    $"→ {Text(row.Data, "Result")}]*",
                 "EngineAction" => TranscribeEngineAction(row),
+                "TurnSkipped" => $"*— {Text(row.Data, "CharacterName")} lies fallen; their turn is skipped*",
+                "TeamOutcomeEvaluated" => TranscribeTeamOutcome(row),
                 "ContextWindowSaturated" =>
                     $"*[{Text(row.Data, "AgentName")} sent ~{Text(row.Data, "EstimatedSentTokens")} tokens but only " +
                     $"{Text(row.Data, "ReportedInputTokens")} were processed — ~{Text(row.Data, "EstimatedDroppedTokens")} " +
@@ -252,6 +520,9 @@ public static class RunReportWriter
                 "AdjudicationCorrected" =>
                     $"*[harness corrected `{Text(row.Data, "Parameter")}` from \"{Text(row.Data, "DungeonMasterValue")}\" " +
                     $"to \"{Text(row.Data, "CorrectedValue")}\"]*",
+                "ToolCallRecovered" =>
+                    $"*[{Text(row.Data, "AgentName")} wrote its move as text; harness recovered " +
+                    $"`{Text(row.Data, "ToolName")}`]*",
                 "TurnEnded" => $"*— {Text(row.Data, "CharacterName")}'s turn ends: {Text(row.Data, "Result")}*",
                 _ => null
             };
@@ -262,6 +533,54 @@ public static class RunReportWriter
                 report.AppendLine();
             }
         }
+    }
+
+    /// <summary>
+    /// A model's private reasoning for a call, when it produced any. Reasoning-on Ollama and Anthropic
+    /// return the thinking text (Microsoft.Extensions.AI normalises it to a reasoning content block);
+    /// OpenAI's Responses API mostly withholds it, so those calls simply have none. Folded into a
+    /// collapsible block so the narrative stays readable but the thinking is one click away.
+    /// </summary>
+    private static string? TranscribeReasoning(TraceRow row)
+    {
+        var reasoning = ExtractReasoning(row.Data);
+        if (string.IsNullOrWhiteSpace(reasoning))
+        {
+            return null;
+        }
+
+        return $"<details><summary>💭 {row.Actor} — thinking</summary>\n\n{Quote(reasoning)}\n\n</details>";
+    }
+
+    /// <summary>Concatenates every reasoning content block across a response's messages, or null if none.</summary>
+    private static string? ExtractReasoning(JsonElement? data)
+    {
+        if (!TryGet(data, out var messages, "Messages") || messages.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        var parts = new List<string>();
+        foreach (var message in messages.EnumerateArray())
+        {
+            if (!message.TryGetProperty("Contents", out var contents) || contents.ValueKind != JsonValueKind.Array)
+            {
+                continue;
+            }
+
+            foreach (var content in contents.EnumerateArray())
+            {
+                if (content.TryGetProperty("Type", out var type) && type.ValueKind == JsonValueKind.String
+                    && type.GetString() == "reasoning"
+                    && content.TryGetProperty("Text", out var text) && text.ValueKind == JsonValueKind.String
+                    && text.GetString() is { } value && !string.IsNullOrWhiteSpace(value))
+                {
+                    parts.Add(value.Trim());
+                }
+            }
+        }
+
+        return parts.Count == 0 ? null : string.Join("\n\n", parts);
     }
 
     /// <summary>A character stating what it attempts, taken from its own take_action dispatch.</summary>
@@ -290,6 +609,13 @@ public static class RunReportWriter
 
         var name = Text(row.Data, "CharacterName");
         return $"**DM (to {name}) — `{category}`:** {Text(row.Data, "Reason")}";
+    }
+
+    /// <summary>The team standings are noisy per turn, so only the deciding evaluation is transcribed.</summary>
+    private static string? TranscribeTeamOutcome(TraceRow row)
+    {
+        var isOver = row.Data.TryGetProperty("IsOver", out var o) && o.ValueKind == JsonValueKind.True;
+        return isOver ? $"*— {Text(row.Data, "Description")}*" : null;
     }
 
     private static string TranscribeEngineAction(TraceRow row)
@@ -451,6 +777,16 @@ public static class RunReportWriter
                     ("Error", Text(d, "Error")));
                 break;
 
+            case "ToolCallRecovered":
+                yield return Bullets(
+                    ("Agent", Text(d, "AgentName")),
+                    ("Recovered tool", $"`{Text(d, "ToolName")}`"),
+                    ("Call", $"`{Text(d, "CallId")}`"),
+                    ("Argument", Text(d, "RecoveredArgument")));
+                yield return "";
+                yield return Quote($"**Model wrote (as prose):** {Text(d, "OriginalText")}");
+                break;
+
             case "DmAdjudication":
                 yield return Bullets(
                     ("Character", Text(d, "CharacterName")),
@@ -474,6 +810,19 @@ public static class RunReportWriter
                     ("Justification", Text(d, "Justification")));
                 break;
 
+            case "TargetResolved":
+                yield return Bullets(
+                    ("Attacker", $"{Text(d, "AttackerName")} (`{Text(d, "AttackerId")}`)"),
+                    ("Requested target", $"\"{Text(d, "RequestedTarget")}\""),
+                    ("Resolved to", IsTrue(d, "Resolved")
+                        ? $"{Text(d, "ResolvedTargetName")} (`{Text(d, "ResolvedTargetId")}`)"
+                        : "no character — the reference did not resolve"),
+                    ("Target alive", Text(d, "TargetAlive")),
+                    ("Target team", Text(d, "TargetTeam")),
+                    ("Ally of attacker", Text(d, "TargetIsAlly")),
+                    ("Note", Text(d, "Note")));
+                break;
+
             case "EngineAction":
                 yield return Bullets(
                     ("Action", $"`{Text(d, "ActionType")}` {Flatten(Property(d, "Action"))}"),
@@ -482,6 +831,37 @@ public static class RunReportWriter
                     ("Outcome", Text(d, "OutcomeSummary") ?? Text(d, "RejectionMessage")));
                 yield return "";
                 yield return StateTable(Property(d, "StateBefore"), Property(d, "StateAfter"));
+                break;
+
+            case "RngDraw":
+                yield return Bullets(
+                    ("Purpose", $"`{Text(d, "Purpose")}`"),
+                    ("Caused by", $"`{Text(d, "ActionType")}` — {Text(d, "ActorName")} → {Text(d, "TargetName")}"),
+                    ("Selecting", Text(d, "OutcomeSelected")),
+                    ("Candidates", $"d{Text(d, "Sides")} in [{Text(d, "RangeMin")}, {Text(d, "RangeMax")}]"),
+                    ("Raw roll", Text(d, "RawRoll")),
+                    ("Modifier (threshold)", Text(d, "Threshold")),
+                    ("Comparison", Text(d, "Comparison")),
+                    ("Result", $"`{Text(d, "Result")}`"),
+                    ("Seed", Text(d, "Seed")),
+                    ("Sequence", $"{Text(d, "SequenceBefore")} → {Text(d, "SequenceAfter")}"));
+                break;
+
+            case "TeamOutcomeEvaluated":
+                yield return Bullets(
+                    ("Trigger", Text(d, "Trigger")),
+                    ("Encounter over", Text(d, "IsOver")),
+                    ("Standings", FormatStandings(Property(d, "Standings"))),
+                    ("Winning teams", JoinArray(d, "WinningTeams")),
+                    ("Eliminated teams", JoinArray(d, "EliminatedTeams")),
+                    ("Description", Text(d, "Description")));
+                break;
+
+            case "TurnSkipped":
+                yield return Bullets(
+                    ("Character", $"{Text(d, "CharacterName")} (`{Text(d, "CharacterId")}`)"),
+                    ("Team", Text(d, "Team")),
+                    ("Reason", Text(d, "Reason")));
                 break;
 
             case "CharacterQuestion":
@@ -547,6 +927,18 @@ public static class RunReportWriter
         }
     }
 
+    private static string FormatStandings(JsonElement? standings)
+    {
+        if (standings is not { ValueKind: JsonValueKind.Array } array)
+        {
+            return "";
+        }
+
+        var parts = array.EnumerateArray()
+            .Select(s => $"{Scalar(s, "Team")} {Scalar(s, "Living")}/{Scalar(s, "Total")} alive");
+        return string.Join("; ", parts);
+    }
+
     private static string StateTable(JsonElement? before, JsonElement? after)
     {
         if (before is null || after is null)
@@ -603,8 +995,8 @@ public static class RunReportWriter
 
         if (TryGet(finalState, out var state, "State"))
         {
-            report.AppendLine("| Character | Health | Armour | Weapon | Inventory | Injuries | Alive |");
-            report.AppendLine("| --- | --- | --- | --- | --- | --- | --- |");
+            report.AppendLine("| Character | Team | Health | Armour | Weapon | Inventory | Injuries | Alive |");
+            report.AppendLine("| --- | --- | --- | --- | --- | --- | --- | --- |");
             foreach (var character in Characters(state))
             {
                 var health = int.TryParse(Scalar(character, "Health"), out var h) ? h : 0;
@@ -613,7 +1005,7 @@ public static class RunReportWriter
                     : "none";
 
                 report.AppendLine(
-                    $"| {Scalar(character, "Name")} | {health}/{Scalar(character, "MaxHealth")} " +
+                    $"| {Scalar(character, "Name")} | {Scalar(character, "Team")} | {health}/{Scalar(character, "MaxHealth")} " +
                     $"| {Scalar(character, "Armour")} | {weapon} | {NamesOf(character, "Inventory")} " +
                     $"| {DescriptionsOf(character, "Injuries")} | {(health > 0 ? "yes" : "no")} |");
             }
@@ -725,6 +1117,20 @@ public static class RunReportWriter
 
     private static string? Text(JsonElement? source, params string[] path) =>
         TryGet(source, out var value, path) ? Flatten(value) : null;
+
+    /// <summary>True only when the JSON value at the path is the boolean <c>true</c>.</summary>
+    private static bool IsTrue(JsonElement? source, params string[] path) =>
+        TryGet(source, out var value, path) && value.ValueKind == JsonValueKind.True;
+
+    private static long LongField(JsonElement? source, params string[] path) =>
+        TryGet(source, out var value, path) && value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var number)
+            ? number
+            : 0;
+
+    private static double DoubleField(JsonElement? source, params string[] path) =>
+        TryGet(source, out var value, path) && value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var number)
+            ? number
+            : 0;
 
     private static string Scalar(JsonElement source, string name) =>
         source.ValueKind == JsonValueKind.Object && source.TryGetProperty(name, out var value)
