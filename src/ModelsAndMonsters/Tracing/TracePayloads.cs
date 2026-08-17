@@ -63,6 +63,12 @@ public sealed record TracedChatOptions
 
     public long? Seed { get; init; }
 
+    /// <summary>Input context window requested for this call, when the provider accepts one.</summary>
+    public int? ContextWindow { get; init; }
+
+    /// <summary>Whether reasoning was requested on/off, when the provider accepts the toggle.</summary>
+    public bool? Thinking { get; init; }
+
     public string? ToolMode { get; init; }
 
     /// <summary>Options requested by the profile that this provider does not support, and were dropped.</summary>
@@ -153,6 +159,71 @@ public sealed record ModelResponsePayload
     public IReadOnlyDictionary<string, string?>? ProviderMetadata { get; init; }
 
     public required double ElapsedMilliseconds { get; init; }
+}
+
+/// <summary>
+/// A response cut short by the output-token limit. Recorded separately from the response itself
+/// because a truncated reply is not a considered answer, and silently treating it as one produces
+/// misleading downstream behaviour.
+/// </summary>
+public sealed record ModelTruncatedPayload
+{
+    public required string AgentName { get; init; }
+
+    public required string Provider { get; init; }
+
+    public required string ModelId { get; init; }
+
+    public required string Purpose { get; init; }
+
+    public required string CallId { get; init; }
+
+    public long? OutputTokenCount { get; init; }
+
+    public int? MaxOutputTokensRequested { get; init; }
+
+    /// <summary>False when the truncation cost us the tool call entirely.</summary>
+    public required bool HadToolCalls { get; init; }
+
+    /// <summary>True when the whole output was a reasoning block, leaving no tool call and no prose.</summary>
+    public bool ReasoningOnly { get; init; }
+
+    public required string Effect { get; init; }
+}
+
+/// <summary>
+/// A request whose reported input size fell well below what we sent — evidence the provider silently
+/// discarded part of the conversation.
+/// </summary>
+/// <remarks>
+/// Detected by comparing an estimate of what we sent against the input size the response reports,
+/// rather than against a configured window. Ollama gives no truncation signal and may truncate below
+/// the nominal window, so the sent-versus-received gap is the only dependable evidence. Once this
+/// fires, the application no longer owns the whole conversation the model actually saw.
+/// </remarks>
+public sealed record ContextSaturationPayload
+{
+    public required string AgentName { get; init; }
+
+    public required string Purpose { get; init; }
+
+    public required string CallId { get; init; }
+
+    /// <summary>Rough estimate of what we sent.</summary>
+    public required int EstimatedSentTokens { get; init; }
+
+    /// <summary>Input size the provider reported processing.</summary>
+    public required long ReportedInputTokens { get; init; }
+
+    /// <summary>Estimated tokens dropped before the model saw them.</summary>
+    public required int EstimatedDroppedTokens { get; init; }
+
+    public required int MessagesSent { get; init; }
+
+    /// <summary>The configured window, when one was set. Recorded for reference, not used to detect.</summary>
+    public int? ConfiguredContextWindow { get; init; }
+
+    public required string Effect { get; init; }
 }
 
 public sealed record ModelErrorPayload

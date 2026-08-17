@@ -20,6 +20,18 @@ public enum TraceEventType
     /// <summary>A model call threw.</summary>
     ModelError,
 
+    /// <summary>
+    /// The model stopped because it ran out of output budget rather than because it had finished.
+    /// Anything it was part-way through — most importantly a tool call — may be missing or malformed.
+    /// </summary>
+    ModelResponseTruncated,
+
+    /// <summary>
+    /// A request came close enough to the agent's context window that the provider may have discarded
+    /// the oldest messages. Ollama does this silently, so it has to be inferred and reported.
+    /// </summary>
+    ContextWindowSaturated,
+
     /// <summary>The application inspected a requested tool call and decided how to dispatch it.</summary>
     ToolCallDispatched,
 

@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using Microsoft.Extensions.AI;
+using OllamaSharp;
 
 namespace ModelsAndMonsters.AI;
 
@@ -81,6 +82,32 @@ public static class ChatOptionsFactory
             }
         }
 
+        if (profile.ContextWindow is { } contextWindow)
+        {
+            if (capabilities.SupportsContextWindow)
+            {
+                ApplyOllamaContextWindow(options, contextWindow);
+            }
+            else
+            {
+                // Not a failure: the provider simply fixes the window per model. The profile value is
+                // still used by the harness to warn about approaching it.
+                dropped.Add(nameof(AgentModelProfile.ContextWindow));
+            }
+        }
+
+        if (profile.Thinking is { } thinking)
+        {
+            if (capabilities.SupportsThinkingToggle)
+            {
+                ApplyOllamaThinking(options, thinking);
+            }
+            else
+            {
+                dropped.Add(nameof(AgentModelProfile.Thinking));
+            }
+        }
+
         if (tools is { Count: > 0 })
         {
             options.Tools = [.. tools];
@@ -92,4 +119,15 @@ public static class ChatOptionsFactory
 
         return new ResolvedChatOptions(options, dropped.ToImmutable());
     }
+
+    /// <summary>
+    /// Sets Ollama's <c>num_ctx</c>. This is a provider-specific detail, and it stays here in the AI
+    /// layer rather than reaching agents or orchestration.
+    /// </summary>
+    private static void ApplyOllamaContextWindow(ChatOptions options, int contextWindow) =>
+        options.AddOllamaOption(OllamaSharp.Models.OllamaOption.NumCtx, contextWindow);
+
+    /// <summary>Sets Ollama's top-level <c>think</c> flag, which enables or disables reasoning.</summary>
+    private static void ApplyOllamaThinking(ChatOptions options, bool thinking) =>
+        options.AddOllamaOption(OllamaSharp.Models.OllamaOption.Think, thinking);
 }

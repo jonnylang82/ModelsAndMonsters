@@ -65,6 +65,8 @@ public sealed class TracingChatClient : DelegatingChatClient
             stopwatch.Stop();
 
             EmitResponse(callId, scope, response, stopwatch.Elapsed.TotalMilliseconds);
+            EmitTruncationIfAny(callId, scope, response, options);
+            EmitContextSaturationIfAny(callId, scope, response, materialised);
             return response;
         }
         catch (Exception ex)
@@ -107,7 +109,7 @@ public sealed class TracingChatClient : DelegatingChatClient
             SystemPrompt = messages.FirstOrDefault(m => m.Role == ChatRole.System)?.Text,
             Messages = traced,
             NewlyInjected = newlyInjected,
-            RequestedOptions = ChatTraceMapper.MapOptions(options, scope.UnsupportedOptionsDropped),
+            RequestedOptions = ChatTraceMapper.MapOptions(options, scope.UnsupportedOptionsDropped, _profile.ContextWindow, _profile.Thinking),
             Tools = ChatTraceMapper.MapTools(options?.Tools)
         }, _profile.AgentName);
     }
@@ -131,6 +133,84 @@ public sealed class TracingChatClient : DelegatingChatClient
             Usage = ChatTraceMapper.MapUsage(response.Usage),
             ProviderMetadata = ChatTraceMapper.MapAdditionalProperties(response.AdditionalProperties),
             ElapsedMilliseconds = elapsedMilliseconds
+        }, _profile.AgentName);
+    }
+
+    /// <summary>
+    /// Flags a reply that stopped because it ran out of room. It is recorded here, at the one place
+    /// every model call passes through, so no call site can forget to look.
+    /// </summary>
+    private void EmitTruncationIfAny(string callId, CallScopeState scope, ChatResponse response, ChatOptions? options)
+    {
+        if (response.FinishReason != ChatFinishReason.Length)
+        {
+            return;
+        }
+
+        var contents = response.Messages.SelectMany(m => m.Contents).ToList();
+        var hadToolCalls = contents.OfType<FunctionCallContent>().Any();
+        var hadVisibleText = contents.OfType<TextContent>().Any(t => !string.IsNullOrWhiteSpace(t.Text));
+        var hadReasoning = contents.OfType<TextReasoningContent>().Any(r => !string.IsNullOrWhiteSpace(r.Text));
+
+        // The distinctive failure of a reasoning model in this harness: the whole output budget went on
+        // a private reasoning block, leaving no tool call and no visible prose. This is worth calling out
+        // by name, because the fix is not "narrate less" — it is to disable thinking or grant more room.
+        var reasoningOnly = !hadToolCalls && !hadVisibleText && hadReasoning;
+
+        _trace.Emit(TraceEventType.ModelResponseTruncated, new ModelTruncatedPayload
+        {
+            AgentName = _profile.AgentName,
+            Provider = _profile.Provider.ToString(),
+            ModelId = _profile.ModelId,
+            Purpose = scope.Purpose,
+            CallId = callId,
+            OutputTokenCount = response.Usage?.OutputTokenCount,
+            MaxOutputTokensRequested = options?.MaxOutputTokens,
+            HadToolCalls = hadToolCalls,
+            ReasoningOnly = reasoningOnly,
+            Effect = reasoningOnly
+                ? "The model spent its entire output budget reasoning and produced no visible reply. " +
+                  "Disable thinking for this agent, or raise MaxOutputTokens well above the reasoning length."
+                : hadToolCalls
+                    ? "A tool call survived, but any text alongside it is incomplete."
+                    : "The reply was cut off before any tool call was produced."
+        }, _profile.AgentName);
+    }
+
+    /// <summary>
+    /// Flags a request whose reported input size fell well below what we sent.
+    /// </summary>
+    /// <remarks>
+    /// This is the "compare what you sent against what the response says arrived" check. It needs no
+    /// configured window and does not trust one: it works purely from the reported input size, so it
+    /// catches truncation below the nominal window and truncation when no window was declared.
+    /// </remarks>
+    private void EmitContextSaturationIfAny(string callId, CallScopeState scope, ChatResponse response, IReadOnlyList<ChatMessage> messagesSent)
+    {
+        if (response.Usage?.InputTokenCount is not { } reportedInputTokens)
+        {
+            return;
+        }
+
+        var estimatedSent = ContextTruncation.EstimateSentTokens(messagesSent);
+        if (!ContextTruncation.WasInputTruncated(estimatedSent, reportedInputTokens, out var dropped))
+        {
+            return;
+        }
+
+        _trace.Emit(TraceEventType.ContextWindowSaturated, new ContextSaturationPayload
+        {
+            AgentName = _profile.AgentName,
+            Purpose = scope.Purpose,
+            CallId = callId,
+            EstimatedSentTokens = estimatedSent,
+            ReportedInputTokens = reportedInputTokens,
+            EstimatedDroppedTokens = dropped,
+            MessagesSent = messagesSent.Count,
+            ConfiguredContextWindow = _profile.ContextWindow,
+            Effect = $"We sent roughly {estimatedSent} tokens but the provider reported processing only " +
+                     $"{reportedInputTokens}. About {dropped} tokens of earlier history were discarded " +
+                     "before the model saw them, so this reply was not formed from the whole conversation."
         }, _profile.AgentName);
     }
 

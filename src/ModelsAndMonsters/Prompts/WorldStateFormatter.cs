@@ -33,7 +33,7 @@ public sealed class WorldStateFormatter
 
         if (state.Room.Features.Length > 0)
         {
-            builder.AppendLine("Features present:");
+            builder.AppendLine("Scenery (descriptive only — the world cannot resolve any interaction with these):");
             foreach (var feature in state.Room.Features)
             {
                 builder.AppendLine($"- {feature}");
@@ -47,16 +47,19 @@ public sealed class WorldStateFormatter
         {
             builder.AppendLine();
             builder.AppendLine($"{character.Name} (id: {character.Id}, {character.Role.ToString().ToLowerInvariant()}) - {(character.IsAlive ? "alive" : "DEAD")}");
-            builder.AppendLine($"  Health: {character.Health} / {character.MaxHealth}");
-            builder.AppendLine($"  Armour: {character.Armour}");
-            builder.AppendLine($"  Weapon: {FormatWeapon(character.Weapon)}");
-            builder.AppendLine($"  Inventory: {FormatInventory(character.Inventory)}");
+            builder.AppendLine($"  Condition: {DescribeCondition(character)}");
+            builder.AppendLine($"  Currently holding: {FormatWeapon(character.Weapon)}");
+            builder.AppendLine($"  Carrying: {FormatInventory(character.Inventory)}");
             builder.AppendLine($"  Injuries: {FormatInjuries(character.Injuries)}");
             builder.AppendLine($"  Abilities: {(character.Abilities.Length == 0 ? "none" : string.Join(", ", character.Abilities))}");
         }
 
         builder.AppendLine();
-        builder.AppendLine("ACTIONS THE WORLD CAN RESOLVE: attack_character, use_item. Nothing else exists.");
+        builder.AppendLine("STATE NOTES:");
+        builder.AppendLine("- Condition is already a description, not a number. There are no hit points, health totals or armour values to reveal — state condition only in words.");
+        builder.AppendLine("- There is no position, distance, facing or movement state. No character has a location; everyone is already within reach of everyone else. Do not describe or track distance, approaching, or backing away.");
+        builder.AppendLine("- The only state that exists is what is listed above: each character's condition, the weapon they hold, what they carry, and their injuries.");
+        builder.AppendLine("- ACTIONS THE WORLD CAN RESOLVE: attack_character, use_item. Nothing else exists.");
 
         return builder.ToString().TrimEnd();
     }
@@ -77,8 +80,31 @@ public sealed class WorldStateFormatter
             ["abilities"] = FormatBulletList(character.Abilities)
         }).TrimEnd();
 
+    /// <summary>
+    /// Turns exact health into a descriptive band. The Dungeon Master narrates wounds and never needs
+    /// raw numbers; handing it a band instead of a total makes it structurally unable to leak one, which
+    /// is more reliable than instructing a small model not to. The engine keeps the exact value.
+    /// </summary>
+    private static string DescribeCondition(Character character)
+    {
+        if (!character.IsAlive)
+        {
+            return "dead";
+        }
+
+        var fraction = character.MaxHealth <= 0 ? 1.0 : (double)character.Health / character.MaxHealth;
+        return fraction switch
+        {
+            >= 0.999 => "unhurt",
+            >= 0.75 => "lightly wounded",
+            >= 0.45 => "wounded",
+            >= 0.20 => "badly wounded",
+            _ => "barely standing, close to death"
+        };
+    }
+
     private static string FormatWeapon(Weapon? weapon) =>
-        weapon is null ? "none" : $"{weapon.Name} (damage {weapon.Damage})";
+        weapon is null ? "none" : weapon.Name;
 
     private static string FormatInventory(IReadOnlyList<InventoryItem> inventory) =>
         inventory.Count == 0 ? "empty" : string.Join(", ", inventory.Select(FormatItem));

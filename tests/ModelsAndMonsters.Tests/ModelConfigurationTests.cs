@@ -59,6 +59,79 @@ public sealed class ModelConfigurationTests
     }
 
     [Fact]
+    public void Ollama_receives_the_context_window_as_a_native_option()
+    {
+        var profile = new AgentModelProfile
+        {
+            AgentName = "Aric",
+            Provider = ModelProvider.Ollama,
+            ModelId = "llama3.1",
+            ContextWindow = 16384
+        };
+
+        var resolved = ChatOptionsFactory.Create(profile);
+
+        Assert.Empty(resolved.UnsupportedOptionsDropped);
+        Assert.NotNull(resolved.Options.AdditionalProperties);
+        Assert.Contains(
+            resolved.Options.AdditionalProperties!,
+            p => p.Value is int and 16384 || Equals(p.Value, 16384));
+    }
+
+    [Fact]
+    public void OpenAI_cannot_be_told_a_context_window_and_the_drop_is_reported()
+    {
+        var profile = new AgentModelProfile
+        {
+            AgentName = "Grik",
+            Provider = ModelProvider.OpenAI,
+            ModelId = "gpt-4.1-mini",
+            ContextWindow = 16384
+        };
+
+        var resolved = ChatOptionsFactory.Create(profile);
+
+        // The window is fixed per model there, so the request carries nothing; the profile value still
+        // survives in the trace so saturation can be judged against it.
+        Assert.Equal(nameof(AgentModelProfile.ContextWindow), Assert.Single(resolved.UnsupportedOptionsDropped));
+    }
+
+    [Fact]
+    public void Ollama_receives_the_thinking_toggle_as_a_native_option()
+    {
+        var profile = new AgentModelProfile
+        {
+            AgentName = "DungeonMaster",
+            Provider = ModelProvider.Ollama,
+            ModelId = "qwen3.5:9b",
+            Thinking = false
+        };
+
+        var resolved = ChatOptionsFactory.Create(profile);
+
+        Assert.Empty(resolved.UnsupportedOptionsDropped);
+        Assert.NotNull(resolved.Options.AdditionalProperties);
+        // The think flag rides in the Ollama-specific additional properties.
+        Assert.NotEmpty(resolved.Options.AdditionalProperties!);
+    }
+
+    [Fact]
+    public void OpenAI_cannot_be_told_a_thinking_flag_and_the_drop_is_reported()
+    {
+        var profile = new AgentModelProfile
+        {
+            AgentName = "Grik",
+            Provider = ModelProvider.OpenAI,
+            ModelId = "gpt-4.1-mini",
+            Thinking = false
+        };
+
+        var resolved = ChatOptionsFactory.Create(profile);
+
+        Assert.Contains(nameof(AgentModelProfile.Thinking), resolved.UnsupportedOptionsDropped);
+    }
+
+    [Fact]
     public void Ollama_honours_every_supported_sampling_option()
     {
         var profile = new AgentModelProfile

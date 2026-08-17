@@ -65,6 +65,19 @@ public sealed class AgentProfileOptions
 
     public long? Seed { get; set; }
 
+    /// <summary>
+    /// Input context window in tokens. Sent to Ollama as <c>num_ctx</c>, and used by the harness to
+    /// warn when a request is close enough to the limit that the provider may be discarding history.
+    /// </summary>
+    public int? ContextWindow { get; set; }
+
+    /// <summary>
+    /// Whether a reasoning model should think before answering. Null leaves the model default; false
+    /// (recommended for this harness) gives direct prose and tool calls; true needs a large
+    /// MaxOutputTokens. Ignored by models that do not reason.
+    /// </summary>
+    public bool? Thinking { get; set; }
+
     /// <summary>Optional per-agent endpoint override, e.g. a second Ollama host.</summary>
     public string? Endpoint { get; set; }
 }
@@ -87,12 +100,15 @@ public sealed class HarnessOptions
     public int MaxAdjudicationRetries { get; set; } = 1;
 
     /// <summary>
-    /// When true, the Dungeon Master adjudicates on a conversation separate from its narration
-    /// history. Measured to matter a great deal: with narration history attached, one traced
-    /// adjudication was misclassified every time; on a clean context it was correct every time.
-    /// Set false to compare the two.
+    /// When true, the Dungeon Master runs each task (narration, answering, adjudication) on a
+    /// purpose-specific projection — the system prompt, a fresh state snapshot and only the immediately
+    /// relevant context — rather than one ever-growing conversation. This keeps the DM's per-call input
+    /// bounded (it otherwise re-embeds a full state block every call and saturates the context window)
+    /// and keeps adjudication out of prose mode. Measured to matter: with the full narration history
+    /// attached, one traced adjudication was misclassified every time; on a clean context it was correct
+    /// every time. Set false to run the old single-conversation behaviour for comparison.
     /// </summary>
-    public bool IsolateAdjudicationContext { get; set; } = true;
+    public bool ProjectDungeonMasterContext { get; set; } = true;
 
     /// <summary>
     /// How many consecutive rounds may pass with nothing taking effect before the encounter is

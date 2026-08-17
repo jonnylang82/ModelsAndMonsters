@@ -67,6 +67,10 @@ public sealed record TracedAgentProfile
 
     public long? Seed { get; init; }
 
+    public int? ContextWindow { get; init; }
+
+    public bool? Thinking { get; init; }
+
     public string? Endpoint { get; init; }
 
     /// <summary>Sampling options this provider cannot honour and will therefore never be sent.</summary>
@@ -84,6 +88,8 @@ public sealed record TracedAgentProfile
             TopK = profile.TopK,
             MaxOutputTokens = profile.MaxOutputTokens,
             Seed = profile.Seed,
+            ContextWindow = profile.ContextWindow,
+            Thinking = profile.Thinking,
             Endpoint = profile.Endpoint,
             OptionsUnsupportedByProvider = resolved.UnsupportedOptionsDropped
         };

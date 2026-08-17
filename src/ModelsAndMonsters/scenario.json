@@ -7,12 +7,8 @@
     "Room": {
       "Id": "guard-chamber",
       "Name": "Guard Chamber",
-      "Description": "A cramped stone chamber below the old watchtower. The air is close and smells of damp and old smoke. The only door stands behind the intruder.",
-      "Features": [
-        "A brazier of low coals burns against the eastern wall",
-        "A toppled wooden bench lies across one corner",
-        "Straw and gnawed bones are scattered over the flagstones"
-      ]
+      "Description": "A cramped, bare stone chamber below the old watchtower. The air is close and smells of damp and old smoke. There is no room to manoeuvre and nowhere to go; the two of them stand face to face.",
+      "Features": []
     },
 
     "Characters": [

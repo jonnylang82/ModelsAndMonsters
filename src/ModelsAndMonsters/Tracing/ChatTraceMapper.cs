@@ -87,7 +87,11 @@ public static class ChatTraceMapper
                 JsonSchema = tool is AIFunctionDeclaration declaration ? declaration.JsonSchema : null
             })];
 
-    public static TracedChatOptions MapOptions(ChatOptions? options, IReadOnlyList<string>? unsupportedDropped = null) => new()
+    public static TracedChatOptions MapOptions(
+        ChatOptions? options,
+        IReadOnlyList<string>? unsupportedDropped = null,
+        int? contextWindow = null,
+        bool? thinking = null) => new()
     {
         ModelId = options?.ModelId,
         Temperature = options?.Temperature,
@@ -95,6 +99,10 @@ public static class ChatTraceMapper
         TopK = options?.TopK,
         MaxOutputTokens = options?.MaxOutputTokens,
         Seed = options?.Seed,
+        // Provider-native options live in AdditionalProperties under provider-specific keys, so the
+        // requested window and thinking flag are taken from the profile rather than dug back out.
+        ContextWindow = contextWindow,
+        Thinking = thinking,
         ToolMode = options?.ToolMode?.GetType().Name,
         UnsupportedOptionsDropped = unsupportedDropped ?? []
     };

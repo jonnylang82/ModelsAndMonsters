@@ -163,15 +163,31 @@ public sealed class TurnCoordinator
             var calls = ModelAgent.GetToolCalls(response);
             if (calls.Count == 0)
             {
-                // The model replied with prose instead of using its protocol. Nudge and try again.
+                // No tool call has two very different causes: the model ignored its protocol, or it
+                // ran out of output budget mid-reply. They need different nudges and, more
+                // importantly, they must not be confused with each other in the trace.
+                var truncated = ModelAgent.WasTruncated(response);
+
                 _trace.Emit(TraceEventType.ToolCallError, new ToolCallErrorPayload
                 {
                     AgentName = character.Name,
                     ToolName = "(none)",
-                    Error = "Character responded without calling ask_dm or take_action."
+                    Error = truncated
+                        ? "Character's reply was truncated at the output-token limit before any tool call was produced."
+                        // Naming the finish reason covers the other ways a reply can end early, such as
+                        // a provider content filter, without needing a case for each.
+                        : $"Character responded without calling ask_dm, take_action or end_turn " +
+                          $"(finish reason: {response.FinishReason?.Value ?? "none reported"})."
                 });
 
-                character.AppendNudge(_prompts.Render("character.nudge"));
+                if (truncated)
+                {
+                    _console.Notice(
+                        $"{character.Name}'s reply hit the output-token limit. " +
+                        "Consider raising MaxOutputTokens for that agent.");
+                }
+
+                character.AppendNudge(_prompts.Render(truncated ? "character.truncated" : "character.nudge"));
                 continue;
             }
 
@@ -492,11 +508,22 @@ public sealed class TurnCoordinator
 
         for (var retry = 0; calls.Count == 0 && retry < _limits.MaxAdjudicationRetries; retry++)
         {
+            var truncated = ModelAgent.WasTruncated(response);
+            if (truncated)
+            {
+                _console.Notice(
+                    "The Dungeon Master's ruling hit the output-token limit. " +
+                    "Consider raising MaxOutputTokens for the DungeonMaster agent.");
+            }
+
             _trace.Emit(TraceEventType.ToolCallError, new ToolCallErrorPayload
             {
                 AgentName = DungeonMasterAgent.AgentIdentifier,
                 ToolName = "(none)",
-                Error = "Dungeon Master adjudicated without calling a tool."
+                Error = truncated
+                    ? "Dungeon Master's ruling was truncated at the output-token limit before a tool call was produced."
+                    : $"Dungeon Master adjudicated without calling a tool " +
+                      $"(finish reason: {response.FinishReason?.Value ?? "none reported"})."
             }, DungeonMasterAgent.AgentIdentifier);
 
             response = await _dungeonMaster.RetryProposeActionAsync(character.Name, cancellationToken)
@@ -507,15 +534,26 @@ public sealed class TurnCoordinator
         if (calls.Count == 0)
         {
             var text = ModelText.Clean(response);
+
+            // If the DM wrote its tool call as text instead of calling it, keep the reason it intended
+            // and never let the raw JSON reach the character as if it were narration.
+            var messageToCharacter = text switch
+            {
+                _ when string.IsNullOrWhiteSpace(text) => "Your attempt comes to nothing.",
+                _ when ModelText.LooksStructured(text) =>
+                    ModelText.TryExtractJsonField(text, "reason", "explanation", "message")
+                        ?? "Your attempt comes to nothing.",
+                _ => text
+            };
+
             var outcome = new ActionAttemptOutcome
             {
                 Category = ActionResolutionCategory.DmProtocolFailure,
-                MessageToCharacter = string.IsNullOrWhiteSpace(text)
-                    ? "Nothing comes of it."
-                    : text
+                MessageToCharacter = messageToCharacter
             };
 
-            EmitAdjudication(character, intent, outcome.Category, outcome.MessageToCharacter, null, text);
+            // The trace keeps the DM's original text verbatim, so the leaked-JSON case stays visible.
+            EmitAdjudication(character, intent, outcome.Category, messageToCharacter, null, text);
             _console.CharacterRefused(character.Name, outcome.MessageToCharacter);
             return outcome;
         }

@@ -74,6 +74,16 @@ public abstract class ModelAgent
     public static IReadOnlyList<FunctionCallContent> GetToolCalls(ChatResponse response) =>
         [.. response.Messages.SelectMany(m => m.Contents).OfType<FunctionCallContent>()];
 
+    /// <summary>
+    /// True when the model stopped because it ran out of output budget.
+    /// </summary>
+    /// <remarks>
+    /// Worth distinguishing: a truncated reply that lost its tool call looks exactly like a model
+    /// ignoring its protocol, and treating the two the same sends the harness chasing the wrong fault.
+    /// </remarks>
+    public static bool WasTruncated(ChatResponse response) =>
+        response.FinishReason == ChatFinishReason.Length;
+
     /// <summary>Records the application's answer to a tool call in this agent's history.</summary>
     public void AppendToolResult(FunctionCallContent call, object? result) =>
         Conversation.AppendToolResult(call.CallId, result);

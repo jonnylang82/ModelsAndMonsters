@@ -13,6 +13,8 @@ public sealed class ExperimentTrace
 {
     private readonly ITraceSink _sink;
     private readonly TimeProvider _timeProvider;
+    private readonly Dictionary<TraceEventType, int> _counts = [];
+    private readonly Lock _countGate = new();
     private long _sequence;
 
     public ExperimentTrace(string runId, ITraceSink sink, TimeProvider? timeProvider = null)
@@ -42,8 +44,22 @@ public sealed class ExperimentTrace
 
     public void SetActor(string actor) => Actor = actor;
 
+    /// <summary>How many events of a type were emitted. Used for end-of-run warnings.</summary>
+    public int CountOf(TraceEventType eventType)
+    {
+        lock (_countGate)
+        {
+            return _counts.GetValueOrDefault(eventType);
+        }
+    }
+
     public void Emit(TraceEventType eventType, object? data = null, string? actor = null)
     {
+        lock (_countGate)
+        {
+            _counts[eventType] = _counts.GetValueOrDefault(eventType) + 1;
+        }
+
         var traceEvent = new TraceEvent
         {
             Sequence = Interlocked.Increment(ref _sequence),

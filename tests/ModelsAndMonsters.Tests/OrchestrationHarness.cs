@@ -82,7 +82,7 @@ internal sealed class OrchestrationHarness
             Profile(DungeonMasterAgent.AgentIdentifier),
             new TracingChatClient(dungeonMasterClient, Profile(DungeonMasterAgent.AgentIdentifier), Trace),
             SharedPrompts,
-            Limits.IsolateAdjudicationContext);
+            Limits.ProjectDungeonMasterContext);
 
         Hero = new CharacterAgent(
             heroDefinition,
@@ -133,6 +133,9 @@ internal sealed class OrchestrationHarness
     public Task<TurnResult> RunMonsterTurn(int round = 1, int turn = 2) =>
         Coordinator.RunTurnAsync(Monster, round, turn, CancellationToken.None);
 
+    /// <summary>Declared context window, so saturation detection has something to compare against.</summary>
+    public const int TestContextWindow = 8192;
+
     private static AgentModelProfile Profile(string agentName) => new()
     {
         AgentName = agentName,
@@ -140,6 +143,7 @@ internal sealed class OrchestrationHarness
         ModelId = "scripted-model",
         Temperature = 0.5f,
         TopK = 20,
-        Seed = 42
+        Seed = 42,
+        ContextWindow = TestContextWindow
     };
 }

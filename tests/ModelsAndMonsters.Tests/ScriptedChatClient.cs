@@ -68,6 +68,32 @@ internal sealed class ScriptedChatClient : IChatClient
             FinishReason = ChatFinishReason.ToolCalls
         };
 
+    /// <summary>Stamps a reply with the input size the provider claims it processed.</summary>
+    public static ChatResponse WithInputTokens(ChatResponse response, long reportedInputTokens)
+    {
+        response.Usage = new UsageDetails { InputTokenCount = reportedInputTokens, OutputTokenCount = 20 };
+        return response;
+    }
+
+    /// <summary>A reply cut off at the output-token limit, losing whatever came next.</summary>
+    public static ChatResponse Truncated(string partialText) =>
+        new(new ChatMessage(ChatRole.Assistant, partialText))
+        {
+            FinishReason = ChatFinishReason.Length,
+            Usage = new UsageDetails { OutputTokenCount = 500 }
+        };
+
+    /// <summary>
+    /// A reasoning model that spent its whole output budget thinking: the reply is a reasoning block
+    /// with no visible text and no tool call, cut off at the token limit.
+    /// </summary>
+    public static ChatResponse ReasoningOnly(string reasoning) =>
+        new(new ChatMessage(ChatRole.Assistant, [new TextReasoningContent(reasoning)]))
+        {
+            FinishReason = ChatFinishReason.Length,
+            Usage = new UsageDetails { OutputTokenCount = 500 }
+        };
+
     /// <summary>A single assistant message requesting several tools at once.</summary>
     public static ChatResponse Calls(params FunctionCallContent[] calls) =>
         new(new ChatMessage(ChatRole.Assistant, [.. calls])) { FinishReason = ChatFinishReason.ToolCalls };

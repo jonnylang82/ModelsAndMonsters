@@ -24,6 +24,29 @@ public sealed record AgentModelProfile
 
     public long? Seed { get; init; }
 
+    /// <summary>
+    /// Whether a reasoning model should think before answering.
+    /// </summary>
+    /// <remarks>
+    /// Null leaves the model's default. For this harness the useful setting is usually false: a
+    /// reasoning model left thinking spends its whole output budget on a private reasoning block and
+    /// emits no visible prose or tool call within a normal token limit, so narration comes back empty.
+    /// Set false to get direct prose and tool calls; set true only with a large <see cref="MaxOutputTokens"/>.
+    /// Harmless on models that do not reason — they ignore it.
+    /// </remarks>
+    public bool? Thinking { get; init; }
+
+    /// <summary>
+    /// Input context window in tokens.
+    /// </summary>
+    /// <remarks>
+    /// Worth setting explicitly. Ollama silently discards the oldest messages once a request exceeds
+    /// this, reporting only the post-truncation count in <c>prompt_eval_count</c>, so an application
+    /// that believes it owns the whole conversation can be quietly wrong. Declaring the window lets the
+    /// harness notice when it is being reached instead of guessing.
+    /// </remarks>
+    public int? ContextWindow { get; init; }
+
     /// <summary>Optional per-agent endpoint override; falls back to the provider-level endpoint.</summary>
     public string? Endpoint { get; init; }
 
@@ -53,6 +76,8 @@ public sealed record AgentModelProfile
             TopK = options.TopK,
             MaxOutputTokens = options.MaxOutputTokens,
             Seed = options.Seed,
+            ContextWindow = options.ContextWindow,
+            Thinking = options.Thinking,
             Endpoint = string.IsNullOrWhiteSpace(options.Endpoint) ? null : options.Endpoint.Trim()
         };
     }

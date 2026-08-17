@@ -235,6 +235,12 @@ public static class RunReportWriter
                 "CharacterPassed" => $"**{Text(row.Data, "CharacterName")} holds back:** \"{Text(row.Data, "Reason")}\"",
                 "DmAdjudication" => TranscribeRuling(row),
                 "EngineAction" => TranscribeEngineAction(row),
+                "ContextWindowSaturated" =>
+                    $"*[{Text(row.Data, "AgentName")} sent ~{Text(row.Data, "EstimatedSentTokens")} tokens but only " +
+                    $"{Text(row.Data, "ReportedInputTokens")} were processed — ~{Text(row.Data, "EstimatedDroppedTokens")} " +
+                    "tokens of earlier history were discarded before the model saw them]*",
+                "ModelResponseTruncated" =>
+                    $"*[{Text(row.Data, "AgentName")}'s reply hit the output-token limit — {Text(row.Data, "Effect")}]*",
                 "AdjudicationCorrected" =>
                     $"*[harness corrected `{Text(row.Data, "Parameter")}` from \"{Text(row.Data, "DungeonMasterValue")}\" " +
                     $"to \"{Text(row.Data, "CorrectedValue")}\"]*",
@@ -383,6 +389,28 @@ public static class RunReportWriter
                     yield return Quote(text);
                 }
 
+                break;
+
+            case "ModelResponseTruncated":
+                yield return Bullets(
+                    ("Agent", Text(d, "AgentName")),
+                    ("Purpose", Text(d, "Purpose")),
+                    ("Output tokens", $"{Text(d, "OutputTokenCount")} of {Text(d, "MaxOutputTokensRequested")} requested"),
+                    ("Kept a tool call", Text(d, "HadToolCalls")),
+                    ("Entirely reasoning", Text(d, "ReasoningOnly")),
+                    ("Effect", Text(d, "Effect")));
+                break;
+
+            case "ContextWindowSaturated":
+                yield return Bullets(
+                    ("Agent", Text(d, "AgentName")),
+                    ("Purpose", Text(d, "Purpose")),
+                    ("Sent (estimated)", $"{Text(d, "EstimatedSentTokens")} tokens"),
+                    ("Reported received", $"{Text(d, "ReportedInputTokens")} tokens"),
+                    ("Dropped (estimated)", $"{Text(d, "EstimatedDroppedTokens")} tokens"),
+                    ("Configured window", Text(d, "ConfiguredContextWindow")),
+                    ("Messages sent", Text(d, "MessagesSent")),
+                    ("Effect", Text(d, "Effect")));
                 break;
 
             case "ModelError":

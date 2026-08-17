@@ -1,4 +1,4 @@
-{{character}} has chosen to do nothing this turn, and says of it:
+{{character}} has chosen to do nothing this turn — a complete, valid turn that changes no state — and says of it:
 
 "{{reason}}"
 
@@ -6,4 +6,6 @@ Authoritative world state:
 
 {{state}}
 
-Narrate this, following your narration rules. Describe {{character}} holding back and what everyone in the room sees. Do not invent an action they did not take, and do not resolve anything. Reply with the narration only.
+Narrate this in one or two sentences: {{character}} holds still and does nothing, and the moment passes.
+
+Nothing else happens. Do not move anyone, do not have any other character react or act, do not introduce any new fact about the room or the characters, and do not change any state. The world is exactly as the snapshot describes it, one beat later. Reply with the narration only.

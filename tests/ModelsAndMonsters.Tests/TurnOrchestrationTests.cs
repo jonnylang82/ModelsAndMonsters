@@ -224,15 +224,17 @@ public sealed class TurnOrchestrationTests
 
         var heroHistory = Flatten(harness.Hero);
         var monsterHistory = Flatten(harness.Monster);
-        var dungeonMasterHistory = Flatten(harness.DungeonMaster);
 
-        // The hero's private exchange is in the hero's history and the DM's, and nowhere else.
+        // The hero's private exchange came back to the hero, and the DM answered it (recorded in the
+        // trace, since the DM keeps no single retained conversation once it projects per task).
         Assert.Contains(heroSecret, heroHistory, StringComparison.Ordinal);
-        Assert.Contains(heroSecret, dungeonMasterHistory, StringComparison.Ordinal);
+        Assert.Contains(
+            harness.Sink.Payloads<DungeonMasterAnswerPayload>(TraceEventType.DungeonMasterAnswer),
+            a => a.CharacterName == "Aric" && a.Answer == heroSecret);
+
+        // The monster never sees the hero's private question or answer — only public narration.
         Assert.DoesNotContain(heroSecret, monsterHistory, StringComparison.Ordinal);
         Assert.DoesNotContain("Can I tell if it is frightened?", monsterHistory, StringComparison.Ordinal);
-
-        // Nor does the monster learn the hero's intent text, only what the DM narrated publicly.
         Assert.DoesNotContain("I strike at it.", monsterHistory, StringComparison.Ordinal);
         Assert.Contains("gash across its shoulder", monsterHistory, StringComparison.Ordinal);
     }
@@ -469,7 +471,7 @@ public sealed class TurnOrchestrationTests
     }
 
     [Fact]
-    public async Task Adjudication_runs_on_a_context_free_of_narration_history()
+    public async Task Each_dungeon_master_task_runs_on_its_own_projection_free_of_prior_task_history()
     {
         const string chatter = "It keeps glancing nervously towards the exit.";
 
@@ -486,21 +488,55 @@ public sealed class TurnOrchestrationTests
 
         await harness.RunHeroTurn();
 
+        // Adjudication is a fresh projection: system prompt plus the adjudication task, nothing else.
         var adjudication = harness.Sink.Payloads<ModelRequestPayload>(TraceEventType.ModelRequest)
             .First(r => r.Purpose == "dm.adjudicate");
-
-        // System prompt plus the adjudication task, and nothing else.
         Assert.Equal(2, adjudication.Messages.Count);
         Assert.DoesNotContain(chatter, string.Join("\n", adjudication.Messages.Select(m => m.Text)), StringComparison.Ordinal);
 
-        // Narration keeps its continuity: the outcome call still sees the earlier exchange.
+        // Outcome narration is also a projection, and does not carry the earlier private Q&A.
         var narration = harness.Sink.Payloads<ModelRequestPayload>(TraceEventType.ModelRequest)
             .First(r => r.Purpose == "dm.narrate.outcome");
-        Assert.Contains(chatter, string.Join("\n", narration.Messages.Select(m => m.Text)), StringComparison.Ordinal);
+        Assert.Equal(2, narration.Messages.Count);
+        Assert.DoesNotContain(chatter, string.Join("\n", narration.Messages.Select(m => m.Text)), StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task Adjudication_can_be_configured_to_share_the_dungeon_masters_history()
+    public async Task Projected_dungeon_master_context_does_not_grow_across_turns()
+    {
+        var harness = new OrchestrationHarness(
+            new ScriptedChatClient(
+                ScriptedChatClient.Text("The chamber is cramped and tense."),                          // opening
+                ScriptedChatClient.Call("dm-h", DungeonMasterTools.AttackCharacterName,
+                    ("attacker", "Aric"), ("target", "Grik"), ("weapon", "Iron Sword")),
+                ScriptedChatClient.Text("Aric's blade opens a gash across the goblin's shoulder."),     // hero outcome
+                ScriptedChatClient.Call("dm-m", DungeonMasterTools.AttackCharacterName,
+                    ("attacker", "Grik"), ("target", "Aric"), ("weapon", "Rusty Axe")),
+                ScriptedChatClient.Text("The rusty axe bites into Aric's arm.")),                       // monster outcome
+            new ScriptedChatClient(ScriptedChatClient.Call("h-1", CharacterTools.TakeActionName, ("intent", "I strike."))),
+            new ScriptedChatClient(ScriptedChatClient.Call("m-1", CharacterTools.TakeActionName, ("intent", "I swing."))));
+
+        await harness.Coordinator.NarrateSituationAsync("Opening.", "opening", CancellationToken.None);
+        await harness.RunHeroTurn();
+        await harness.RunMonsterTurn();
+
+        // Every DM projection stays at a fixed, small size — the continuity hint is folded into the one
+        // task message, so narration and answering are always exactly system + task.
+        var dmRequests = harness.Sink.Payloads<ModelRequestPayload>(TraceEventType.ModelRequest)
+            .Where(r => r.AgentName == "DungeonMaster")
+            .ToList();
+
+        Assert.All(dmRequests, r => Assert.True(
+            r.Messages.Count <= 2,
+            $"DM request '{r.Purpose}' sent {r.Messages.Count} messages; projections must not accumulate history."));
+
+        // The later monster-outcome narration is no larger than the first opening narration.
+        var narrations = dmRequests.Where(r => r.Purpose is "opening" or "dm.narrate.outcome").ToList();
+        Assert.Equal(narrations.First().Messages.Count, narrations.Last().Messages.Count);
+    }
+
+    [Fact]
+    public async Task The_dungeon_master_can_be_configured_to_use_one_growing_conversation()
     {
         const string chatter = "It keeps glancing nervously towards the exit.";
 
@@ -516,7 +552,7 @@ public sealed class TurnOrchestrationTests
             new ScriptedChatClient(),
             new HarnessOptions
             {
-                IsolateAdjudicationContext = false,
+                ProjectDungeonMasterContext = false,
                 MaxQuestionsPerTurn = 2,
                 MaxActionAttemptsPerTurn = 3,
                 MaxModelCallsPerTurn = 8
@@ -524,11 +560,188 @@ public sealed class TurnOrchestrationTests
 
         await harness.RunHeroTurn();
 
+        // Old behaviour: one growing conversation, so adjudication sees the earlier Q&A.
         var adjudication = harness.Sink.Payloads<ModelRequestPayload>(TraceEventType.ModelRequest)
             .First(r => r.Purpose == "dm.adjudicate");
-
         Assert.True(adjudication.Messages.Count > 2);
         Assert.Contains(chatter, string.Join("\n", adjudication.Messages.Select(m => m.Text)), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_truncated_reply_is_recorded_as_truncation_rather_than_a_protocol_failure()
+    {
+        var harness = new OrchestrationHarness(
+            AcceptedAttackDungeonMaster(),
+            new ScriptedChatClient(
+                ScriptedChatClient.Truncated("I raise my sword and step towards the goblin, thinking that if I"),
+                ScriptedChatClient.Call("h-1", CharacterTools.TakeActionName, ("intent", "I strike it."))),
+            new ScriptedChatClient());
+
+        var result = await harness.RunHeroTurn();
+
+        var truncation = Assert.Single(
+            harness.Sink.Payloads<ModelTruncatedPayload>(TraceEventType.ModelResponseTruncated));
+        Assert.Equal("Aric", truncation.AgentName);
+        Assert.Equal("character.decide", truncation.Purpose);
+        Assert.False(truncation.HadToolCalls);
+        Assert.Equal(500, truncation.OutputTokenCount);
+
+        // The cause is named accurately: running out of room is not the same as ignoring the protocol.
+        var error = Assert.Single(harness.Sink.Payloads<ToolCallErrorPayload>(TraceEventType.ToolCallError));
+        Assert.Contains("truncated", error.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("responded without calling", error.Error, StringComparison.OrdinalIgnoreCase);
+
+        // The turn still recovers on the next reply.
+        Assert.Equal(TurnOutcome.ActionResolved, result.Outcome);
+        Assert.Contains(harness.Console.Lines, l => l.Contains("output-token limit", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_truncated_reply_that_kept_its_tool_call_is_still_recorded()
+    {
+        var truncatedWithCall = new Microsoft.Extensions.AI.ChatResponse(
+            new Microsoft.Extensions.AI.ChatMessage(Microsoft.Extensions.AI.ChatRole.Assistant,
+                [ScriptedChatClient.CallContent("h-1", CharacterTools.TakeActionName, ("intent", "I strike it."))]))
+        {
+            FinishReason = Microsoft.Extensions.AI.ChatFinishReason.Length
+        };
+
+        var harness = new OrchestrationHarness(
+            AcceptedAttackDungeonMaster(),
+            new ScriptedChatClient(truncatedWithCall),
+            new ScriptedChatClient());
+
+        var result = await harness.RunHeroTurn();
+
+        var truncation = Assert.Single(
+            harness.Sink.Payloads<ModelTruncatedPayload>(TraceEventType.ModelResponseTruncated));
+        Assert.True(truncation.HadToolCalls);
+
+        // The surviving tool call is still honoured, so the turn resolves normally.
+        Assert.Equal(TurnOutcome.ActionResolved, result.Outcome);
+    }
+
+    [Fact]
+    public async Task A_reasoning_model_that_produced_only_thinking_is_flagged_distinctly()
+    {
+        // The failure mode of a reasoning model on a small budget: the whole output is a reasoning
+        // block, so there is no tool call and no prose. It must read as a budget/thinking problem, not
+        // as the character ignoring its protocol.
+        var harness = new OrchestrationHarness(
+            AcceptedAttackDungeonMaster(),
+            new ScriptedChatClient(
+                ScriptedChatClient.ReasoningOnly("Thinking Process: I should consider whether to strike or wait..."),
+                ScriptedChatClient.Call("h-1", CharacterTools.TakeActionName, ("intent", "I strike."))),
+            new ScriptedChatClient());
+
+        var result = await harness.RunHeroTurn();
+
+        var truncation = Assert.Single(
+            harness.Sink.Payloads<ModelTruncatedPayload>(TraceEventType.ModelResponseTruncated));
+        Assert.True(truncation.ReasoningOnly);
+        Assert.False(truncation.HadToolCalls);
+        Assert.Contains("thinking", truncation.Effect, StringComparison.OrdinalIgnoreCase);
+
+        // The turn still recovers on the next, complete reply.
+        Assert.Equal(TurnOutcome.ActionResolved, result.Outcome);
+    }
+
+    [Fact]
+    public async Task A_normal_reply_records_no_truncation()
+    {
+        var harness = new OrchestrationHarness(
+            AcceptedAttackDungeonMaster(),
+            new ScriptedChatClient(ScriptedChatClient.Call("h-1", CharacterTools.TakeActionName, ("intent", "I strike."))),
+            new ScriptedChatClient());
+
+        await harness.RunHeroTurn();
+
+        Assert.Empty(harness.Sink.OfType(TraceEventType.ModelResponseTruncated));
+    }
+
+    [Fact]
+    public async Task Truncation_is_detected_when_the_provider_reports_processing_far_less_than_we_sent()
+    {
+        // The blog's method: the provider reporting a tiny input size for a real system-prompt-plus-turn
+        // request is the evidence that it silently dropped the rest — no configured window involved.
+        var saturated = ScriptedChatClient.WithInputTokens(
+            ScriptedChatClient.Call("h-1", CharacterTools.TakeActionName, ("intent", "I strike.")),
+            reportedInputTokens: 40);
+
+        var harness = new OrchestrationHarness(
+            AcceptedAttackDungeonMaster(),
+            new ScriptedChatClient(saturated),
+            new ScriptedChatClient());
+
+        await harness.RunHeroTurn();
+
+        var event_ = Assert.Single(
+            harness.Sink.Payloads<ContextSaturationPayload>(TraceEventType.ContextWindowSaturated));
+        Assert.Equal("Aric", event_.AgentName);
+        Assert.Equal("character.decide", event_.Purpose);
+        Assert.Equal(40, event_.ReportedInputTokens);
+        Assert.True(event_.EstimatedSentTokens > event_.ReportedInputTokens);
+        Assert.Equal(event_.EstimatedSentTokens - 40, event_.EstimatedDroppedTokens);
+        Assert.Contains("discarded", event_.Effect, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task No_truncation_is_reported_when_the_provider_processed_what_we_sent()
+    {
+        // Reported input at or above what we sent means nothing was dropped.
+        var comfortable = ScriptedChatClient.WithInputTokens(
+            ScriptedChatClient.Call("h-1", CharacterTools.TakeActionName, ("intent", "I strike.")),
+            reportedInputTokens: 100_000);
+
+        var harness = new OrchestrationHarness(
+            AcceptedAttackDungeonMaster(),
+            new ScriptedChatClient(comfortable),
+            new ScriptedChatClient());
+
+        await harness.RunHeroTurn();
+
+        Assert.Empty(harness.Sink.OfType(TraceEventType.ContextWindowSaturated));
+    }
+
+    [Fact]
+    public async Task A_dungeon_master_tool_call_written_as_text_never_leaks_raw_json_to_the_character()
+    {
+        const string leaked =
+            "{\"name\": \"reject_action\", \"parameters\": {\"category\": \"unsupported\", " +
+            "\"reason\": \"There is nowhere in this cramped room to open distance.\"}}";
+
+        // The DM emits the reject as text on both the first attempt and the retry, so no real tool call
+        // is ever produced; the hero then gives up and ends its turn (which the DM narrates).
+        var harness = new OrchestrationHarness(
+            new ScriptedChatClient(
+                ScriptedChatClient.Text(leaked),
+                ScriptedChatClient.Text(leaked),
+                ScriptedChatClient.Text("Aric lowers his blade and holds still.")),
+            new ScriptedChatClient(
+                ScriptedChatClient.Call("h-1", CharacterTools.TakeActionName, ("intent", "I back away.")),
+                ScriptedChatClient.Call("h-2", CharacterTools.EndTurnName, ("reason", "There is nothing to be done."))),
+            new ScriptedChatClient(),
+            new HarnessOptions
+            {
+                MaxAdjudicationRetries = 1,
+                MaxQuestionsPerTurn = 2,
+                MaxActionAttemptsPerTurn = 3,
+                MaxModelCallsPerTurn = 6
+            });
+
+        await harness.RunHeroTurn();
+
+        // What the character was handed carries the DM's reason, not the JSON.
+        var toCharacter = harness.Sink.Payloads<ToolCallResultPayload>(TraceEventType.ToolCallResult)
+            .First(r => r.AgentName == "Aric" && r.ToolName == CharacterTools.TakeActionName)
+            .Result!.ToString()!;
+        Assert.Contains("nowhere in this cramped room", toCharacter, StringComparison.Ordinal);
+        Assert.DoesNotContain("reject_action", toCharacter, StringComparison.Ordinal);
+        Assert.DoesNotContain("{", toCharacter, StringComparison.Ordinal);
+
+        // The DM's original text is still recorded verbatim in the trace, so the leak stays diagnosable.
+        var adjudication = harness.Sink.Payloads<DmAdjudicationPayload>(TraceEventType.DmAdjudication).Last();
+        Assert.Contains("reject_action", adjudication.DungeonMasterText!, StringComparison.Ordinal);
     }
 
     [Fact]

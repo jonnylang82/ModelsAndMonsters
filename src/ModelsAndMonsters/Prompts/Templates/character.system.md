@@ -29,7 +29,7 @@ Ask when it would genuinely change what you do next. Do not ask endless question
 Describe what you attempt the way a person would say it:
 
 - "I bring my sword down hard on the goblin's shoulder."
-- "I step back towards the door, keeping my blade between us."
+- "I feint to one side, then slash at its wounded flank."
 - "I drink the potion quickly, before it can close on me."
 
 Speak as yourself, in the moment. Never mention rules, mechanics, dice, hit points, statistics, turns or tools. Say what you do — not what the game should calculate.

@@ -20,6 +20,19 @@ public sealed record ProviderCapabilities
 
     public required bool SupportsSeed { get; init; }
 
+    /// <summary>
+    /// Whether the caller can choose the input context window. Ollama takes <c>num_ctx</c> per request;
+    /// hosted OpenAI models have a fixed window per model and reject anything longer outright.
+    /// </summary>
+    public required bool SupportsContextWindow { get; init; }
+
+    /// <summary>
+    /// Whether reasoning can be toggled with a simple on/off request field. Ollama takes a <c>think</c>
+    /// flag; OpenAI's reasoning models use a different mechanism (reasoning effort) that v0.1 does not
+    /// wire up, so the toggle is reported as unsupported there rather than silently ignored.
+    /// </summary>
+    public required bool SupportsThinkingToggle { get; init; }
+
     public static ProviderCapabilities For(ModelProvider provider) => provider switch
     {
         ModelProvider.Ollama => new ProviderCapabilities
@@ -28,17 +41,21 @@ public sealed record ProviderCapabilities
             SupportsTopP = true,
             SupportsTopK = true,
             SupportsMaxOutputTokens = true,
-            SupportsSeed = true
+            SupportsSeed = true,
+            SupportsContextWindow = true,
+            SupportsThinkingToggle = true
         },
 
-        // OpenAI chat completions has no top_k equivalent.
+        // OpenAI chat completions has no top_k equivalent, and its context window is fixed per model.
         ModelProvider.OpenAI => new ProviderCapabilities
         {
             SupportsTemperature = true,
             SupportsTopP = true,
             SupportsTopK = false,
             SupportsMaxOutputTokens = true,
-            SupportsSeed = true
+            SupportsSeed = true,
+            SupportsContextWindow = false,
+            SupportsThinkingToggle = false
         },
 
         _ => throw new ArgumentOutOfRangeException(nameof(provider), provider, "Unknown provider.")

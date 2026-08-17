@@ -84,7 +84,7 @@ public sealed class SimulationRunner
                 dungeonMasterProfile,
                 CreateTracingClient(dungeonMasterProfile, trace, clients),
                 _prompts,
-                harness.IsolateAdjudicationContext);
+                harness.ProjectDungeonMasterContext);
 
             var characterPrompts = new CharacterPromptFactory(_prompts);
             var hero = new CharacterAgent(
@@ -236,20 +236,15 @@ public sealed class SimulationRunner
                 break;
             }
 
-            trace.SetPosition(round, turnNumber, "harness");
-            await coordinator.NarrateSituationAsync(
-                "The round has ended. Describe where things now stand.",
-                "round-end",
-                cancellationToken).ConfigureAwait(false);
+            // No round-end recap: each turn already narrates its own outcome, so a "where things stand"
+            // narration here only restates the monster's blow that was just described.
         }
 
         trace.SetPosition(roundsPlayed, turnNumber, "harness");
 
-        await coordinator.NarrateSituationAsync(
-            "The encounter is over. Describe how it ends.",
-            "encounter-end",
-            cancellationToken).ConfigureAwait(false);
-
+        // No separate encounter-end narration: the final turn's outcome (or pass) already narrates the
+        // last thing that happened, and a recap here only restates it. The console divider and the
+        // ending summary below give the reader closure.
         var finalState = engine.State;
         _console.Ending(SummariseEnding(finalState, terminalCondition));
 
@@ -272,6 +267,8 @@ public sealed class SimulationRunner
             State = finalState
         });
 
+        WarnAboutContextSaturation(trace);
+        WarnAboutReasoningStarvation(trace);
         _console.Notice($"Run complete. Trace written to {paths.Directory}");
 
         return new SimulationSummary
@@ -283,6 +280,42 @@ public sealed class SimulationRunner
             TraceEventCount = trace.EventCount,
             FinalState = finalState
         };
+    }
+
+    /// <summary>
+    /// Surfaces silent history loss once, at the end, rather than interrupting the transcript. If this
+    /// fires, some replies were formed from a conversation the provider had already trimmed.
+    /// </summary>
+    private void WarnAboutContextSaturation(ExperimentTrace trace)
+    {
+        var saturated = trace.CountOf(TraceEventType.ContextWindowSaturated);
+        if (saturated == 0)
+        {
+            return;
+        }
+
+        _console.Notice(
+            $"WARNING: on {saturated} model call(s) the provider reported processing far fewer input " +
+            "tokens than we sent. It silently discarded the oldest messages. Raise ContextWindow, " +
+            "shorten the run, or trim what each call sends.");
+    }
+
+    /// <summary>
+    /// Warns when a reasoning model spent its whole output budget thinking. The symptom otherwise is
+    /// only "the Dungeon Master said nothing", which reads as a bug rather than a configuration issue.
+    /// </summary>
+    private void WarnAboutReasoningStarvation(ExperimentTrace trace)
+    {
+        var starved = trace.CountOf(TraceEventType.ModelResponseTruncated);
+        if (starved == 0)
+        {
+            return;
+        }
+
+        _console.Notice(
+            $"WARNING: {starved} model call(s) hit the output-token limit. If an agent uses a reasoning " +
+            "model, its thinking consumes the output budget and can leave no visible reply — set that " +
+            "agent's Thinking to false, or raise its MaxOutputTokens.");
     }
 
     /// <summary>v0.1 terminal condition: anyone reaching zero health ends the encounter.</summary>
