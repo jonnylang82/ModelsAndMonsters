@@ -66,7 +66,10 @@ public sealed record TracedChatOptions
     /// <summary>Input context window requested for this call, when the provider accepts one.</summary>
     public int? ContextWindow { get; init; }
 
-    /// <summary>Whether reasoning was requested on/off, when the provider accepts the toggle.</summary>
+    /// <summary>Unified reasoning effort requested for this call (none/low/medium/high/max), when set.</summary>
+    public string? Effort { get; init; }
+
+    /// <summary>Whether reasoning was requested on/off via the legacy toggle, when the provider accepts it.</summary>
     public bool? Thinking { get; init; }
 
     public string? ToolMode { get; init; }
@@ -277,6 +280,25 @@ public sealed record ToolCallResultPayload
     public required object? Result { get; init; }
 }
 
+/// <summary>
+/// Records a tool call the model wrote as prose and the harness recovered into a real call. Keeps the
+/// original text so the model's actual (non-calling) behaviour stays visible even though the harness
+/// went ahead and dispatched the intended call.
+/// </summary>
+public sealed record ToolCallRecoveredPayload
+{
+    public required string AgentName { get; init; }
+
+    public required string CallId { get; init; }
+
+    public required string ToolName { get; init; }
+
+    public required string RecoveredArgument { get; init; }
+
+    /// <summary>The full prose the model actually returned, verbatim.</summary>
+    public required string OriginalText { get; init; }
+}
+
 public sealed record ToolCallErrorPayload
 {
     public required string AgentName { get; init; }
@@ -397,6 +419,82 @@ public sealed record NarrationPayload
     public required string Narration { get; init; }
 
     public required int NarrationId { get; init; }
+
+    /// <summary>
+    /// The living characters this public narration is intended to reach. Each one receives it — the
+    /// actor immediately, everyone else as their turn begins — and those deliveries are recorded
+    /// separately as <see cref="NarrationDeliveredPayload"/> events.
+    /// </summary>
+    public IReadOnlyList<string> IntendedRecipients { get; init; } = [];
+}
+
+/// <summary>
+/// How the Dungeon Master's natural-language target reference resolved to a specific character. Recorded
+/// so targeting is auditable: an accepted attack shows exactly who was hit by stable id, and a bad
+/// reference shows that the world refused it rather than silently retargeting.
+/// </summary>
+public sealed record TargetResolutionPayload
+{
+    public required string AttackerId { get; init; }
+
+    public required string AttackerName { get; init; }
+
+    /// <summary>The target reference the Dungeon Master supplied, verbatim.</summary>
+    public required string RequestedTarget { get; init; }
+
+    public string? ResolvedTargetId { get; init; }
+
+    public string? ResolvedTargetName { get; init; }
+
+    public required bool Resolved { get; init; }
+
+    public bool? TargetAlive { get; init; }
+
+    public string? TargetTeam { get; init; }
+
+    /// <summary>Whether the resolved target is on the attacker's own team, when a target was resolved.</summary>
+    public bool? TargetIsAlly { get; init; }
+
+    public required string Note { get; init; }
+}
+
+public sealed record TurnSkippedPayload
+{
+    public required string CharacterId { get; init; }
+
+    public required string CharacterName { get; init; }
+
+    public required string Team { get; init; }
+
+    public required string Reason { get; init; }
+}
+
+/// <summary>
+/// One team's standing at a terminal-condition check: how many of its members are still alive.
+/// </summary>
+public sealed record TeamStandingPayload
+{
+    public required string Team { get; init; }
+
+    public required int Living { get; init; }
+
+    public required int Total { get; init; }
+}
+
+public sealed record TeamOutcomePayload
+{
+    /// <summary>What prompted the check, e.g. "after Rowan's turn".</summary>
+    public required string Trigger { get; init; }
+
+    public required bool IsOver { get; init; }
+
+    public required IReadOnlyList<TeamStandingPayload> Standings { get; init; }
+
+    public IReadOnlyList<string> WinningTeams { get; init; } = [];
+
+    public IReadOnlyList<string> EliminatedTeams { get; init; } = [];
+
+    public required string Description { get; init; }
 }
 
 public sealed record NarrationDeliveredPayload

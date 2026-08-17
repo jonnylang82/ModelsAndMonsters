@@ -769,6 +769,62 @@ public sealed class TurnOrchestrationTests
     }
 
     [Fact]
+    public async Task A_take_action_written_as_prose_is_recovered_and_dispatched_when_enabled()
+    {
+        // A prose-prone model writes the call as text instead of calling it. With recovery on, the
+        // harness parses and dispatches it rather than nudging, so the character actually acts.
+        var harness = new OrchestrationHarness(
+            AcceptedAttackDungeonMaster(),
+            new ScriptedChatClient(ScriptedChatClient.Text("`take_action(I bring my sword down on the goblin.)`")),
+            new ScriptedChatClient(),
+            new HarnessOptions
+            {
+                RecoverTextToolCalls = true,
+                MaxQuestionsPerTurn = 2,
+                MaxActionAttemptsPerTurn = 3,
+                MaxModelCallsPerTurn = 8
+            });
+
+        var result = await harness.RunHeroTurn();
+
+        Assert.Equal(TurnOutcome.ActionResolved, result.Outcome);
+
+        var recovered = Assert.Single(
+            harness.Sink.Payloads<ToolCallRecoveredPayload>(TraceEventType.ToolCallRecovered));
+        Assert.Equal("Aric", recovered.AgentName);
+        Assert.Equal(CharacterTools.TakeActionName, recovered.ToolName);
+        Assert.Equal("I bring my sword down on the goblin.", recovered.RecoveredArgument);
+
+        // The recovered intent reached the Dungeon Master for adjudication, and one engine action ran.
+        var dispatched = harness.Sink.Payloads<ToolCallDispatchPayload>(TraceEventType.ToolCallDispatched)
+            .First(x => x.ToolName == CharacterTools.TakeActionName && x.AgentName == "Aric");
+        Assert.Equal("I bring my sword down on the goblin.", dispatched.Arguments!.Values.First());
+        Assert.Single(harness.Sink.OfType(TraceEventType.EngineAction));
+        Assert.Equal(1, harness.Engine.State.Version);
+    }
+
+    [Fact]
+    public async Task A_prose_reply_is_not_recovered_when_the_flag_is_off()
+    {
+        // Default behaviour: no recovery, so the prose reply is a protocol failure and the character is
+        // nudged; only its next, properly-called action resolves the turn.
+        var harness = new OrchestrationHarness(
+            AcceptedAttackDungeonMaster(),
+            new ScriptedChatClient(
+                ScriptedChatClient.Text("`take_action(I strike the goblin.)`"),
+                ScriptedChatClient.Call("h-1", CharacterTools.TakeActionName, ("intent", "I strike it."))),
+            new ScriptedChatClient());
+
+        var result = await harness.RunHeroTurn();
+
+        Assert.Equal(TurnOutcome.ActionResolved, result.Outcome);
+        Assert.Empty(harness.Sink.OfType(TraceEventType.ToolCallRecovered));
+        Assert.Contains(
+            harness.Sink.Payloads<ToolCallErrorPayload>(TraceEventType.ToolCallError),
+            e => e.ToolName == "(none)");
+    }
+
+    [Fact]
     public async Task A_dead_character_does_not_take_a_turn()
     {
         var harness = new OrchestrationHarness(

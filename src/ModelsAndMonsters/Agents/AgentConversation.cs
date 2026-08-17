@@ -29,6 +29,24 @@ public sealed class AgentConversation
 
     public void Append(ChatMessage message) => _messages.Add(message);
 
+    /// <summary>
+    /// Replaces the most recent message. Used when a prose reply is recovered into a real tool call: the
+    /// prose assistant turn is swapped for one carrying the structured call, so the tool result that
+    /// follows has a matching call in the history rather than dangling. The original prose stays in the
+    /// trace.
+    /// </summary>
+    public void ReplaceLastMessage(ChatMessage message)
+    {
+        if (_messages.Count == 0)
+        {
+            _messages.Add(message);
+        }
+        else
+        {
+            _messages[^1] = message;
+        }
+    }
+
     public void AppendUser(string text) => _messages.Add(new ChatMessage(ChatRole.User, text));
 
     /// <summary>

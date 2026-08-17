@@ -40,6 +40,25 @@ public sealed record GameState
     public Character RequireById(string id) =>
         FindById(id) ?? throw new InvalidOperationException($"No character with id '{id}' exists in the current state.");
 
+    /// <summary>The distinct teams present in the encounter, in first-appearance order.</summary>
+    public IReadOnlyList<string> Teams()
+    {
+        var seen = new List<string>();
+        foreach (var character in Characters)
+        {
+            if (!seen.Contains(character.Team, StringComparer.OrdinalIgnoreCase))
+            {
+                seen.Add(character.Team);
+            }
+        }
+
+        return seen;
+    }
+
+    /// <summary>Living members of a team.</summary>
+    public IEnumerable<Character> LivingOnTeam(string team) =>
+        Characters.Where(c => c.IsAlive && string.Equals(c.Team, team, StringComparison.OrdinalIgnoreCase));
+
     /// <summary>Returns a new state with <paramref name="updated"/> replacing the character of the same id.</summary>
     public GameState WithCharacter(Character updated)
     {

@@ -109,7 +109,7 @@ public sealed class TracingChatClient : DelegatingChatClient
             SystemPrompt = messages.FirstOrDefault(m => m.Role == ChatRole.System)?.Text,
             Messages = traced,
             NewlyInjected = newlyInjected,
-            RequestedOptions = ChatTraceMapper.MapOptions(options, scope.UnsupportedOptionsDropped, _profile.ContextWindow, _profile.Thinking),
+            RequestedOptions = ChatTraceMapper.MapOptions(options, scope.UnsupportedOptionsDropped, _profile.ContextWindow, _profile.Thinking, _profile.Effort?.ToString()),
             Tools = ChatTraceMapper.MapTools(options?.Tools)
         }, _profile.AgentName);
     }
@@ -187,6 +187,14 @@ public sealed class TracingChatClient : DelegatingChatClient
     /// </remarks>
     private void EmitContextSaturationIfAny(string callId, CallScopeState scope, ChatResponse response, IReadOnlyList<ChatMessage> messagesSent)
     {
+        // The sent-versus-reported inference only makes sense where the provider truncates silently. A
+        // provider that errors on overflow (OpenAI) never drops history unannounced, so here the gap is
+        // only tokenizer-estimate noise and would raise false alarms — skip it entirely.
+        if (!ProviderCapabilities.For(_profile.Provider).SilentlyTruncatesHistory)
+        {
+            return;
+        }
+
         if (response.Usage?.InputTokenCount is not { } reportedInputTokens)
         {
             return;

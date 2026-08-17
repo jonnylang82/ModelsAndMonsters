@@ -17,8 +17,18 @@ public static class RunSeeds
     // Well-known derivation keys, so the mapping from master to per-consumer seed is fixed.
     public const string GameKey = "game";
     public const string DungeonMasterKey = "agent:dungeon-master";
+
+    // v0.1 role keys, retained so existing derivations stay stable. v0.2 derives one seed per named
+    // character from its id via AgentKey, so four characters get four distinct, stable seeds.
     public const string HeroKey = "agent:hero";
     public const string MonsterKey = "agent:monster";
+
+    /// <summary>The derivation key for a named character agent, so each character gets its own seed.</summary>
+    public static string AgentKey(string characterId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(characterId);
+        return $"agent:{characterId.Trim().ToLowerInvariant()}";
+    }
 
     /// <summary>A fresh, process-random master seed for a run with no configured seed.</summary>
     public static long NewRandomMaster() => Random.Shared.NextInt64(1, long.MaxValue);

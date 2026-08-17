@@ -91,7 +91,8 @@ public static class ChatTraceMapper
         ChatOptions? options,
         IReadOnlyList<string>? unsupportedDropped = null,
         int? contextWindow = null,
-        bool? thinking = null) => new()
+        bool? thinking = null,
+        string? effort = null) => new()
     {
         ModelId = options?.ModelId,
         Temperature = options?.Temperature,
@@ -100,8 +101,9 @@ public static class ChatTraceMapper
         MaxOutputTokens = options?.MaxOutputTokens,
         Seed = options?.Seed,
         // Provider-native options live in AdditionalProperties under provider-specific keys, so the
-        // requested window and thinking flag are taken from the profile rather than dug back out.
+        // requested window, effort and thinking flag are taken from the profile rather than dug back out.
         ContextWindow = contextWindow,
+        Effort = effort,
         Thinking = thinking,
         ToolMode = options?.ToolMode?.GetType().Name,
         UnsupportedOptionsDropped = unsupportedDropped ?? []

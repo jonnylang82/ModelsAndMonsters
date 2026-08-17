@@ -93,13 +93,13 @@ internal sealed class OrchestrationHarness
             heroDefinition,
             Profile(heroDefinition.Name),
             new TracingChatClient(heroClient, Profile(heroDefinition.Name), Trace),
-            characterPrompts.CreateSystemPrompt(heroDefinition));
+            characterPrompts.CreateSystemPrompt(heroDefinition, scenario.Characters));
 
         Monster = new CharacterAgent(
             monsterDefinition,
             Profile(monsterDefinition.Name),
             new TracingChatClient(monsterClient, Profile(monsterDefinition.Name), Trace),
-            characterPrompts.CreateSystemPrompt(monsterDefinition));
+            characterPrompts.CreateSystemPrompt(monsterDefinition, scenario.Characters));
 
         Coordinator = new TurnCoordinator(
             Engine, DungeonMaster, SharedPrompts, new WorldStateFormatter(SharedPrompts),

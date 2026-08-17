@@ -11,6 +11,9 @@ public enum TraceEventType
     TurnStarted,
     TurnEnded,
 
+    /// <summary>An actor's turn was skipped because it was not alive; no model call was made.</summary>
+    TurnSkipped,
+
     /// <summary>Everything sent into our <c>IChatClient</c> abstraction for one logical call.</summary>
     ModelRequest,
 
@@ -41,6 +44,9 @@ public enum TraceEventType
     /// <summary>A tool call could not be dispatched (unknown tool, malformed arguments, handler threw).</summary>
     ToolCallError,
 
+    /// <summary>A tool call the model wrote as prose was parsed and dispatched as if it had been called.</summary>
+    ToolCallRecovered,
+
     CharacterQuestion,
     DungeonMasterAnswer,
 
@@ -53,8 +59,17 @@ public enum TraceEventType
     /// <summary>The DM's ruling on a character's natural-language intent.</summary>
     DmAdjudication,
 
+    /// <summary>How a natural-language target reference was resolved to a specific character (or not).</summary>
+    TargetResolved,
+
     /// <summary>A structured action submitted to the engine, with before/after state.</summary>
     EngineAction,
+
+    /// <summary>One complete random draw the engine made, with full context for replay and comparison.</summary>
+    RngDraw,
+
+    /// <summary>The team terminal condition was evaluated after an accepted action or a turn.</summary>
+    TeamOutcomeEvaluated,
 
     Narration,
     NarrationDelivered,

@@ -108,10 +108,32 @@ public sealed class GameEngine : IGameEngine
 
         var weapon = attacker.Weapon;
         var healthBefore = target.Health;
+        var draws = new List<RngDraw>(2);
 
         // The attack is a valid, accepted action; the rolls decide whether it lands and how hard.
+        var hitSequenceBefore = _rng.DrawCount;
         var hitRoll = _rng.RollPercent();
         var hit = hitRoll <= attacker.HitChance;
+        draws.Add(new RngDraw
+        {
+            Purpose = "attack.hit-check",
+            ActionType = action.ActionType,
+            ActorId = attacker.Id,
+            ActorName = attacker.Name,
+            TargetId = target.Id,
+            TargetName = target.Name,
+            OutcomeSelected = "hit or miss",
+            Sides = 100,
+            RangeMin = 1,
+            RangeMax = 100,
+            RawRoll = hitRoll,
+            Threshold = attacker.HitChance,
+            Comparison = $"roll {hitRoll} {(hit ? "<=" : ">")} hit chance {attacker.HitChance}",
+            Result = hit ? "hit" : "miss",
+            Seed = _rng.Seed,
+            SequenceBefore = hitSequenceBefore,
+            SequenceAfter = _rng.DrawCount
+        });
 
         if (!hit)
         {
@@ -140,11 +162,32 @@ public sealed class GameEngine : IGameEngine
                 TargetDied = false
             };
 
-            return EngineResult.Accept(action, state, state, missOutcome);
+            return EngineResult.Accept(action, state, state, missOutcome, draws);
         }
 
+        var glancingSequenceBefore = _rng.DrawCount;
         var glancingRoll = _rng.RollPercent();
         var glancing = glancingRoll <= _combatRules.GlancingBlowChance;
+        draws.Add(new RngDraw
+        {
+            Purpose = "attack.glancing-check",
+            ActionType = action.ActionType,
+            ActorId = attacker.Id,
+            ActorName = attacker.Name,
+            TargetId = target.Id,
+            TargetName = target.Name,
+            OutcomeSelected = "glancing or solid",
+            Sides = 100,
+            RangeMin = 1,
+            RangeMax = 100,
+            RawRoll = glancingRoll,
+            Threshold = _combatRules.GlancingBlowChance,
+            Comparison = $"roll {glancingRoll} {(glancing ? "<=" : ">")} glancing chance {_combatRules.GlancingBlowChance}",
+            Result = glancing ? "glancing" : "solid",
+            Seed = _rng.Seed,
+            SequenceBefore = glancingSequenceBefore,
+            SequenceAfter = _rng.DrawCount
+        });
 
         var baseDamage = Math.Max(0, weapon.Damage - target.Armour);
         var damage = glancing ? CombatRules.GlancingDamage(baseDamage) : baseDamage;
@@ -184,7 +227,7 @@ public sealed class GameEngine : IGameEngine
             InjuryInflicted = injury?.Description
         };
 
-        return EngineResult.Accept(action, state, after, outcome);
+        return EngineResult.Accept(action, state, after, outcome, draws);
     }
 
     private EngineResult ResolveUseItem(UseItemAction action)

@@ -26,6 +26,8 @@ public sealed class ProvidersOptions
     public OllamaProviderOptions Ollama { get; set; } = new();
 
     public OpenAIProviderOptions OpenAI { get; set; } = new();
+
+    public AnthropicProviderOptions Anthropic { get; set; } = new();
 }
 
 public sealed class OllamaProviderOptions
@@ -48,10 +50,44 @@ public sealed class OpenAIProviderOptions
     public string? Endpoint { get; set; }
 }
 
+public sealed class AnthropicProviderOptions
+{
+    /// <summary>Environment variable consulted for the API key. Never place the key itself here.</summary>
+    public string ApiKeyEnvironmentVariable { get; set; } = "ANTHROPIC_API_KEY";
+
+    /// <summary>
+    /// Optional key supplied through user secrets. Configuration files in the repository must not set
+    /// this; it exists so <c>dotnet user-secrets</c> works without an environment variable.
+    /// </summary>
+    public string? ApiKey { get; set; }
+
+    /// <summary>Optional base-URL override (e.g. a proxy or gateway).</summary>
+    public string? Endpoint { get; set; }
+}
+
 public sealed class AgentsOptions
 {
+    /// <summary>
+    /// Common defaults every agent inherits. A per-agent entry overrides only the fields it sets, so a
+    /// clean multi-actor baseline can put the shared model here once and leave the character entries
+    /// empty, while still allowing any single character to be configured independently later.
+    /// </summary>
+    public AgentProfileOptions Default { get; set; } = new();
+
     public AgentProfileOptions DungeonMaster { get; set; } = new();
 
+    /// <summary>
+    /// Per-character overrides, keyed by character id. Any character absent here runs on
+    /// <see cref="Default"/> alone. Orchestration never assumes a shared hero or monster profile — each
+    /// character resolves its own profile from Default plus its own entry.
+    /// </summary>
+    public Dictionary<string, AgentProfileOptions> Characters { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// v0.1 role defaults, retained for backward compatibility with the one-versus-one configuration
+    /// and its tests. The v0.2 runner resolves characters by id from <see cref="Characters"/> over
+    /// <see cref="Default"/> and does not read these.
+    /// </summary>
     public AgentProfileOptions Hero { get; set; } = new();
 
     public AgentProfileOptions Monster { get; set; } = new();
@@ -60,7 +96,8 @@ public sealed class AgentsOptions
 /// <summary>Per-agent model and sampling configuration. Every agent is configured independently.</summary>
 public sealed class AgentProfileOptions
 {
-    public string Provider { get; set; } = "Ollama";
+    /// <summary>Blank means "inherit from the defaults"; the resolved profile must end up with a provider.</summary>
+    public string Provider { get; set; } = "";
 
     public string ModelId { get; set; } = "";
 
@@ -82,14 +119,68 @@ public sealed class AgentProfileOptions
     public int? ContextWindow { get; set; }
 
     /// <summary>
-    /// Whether a reasoning model should think before answering. Null leaves the model default; false
-    /// (recommended for this harness) gives direct prose and tool calls; true needs a large
-    /// MaxOutputTokens. Ignored by models that do not reason.
+    /// Reasoning effort, unified across providers: one of <c>none</c>, <c>low</c>, <c>medium</c>,
+    /// <c>high</c>, <c>max</c> (aliases <c>off</c>/<c>xhigh</c> accepted). This is the cross-provider knob
+    /// — the harness maps it to Ollama's <c>think</c> level, and to an OpenAI/Anthropic reasoning-effort
+    /// request. Null leaves the model default; <c>none</c> (recommended for this harness) disables
+    /// reasoning so narration and tool calls come back directly. Supersedes <see cref="Thinking"/> when
+    /// both are set. Ignored by models that do not reason. See <see cref="AI.AgentModelProfile.Effort"/>.
+    /// </summary>
+    public string? Effort { get; set; }
+
+    /// <summary>
+    /// Legacy on/off reasoning toggle, retained for backward compatibility. Prefer <see cref="Effort"/>,
+    /// which works across all three providers; this only reaches Ollama (dropped elsewhere). Null leaves
+    /// the model default; false gives direct prose and tool calls; true needs a large MaxOutputTokens.
     /// </summary>
     public bool? Thinking { get; set; }
 
     /// <summary>Optional per-agent endpoint override, e.g. a second Ollama host.</summary>
     public string? Endpoint { get; set; }
+
+    /// <summary>
+    /// When true, force the model to call a tool (rather than answer in prose) on tool-bearing calls.
+    /// Honoured only by providers that support a forced tool choice; ignored (and reported dropped) on
+    /// Ollama's native endpoint. See <see cref="AI.AgentModelProfile.ForceToolChoice"/>.
+    /// </summary>
+    public bool? ForceToolChoice { get; set; }
+
+    /// <summary>
+    /// When true, temperature, top-p and top-k are dropped rather than sent. Some models forbid all
+    /// sampling parameters (Anthropic Opus 4.7+ 400s on any of them, steering with an effort parameter
+    /// and the prompt instead). Left null, the harness omits them automatically for such models; set it
+    /// explicitly to force the behaviour either way. See <see cref="AI.AgentModelProfile.OmitSampling"/>.
+    /// </summary>
+    public bool? OmitSampling { get; set; }
+
+    /// <summary>
+    /// Resolves this entry against a base of common defaults: every field this entry leaves unset is
+    /// taken from <paramref name="baseOptions"/>. The result is the concrete profile actually used, so
+    /// the value recorded for each agent is exactly what its model calls were made with.
+    /// </summary>
+    public AgentProfileOptions Overlay(AgentProfileOptions baseOptions)
+    {
+        ArgumentNullException.ThrowIfNull(baseOptions);
+
+        return new AgentProfileOptions
+        {
+            Provider = FirstNonBlank(Provider, baseOptions.Provider),
+            ModelId = FirstNonBlank(ModelId, baseOptions.ModelId),
+            Temperature = Temperature ?? baseOptions.Temperature,
+            TopP = TopP ?? baseOptions.TopP,
+            TopK = TopK ?? baseOptions.TopK,
+            MaxOutputTokens = MaxOutputTokens ?? baseOptions.MaxOutputTokens,
+            ContextWindow = ContextWindow ?? baseOptions.ContextWindow,
+            Effort = string.IsNullOrWhiteSpace(Effort) ? baseOptions.Effort : Effort,
+            Thinking = Thinking ?? baseOptions.Thinking,
+            Endpoint = string.IsNullOrWhiteSpace(Endpoint) ? baseOptions.Endpoint : Endpoint,
+            ForceToolChoice = ForceToolChoice ?? baseOptions.ForceToolChoice,
+            OmitSampling = OmitSampling ?? baseOptions.OmitSampling
+        };
+    }
+
+    private static string FirstNonBlank(string preferred, string fallback) =>
+        string.IsNullOrWhiteSpace(preferred) ? fallback : preferred;
 }
 
 /// <summary>
@@ -134,6 +225,15 @@ public sealed class HarnessOptions
     /// wants to, do anything the world can resolve.
     /// </summary>
     public int MaxConsecutiveIdleRounds { get; set; } = 2;
+
+    /// <summary>
+    /// When true, a character reply that carries no structured tool call is checked for one written as
+    /// prose (e.g. <c>take_action(I strike the goblin)</c>) and, if found, that call is dispatched as if
+    /// the model had made it. Off by default so the raw tool-calling behaviour stays observable; turn it
+    /// on to let prose-prone small models participate. Every recovery is traced, so it never hides what
+    /// the model actually produced.
+    /// </summary>
+    public bool RecoverTextToolCalls { get; set; }
 
     public string RunOutputDirectory { get; set; } = "runs";
 }

@@ -19,6 +19,8 @@ internal sealed class ScriptedRng : IRng
 
     public long Seed => 0;
 
+    public long DrawCount { get; private set; }
+
     public int Roll(int sides)
     {
         if (_rolls.Count == 0)
@@ -26,6 +28,7 @@ internal sealed class ScriptedRng : IRng
             throw new InvalidOperationException("ScriptedRng ran out of rolls; the test needs more scripted values.");
         }
 
+        DrawCount++;
         return _rolls.Dequeue();
     }
 

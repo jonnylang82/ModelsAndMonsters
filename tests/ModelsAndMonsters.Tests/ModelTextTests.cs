@@ -30,4 +30,40 @@ public sealed class ModelTextTests
         Assert.Null(ModelText.TryExtractJsonField("{\"category\": \"unsupported\"}", "reason"));
         Assert.Null(ModelText.TryExtractJsonField("just prose", "reason"));
     }
+
+    [Theory]
+    [InlineData("`take_action(I strike the goblin.)`", "take_action", "I strike the goblin.")]
+    [InlineData("take_action(I strike)", "take_action", "I strike")]
+    [InlineData("Hmm. ask_dm(Does it look hurt?)", "ask_dm", "Does it look hurt?")]
+    [InlineData("end_turn(I have no strength left, and I wait.)", "end_turn", "I have no strength left, and I wait.")]
+    [InlineData("```\ntake_action(I lunge at Vark)\n```", "take_action", "I lunge at Vark")]
+    public void A_tool_call_written_as_prose_is_recovered(string text, string name, string argument)
+    {
+        var recovered = ModelText.TryRecoverToolCall(text, CharacterTools.Names);
+
+        Assert.NotNull(recovered);
+        Assert.Equal(name, recovered.Value.Name);
+        Assert.Equal(argument, recovered.Value.Argument);
+    }
+
+    [Fact]
+    public void A_tool_call_written_as_json_is_recovered()
+    {
+        var recovered = ModelText.TryRecoverToolCall(
+            "{\"name\": \"take_action\", \"arguments\": {\"intent\": \"I bring my sword down on Vark.\"}}",
+            CharacterTools.Names);
+
+        Assert.NotNull(recovered);
+        Assert.Equal("take_action", recovered.Value.Name);
+        Assert.Equal("I bring my sword down on Vark.", recovered.Value.Argument);
+    }
+
+    [Theory]
+    [InlineData("I raise my sword and wait for an opening.")] // pure prose, no call
+    [InlineData("I want to take_action here, eventually.")]   // tool name but no argument parens
+    [InlineData("")]
+    public void Prose_without_a_recoverable_call_returns_null(string text)
+    {
+        Assert.Null(ModelText.TryRecoverToolCall(text, CharacterTools.Names));
+    }
 }

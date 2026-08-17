@@ -94,7 +94,11 @@ public sealed record TracedAgentProfile
 
     public int? ContextWindow { get; init; }
 
+    public string? Effort { get; init; }
+
     public bool? Thinking { get; init; }
+
+    public bool? ForceToolChoice { get; init; }
 
     public string? Endpoint { get; init; }
 
@@ -114,7 +118,9 @@ public sealed record TracedAgentProfile
             MaxOutputTokens = profile.MaxOutputTokens,
             Seed = profile.Seed,
             ContextWindow = profile.ContextWindow,
+            Effort = profile.Effort?.ToString(),
             Thinking = profile.Thinking,
+            ForceToolChoice = profile.ForceToolChoice,
             Endpoint = profile.Endpoint,
             OptionsUnsupportedByProvider = resolved.UnsupportedOptionsDropped
         };

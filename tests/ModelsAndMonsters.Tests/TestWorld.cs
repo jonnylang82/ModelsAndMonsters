@@ -70,6 +70,120 @@ internal static class TestWorld
     public static GameEngine Engine(IRng rng, CombatRules rules, params Character[] characters) =>
         new(State(characters.Length == 0 ? [Hero(), Monster()] : characters), rng, rules);
 
+    // ------------------------------------------------------------------------------------------
+    // 2v2 multi-actor world: a fighter and cleric (team Heroes) against two goblins (team Goblins).
+    // ------------------------------------------------------------------------------------------
+
+    public const string RowanId = "hero-rowan";
+    public const string ElaraId = "hero-elara";
+    public const string VarkId = "goblin-vark";
+    public const string SkritId = "goblin-skrit";
+
+    public const string HeroesTeam = "Heroes";
+    public const string GoblinsTeam = "Goblins";
+
+    public static Character Rowan(int health = 14, int hitChance = 100) => new()
+    {
+        Id = RowanId,
+        Name = "Rowan",
+        Role = CharacterRole.Hero,
+        Team = HeroesTeam,
+        MaxHealth = 14,
+        Health = health,
+        Armour = 2,
+        HitChance = hitChance,
+        Weapon = new Weapon("Longsword", 5)
+    };
+
+    public static Character Elara(int health = 11, int hitChance = 100, IEnumerable<InventoryItem>? inventory = null) => new()
+    {
+        Id = ElaraId,
+        Name = "Elara",
+        Role = CharacterRole.Hero,
+        Team = HeroesTeam,
+        MaxHealth = 11,
+        Health = health,
+        Armour = 2,
+        HitChance = hitChance,
+        Weapon = new Weapon("Iron Mace", 3),
+        Inventory = inventory is null ? [] : [.. inventory]
+    };
+
+    public static Character Vark(int health = 12, int hitChance = 100) => new()
+    {
+        Id = VarkId,
+        Name = "Vark",
+        Role = CharacterRole.Monster,
+        Team = GoblinsTeam,
+        MaxHealth = 12,
+        Health = health,
+        Armour = 2,
+        HitChance = hitChance,
+        Weapon = new Weapon("Notched Sabre", 4)
+    };
+
+    public static Character Skrit(int health = 8, int hitChance = 100) => new()
+    {
+        Id = SkritId,
+        Name = "Skrit",
+        Role = CharacterRole.Monster,
+        Team = GoblinsTeam,
+        MaxHealth = 8,
+        Health = health,
+        Armour = 1,
+        HitChance = hitChance,
+        Weapon = new Weapon("Crude Spear", 3)
+    };
+
+    /// <summary>The seeded 2v2 state: Rowan, Elara, Vark, Skrit in a single room.</summary>
+    public static GameState TwoVsTwoState() => State(Rowan(), Elara(), Vark(), Skrit());
+
+    /// <summary>
+    /// A configured 2v2 scenario mirroring the shipped one but with modest numbers, so a scripted run
+    /// resolves in two rounds. Order is the fixed turn order: Rowan, Elara, Vark, Skrit.
+    /// </summary>
+    public static ScenarioDefinition TwoVsTwoScenario() => new()
+    {
+        Id = "test-2v2",
+        Name = "Test Cellar",
+        Room = new RoomDefinition { Id = "cellar", Name = "Cellar", Description = "A cramped cellar." },
+        Characters =
+        [
+            new CharacterDefinition
+            {
+                Id = RowanId, Name = "Rowan", Role = "Hero", Team = HeroesTeam,
+                MaxHealth = 14, Armour = 2, HitChance = 100,
+                Weapon = new WeaponDefinition { Name = "Longsword", Damage = 5 },
+                Persona = new PersonaDefinition { Personality = "Steady and protective." }
+            },
+            new CharacterDefinition
+            {
+                Id = ElaraId, Name = "Elara", Role = "Hero", Team = HeroesTeam,
+                MaxHealth = 11, Armour = 2, HitChance = 100,
+                Weapon = new WeaponDefinition { Name = "Iron Mace", Damage = 3 },
+                Inventory =
+                [
+                    new ItemDefinition { Id = "small-healing-potion", Name = "Small Healing Potion", Description = "A vial.", HealingAmount = 5 }
+                ],
+                Persona = new PersonaDefinition { Personality = "Cautious and resolute." }
+            },
+            new CharacterDefinition
+            {
+                Id = VarkId, Name = "Vark", Role = "Monster", Team = GoblinsTeam,
+                MaxHealth = 12, Armour = 2, HitChance = 100,
+                Weapon = new WeaponDefinition { Name = "Notched Sabre", Damage = 4 },
+                Persona = new PersonaDefinition { Personality = "Cunning and domineering." }
+            },
+            new CharacterDefinition
+            {
+                Id = SkritId, Name = "Skrit", Role = "Monster", Team = GoblinsTeam,
+                MaxHealth = 8, Armour = 1, HitChance = 100,
+                Weapon = new WeaponDefinition { Name = "Crude Spear", Damage = 3 },
+                Persona = new PersonaDefinition { Personality = "Reckless and nervous." }
+            }
+        ]
+    };
+
     public static InventoryItem HealingPotion(int amount = 4) =>
         new("small-healing-potion", "Small Healing Potion", "A stoppered vial.", amount);
 

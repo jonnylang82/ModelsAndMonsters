@@ -42,6 +42,13 @@ public sealed class CharacterDefinition
     /// <summary>"Hero" or "Monster".</summary>
     public string Role { get; set; } = "Hero";
 
+    /// <summary>
+    /// The side this character fights on, e.g. "Heroes" or "Goblins". Characters sharing a team are
+    /// allies; the encounter ends when one team has no living members. Left blank, it falls back to a
+    /// label derived from <see cref="Role"/> so v0.1 scenarios need no team field.
+    /// </summary>
+    public string? Team { get; set; }
+
     public int MaxHealth { get; set; } = 10;
 
     /// <summary>Starting health. Defaults to <see cref="MaxHealth"/> when omitted.</summary>

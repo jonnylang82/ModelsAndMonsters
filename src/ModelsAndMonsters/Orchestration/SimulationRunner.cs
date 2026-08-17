@@ -29,12 +29,14 @@ public sealed record SimulationSummary
 }
 
 /// <summary>
-/// Composes and runs one complete simulation: seed the world, introduce it, then alternate turns
-/// until someone falls or the round limit is reached.
+/// Composes and runs one complete simulation: seed the world, introduce it, then take turns in a fixed
+/// order until one team has no living members or a harness limit stops the encounter.
 /// </summary>
 /// <remarks>
-/// Everything with a run lifetime — the trace sink, the engine, the three agents, the narration log —
-/// is created here so a run is self-contained and leaves one directory of evidence behind.
+/// Everything with a run lifetime — the trace sink, the engine, every agent, the narration log — is
+/// created here so a run is self-contained and leaves one directory of evidence behind. There is no
+/// shared hero or monster profile: each of the four characters resolves its own model profile and its
+/// own derived seed from its id, and every resolved profile is recorded.
 /// </remarks>
 public sealed class SimulationRunner
 {
@@ -76,29 +78,33 @@ public sealed class SimulationRunner
         var initialState = ScenarioFactory.CreateInitialState(_scenario);
         var engine = new GameEngine(initialState, new SeededRng(gameSeed), new CombatRules(_options.Combat.GlancingBlowChance));
 
-        var heroDefinition = RequireCharacter(CharacterRole.Hero);
-        var monsterDefinition = RequireCharacter(CharacterRole.Monster);
-
-        // Each agent's model sampling seed is derived from the master too, so it is fixed under a fixed
-        // run and random under a random run, while staying distinct per agent.
-        var dungeonMasterProfile = AgentModelProfile.FromOptions(DungeonMasterAgent.AgentIdentifier, _options.Agents.DungeonMaster)
+        // The Dungeon Master and every character inherit the shared defaults, then apply their own
+        // overrides; the resolved profile is what its model calls actually use, so that is what is recorded.
+        var defaults = _options.Agents.Default;
+        var dungeonMasterProfile = AgentModelProfile.FromOptions(
+                DungeonMasterAgent.AgentIdentifier, _options.Agents.DungeonMaster.Overlay(defaults))
             with { Seed = RunSeeds.Derive(masterSeed, RunSeeds.DungeonMasterKey) };
-        var heroProfile = AgentModelProfile.FromOptions(heroDefinition.Name, _options.Agents.Hero)
-            with { Seed = RunSeeds.Derive(masterSeed, RunSeeds.HeroKey) };
-        var monsterProfile = AgentModelProfile.FromOptions(monsterDefinition.Name, _options.Agents.Monster)
-            with { Seed = RunSeeds.Derive(masterSeed, RunSeeds.MonsterKey) };
+
+        var characterProfiles = _scenario.Characters.ToDictionary(
+            c => c.Id,
+            c => ResolveCharacterProfile(c, defaults, masterSeed),
+            StringComparer.OrdinalIgnoreCase);
+
+        var agentSeeds = new Dictionary<string, long>
+        {
+            [DungeonMasterAgent.AgentIdentifier] = dungeonMasterProfile.Seed!.Value
+        };
+        foreach (var character in _scenario.Characters)
+        {
+            agentSeeds[character.Name] = characterProfiles[character.Id].Seed!.Value;
+        }
 
         var seeds = new RunSeedInfo
         {
             MasterSeed = masterSeed,
             SeedWasProvided = seedWasProvided,
             GameSeed = gameSeed,
-            AgentSeeds = new Dictionary<string, long>
-            {
-                [DungeonMasterAgent.AgentIdentifier] = dungeonMasterProfile.Seed!.Value,
-                ["Hero"] = heroProfile.Seed!.Value,
-                ["Monster"] = monsterProfile.Seed!.Value
-            }
+            AgentSeeds = agentSeeds
         };
 
         // Every agent gets its own client wrapper, its own profile and its own conversation.
@@ -112,14 +118,28 @@ public sealed class SimulationRunner
                 harness.ProjectDungeonMasterContext);
 
             var characterPrompts = new CharacterPromptFactory(_prompts);
-            var hero = new CharacterAgent(
-                heroDefinition, heroProfile, CreateTracingClient(heroProfile, trace, clients),
-                characterPrompts.CreateSystemPrompt(heroDefinition));
-            var monster = new CharacterAgent(
-                monsterDefinition, monsterProfile, CreateTracingClient(monsterProfile, trace, clients),
-                characterPrompts.CreateSystemPrompt(monsterDefinition));
 
-            WriteManifest(paths, startedAt, initialState, dungeonMasterProfile, heroProfile, monsterProfile, seeds);
+            // Fixed turn order: the scenario's character order, repeated every round.
+            var turnOrder = _scenario.Characters
+                .Select(definition =>
+                {
+                    var profile = characterProfiles[definition.Id];
+                    return new CharacterAgent(
+                        definition, profile, CreateTracingClient(profile, trace, clients),
+                        characterPrompts.CreateSystemPrompt(definition, _scenario.Characters));
+                })
+                .ToList();
+
+            var profilesForManifest = new Dictionary<string, TracedAgentProfile>
+            {
+                [DungeonMasterAgent.AgentIdentifier] = TracedAgentProfile.From(dungeonMasterProfile)
+            };
+            foreach (var agent in turnOrder)
+            {
+                profilesForManifest[agent.Name] = TracedAgentProfile.From(agent.Profile);
+            }
+
+            WriteManifest(paths, startedAt, initialState, profilesForManifest, seeds);
 
             trace.Emit(TraceEventType.RunStarted, new RunStartedPayload
             {
@@ -137,13 +157,14 @@ public sealed class SimulationRunner
             _console.Notice(seedWasProvided
                 ? $"Run seed: {masterSeed} (fixed)."
                 : $"Run seed: {masterSeed} (random). {seeds.ReplayHint}");
+            _console.Notice(DescribeTeams(initialState));
 
             var narrationLog = new NarrationLog();
             var formatter = new WorldStateFormatter(_prompts);
             var coordinator = new TurnCoordinator(
                 engine, dungeonMaster, _prompts, formatter, narrationLog, trace, _console, harness);
 
-            return await RunLoopAsync(coordinator, engine, trace, paths, hero, monster, cancellationToken)
+            return await RunLoopAsync(coordinator, engine, trace, paths, turnOrder, cancellationToken)
                 .ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -171,18 +192,28 @@ public sealed class SimulationRunner
         }
     }
 
+    private AgentModelProfile ResolveCharacterProfile(CharacterDefinition character, AgentProfileOptions defaults, long masterSeed)
+    {
+        var overrides = _options.Agents.Characters.TryGetValue(character.Id, out var configured)
+            ? configured
+            : new AgentProfileOptions();
+
+        return AgentModelProfile.FromOptions(character.Name, overrides.Overlay(defaults))
+            with { Seed = RunSeeds.Derive(masterSeed, RunSeeds.AgentKey(character.Id)) };
+    }
+
     private void WriteReport(RunPaths paths)
     {
         try
         {
-            var reportPath = RunReportWriter.Write(paths.Directory);
-            _console.Notice($"Report written to {reportPath}");
+            var (full, summary) = RunReportWriter.WriteAll(paths.Directory);
+            _console.Notice($"Report written to {full} (full) and {summary} (summary, no trace)");
         }
         catch (Exception ex)
         {
             // Reporting is a convenience over artefacts that are already safely on disk. It must never
             // replace the real outcome of the run, including a real exception on its way out.
-            _console.Notice($"Could not write report.md: {ex.GetType().Name}: {ex.Message}");
+            _console.Notice($"Could not write reports: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -191,8 +222,7 @@ public sealed class SimulationRunner
         IGameEngine engine,
         ExperimentTrace trace,
         RunPaths paths,
-        CharacterAgent hero,
-        CharacterAgent monster,
+        IReadOnlyList<CharacterAgent> turnOrder,
         CancellationToken cancellationToken)
     {
         var harness = _options.Harness;
@@ -209,6 +239,7 @@ public sealed class SimulationRunner
 
         var turnNumber = 0;
         var idleRounds = 0;
+        TerminalConditionResult? ending = null;
 
         while (true)
         {
@@ -232,12 +263,16 @@ public sealed class SimulationRunner
             trace.Emit(TraceEventType.RoundStarted, new RoundStartedPayload { Round = round, State = engine.State });
             _console.RoundHeader(round);
 
-            // Fixed order, no initiative: Hero then Monster.
+            // Fixed order, repeated each round. A dead actor is skipped inside the turn (no model call);
+            // the terminal condition is checked after every turn, and the encounter stops the instant a
+            // team is eliminated rather than finishing the round.
             var anythingHappened = false;
-            foreach (var character in new[] { hero, monster })
+            foreach (var character in turnOrder)
             {
-                if (IsEncounterOver(engine.State, out _))
+                var before = TerminalCondition.Evaluate(engine.State);
+                if (before.IsOver)
                 {
+                    ending = before;
                     break;
                 }
 
@@ -246,11 +281,19 @@ public sealed class SimulationRunner
                     .ConfigureAwait(false);
 
                 anythingHappened |= turn.Outcome == TurnOutcome.ActionResolved;
+
+                var after = TerminalCondition.Evaluate(engine.State);
+                EmitTeamOutcome(trace, $"after {character.Name}'s turn", after);
+                if (after.IsOver)
+                {
+                    ending = after;
+                    break;
+                }
             }
 
-            if (IsEncounterOver(engine.State, out var fallen))
+            if (ending is { IsOver: true })
             {
-                terminalCondition = $"{fallen!.Name} was defeated.";
+                terminalCondition = ending.Description;
                 break;
             }
 
@@ -262,21 +305,23 @@ public sealed class SimulationRunner
                 {
                     Limit = nameof(HarnessOptions.MaxConsecutiveIdleRounds),
                     Value = harness.MaxConsecutiveIdleRounds,
-                    Effect = "The encounter was stopped because neither character could change anything."
+                    Effect = "The encounter was stopped because no team could change anything."
                 }, "harness");
                 break;
             }
 
             // No round-end recap: each turn already narrates its own outcome, so a "where things stand"
-            // narration here only restates the monster's blow that was just described.
+            // narration here only restates the blow that was just described.
         }
 
         trace.SetPosition(roundsPlayed, turnNumber, "harness");
 
-        // No separate encounter-end narration: the final turn's outcome (or pass) already narrates the
-        // last thing that happened, and a recap here only restates it. The console divider and the
-        // ending summary below give the reader closure.
         var finalState = engine.State;
+
+        // A final team-outcome evaluation, so the record ends with the standings that decided it even
+        // when the run stopped on a harness limit rather than an elimination.
+        EmitTeamOutcome(trace, "final", ending ?? TerminalCondition.Evaluate(finalState));
+
         _console.Ending(SummariseEnding(finalState, terminalCondition));
 
         trace.Emit(TraceEventType.RunCompleted, new RunCompletedPayload
@@ -312,6 +357,22 @@ public sealed class SimulationRunner
             FinalState = finalState
         };
     }
+
+    private static void EmitTeamOutcome(ExperimentTrace trace, string trigger, TerminalConditionResult outcome) =>
+        trace.Emit(TraceEventType.TeamOutcomeEvaluated, new TeamOutcomePayload
+        {
+            Trigger = trigger,
+            IsOver = outcome.IsOver,
+            Standings = [.. outcome.Standings.Select(s => new TeamStandingPayload
+            {
+                Team = s.Team,
+                Living = s.Living,
+                Total = s.Total
+            })],
+            WinningTeams = outcome.WinningTeams,
+            EliminatedTeams = outcome.EliminatedTeams,
+            Description = outcome.Description
+        }, "harness");
 
     /// <summary>
     /// Surfaces silent history loss once, at the end, rather than interrupting the transcript. If this
@@ -349,21 +410,23 @@ public sealed class SimulationRunner
             "agent's Thinking to false, or raise its MaxOutputTokens.");
     }
 
-    /// <summary>v0.1 terminal condition: anyone reaching zero health ends the encounter.</summary>
-    private static bool IsEncounterOver(GameState state, out Character? fallen)
+    private static string DescribeTeams(GameState state)
     {
-        fallen = state.Characters.FirstOrDefault(c => !c.IsAlive);
-        return fallen is not null;
+        var teams = state.Teams()
+            .Select(team => $"{team}: {string.Join(", ", state.Characters.Where(c => Same(c.Team, team)).Select(c => c.Name))}");
+        return $"Teams — {string.Join(" | ", teams)}.";
     }
 
     private static string SummariseEnding(GameState state, string terminalCondition)
     {
         var lines = state.Characters.Select(c => c.IsAlive
-            ? $"{c.Name} survives with {c.Health} of {c.MaxHealth} health."
-            : $"{c.Name} has fallen.");
+            ? $"{c.Name} ({c.Team}) survives with {c.Health} of {c.MaxHealth} health."
+            : $"{c.Name} ({c.Team}) has fallen.");
 
         return $"{terminalCondition}\n{string.Join("\n", lines)}";
     }
+
+    private static bool Same(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
 
     private TracingChatClient CreateTracingClient(AgentModelProfile profile, ExperimentTrace trace, List<IChatClient> owned)
     {
@@ -373,17 +436,11 @@ public sealed class SimulationRunner
         return tracing;
     }
 
-    private CharacterDefinition RequireCharacter(CharacterRole role) =>
-        _scenario.Characters.FirstOrDefault(c => string.Equals(c.Role, role.ToString(), StringComparison.OrdinalIgnoreCase))
-            ?? throw new InvalidOperationException($"Scenario '{_scenario.Id}' does not define a {role}.");
-
     private void WriteManifest(
         RunPaths paths,
         DateTimeOffset startedAt,
         GameState initialState,
-        AgentModelProfile dungeonMaster,
-        AgentModelProfile hero,
-        AgentModelProfile monster,
+        IReadOnlyDictionary<string, TracedAgentProfile> agentProfiles,
         RunSeedInfo seeds) =>
         RunArtifactWriter.WriteManifest(paths, new RunManifest
         {
@@ -393,12 +450,7 @@ public sealed class SimulationRunner
             MachineOperatingSystem = Environment.OSVersion.VersionString,
             Scenario = _scenario,
             InitialState = initialState,
-            AgentProfiles = new Dictionary<string, TracedAgentProfile>
-            {
-                [DungeonMasterAgent.AgentIdentifier] = TracedAgentProfile.From(dungeonMaster),
-                ["Hero"] = TracedAgentProfile.From(hero),
-                ["Monster"] = TracedAgentProfile.From(monster)
-            },
+            AgentProfiles = agentProfiles,
             PromptVersions = _prompts.Versions,
             Harness = _options.Harness,
             Seeds = seeds

@@ -17,9 +17,13 @@ public sealed class SeededRng : IRng
 
     public long Seed { get; }
 
+    public long DrawCount { get; private set; }
+
     public int Roll(int sides)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(sides, 1);
-        return _random.Next(1, sides + 1);
+        var value = _random.Next(1, sides + 1);
+        DrawCount++;
+        return value;
     }
 }

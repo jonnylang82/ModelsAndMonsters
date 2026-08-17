@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.AI;
+using ModelsAndMonsters.AI;
 using ModelsAndMonsters.Agents;
 using ModelsAndMonsters.Tracing;
 
@@ -222,6 +223,32 @@ public sealed class TracingTests
         {
             File.Delete(path);
         }
+    }
+
+    [Fact]
+    public async Task Context_saturation_is_not_flagged_for_a_provider_that_errors_on_overflow()
+    {
+        // A reply reporting far fewer input tokens than we sent looks like silent truncation on Ollama,
+        // but on OpenAI (which rejects an over-long request rather than truncating) it is only tokenizer
+        // estimate noise and must not raise a saturation warning.
+        var sink = new RecordingTraceSink();
+        var trace = new ExperimentTrace("test-run", sink);
+        var profile = new AgentModelProfile
+        {
+            AgentName = "DungeonMaster",
+            Provider = ModelProvider.OpenAI,
+            ModelId = "gpt-4o-mini"
+        };
+        var inner = new ScriptedChatClient(
+            ScriptedChatClient.WithInputTokens(ScriptedChatClient.Text("The scene is set."), reportedInputTokens: 40));
+
+        using var client = new TracingChatClient(inner, profile, trace);
+        using (client.BeginCall("dm.narrate"))
+        {
+            await client.GetResponseAsync([new ChatMessage(ChatRole.System, new string('x', 8000))]);
+        }
+
+        Assert.Empty(sink.OfType(TraceEventType.ContextWindowSaturated));
     }
 
     [Fact]
