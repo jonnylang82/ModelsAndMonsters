@@ -45,6 +45,31 @@ public sealed record RunManifest
     public required IReadOnlyDictionary<string, string> PromptVersions { get; init; }
 
     public required HarnessOptions Harness { get; init; }
+
+    /// <summary>Everything needed to replay this run's randomness.</summary>
+    public required RunSeedInfo Seeds { get; init; }
+}
+
+/// <summary>
+/// The seeds a run used, recorded so any run — including a random one — can be replayed exactly by
+/// setting Harness.Seed to <see cref="MasterSeed"/>.
+/// </summary>
+public sealed record RunSeedInfo
+{
+    /// <summary>The master seed the whole run derives from.</summary>
+    public required long MasterSeed { get; init; }
+
+    /// <summary>False when the master was generated randomly because no seed was configured.</summary>
+    public required bool SeedWasProvided { get; init; }
+
+    /// <summary>The seed used for the game's dice rolls, derived from the master.</summary>
+    public required long GameSeed { get; init; }
+
+    /// <summary>Per-agent model sampling seeds, derived from the master.</summary>
+    public required IReadOnlyDictionary<string, long> AgentSeeds { get; init; }
+
+    /// <summary>How to reproduce this run.</summary>
+    public string ReplayHint => $"Set ModelsAndMonsters:Harness:Seed to {MasterSeed} to replay this run.";
 }
 
 /// <summary>

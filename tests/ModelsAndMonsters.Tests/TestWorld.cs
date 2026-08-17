@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using ModelsAndMonsters.Configuration;
 using ModelsAndMonsters.Domain;
 using ModelsAndMonsters.Engine;
+using ModelsAndMonsters.Randomness;
 
 namespace ModelsAndMonsters.Tests;
 
@@ -11,10 +12,14 @@ internal static class TestWorld
     public const string HeroId = "hero-aric";
     public const string MonsterId = "monster-grik";
 
+    // Characters default to a hit chance of 100, so an engine built with NoGlancing rules resolves
+    // every attack as a solid full-damage hit regardless of the rolls. Tests that care about missing or
+    // glancing pass an explicit hit chance and a ScriptedRng.
     public static Character Hero(
         int health = 10,
         int maxHealth = 10,
         int armour = 1,
+        int hitChance = 100,
         Weapon? weapon = null,
         IEnumerable<InventoryItem>? inventory = null) => new()
         {
@@ -24,6 +29,7 @@ internal static class TestWorld
             MaxHealth = maxHealth,
             Health = health,
             Armour = armour,
+            HitChance = hitChance,
             Weapon = weapon ?? new Weapon("Iron Sword", 4),
             Inventory = inventory is null ? [] : [.. inventory]
         };
@@ -35,6 +41,7 @@ internal static class TestWorld
         int health = 8,
         int maxHealth = 8,
         int armour = 1,
+        int hitChance = 100,
         Weapon? weapon = null) => new()
         {
             Id = MonsterId,
@@ -43,6 +50,7 @@ internal static class TestWorld
             MaxHealth = maxHealth,
             Health = health,
             Armour = armour,
+            HitChance = hitChance,
             Weapon = weapon ?? new Weapon("Rusty Axe", 3)
         };
 
@@ -53,8 +61,14 @@ internal static class TestWorld
         Version = 0
     };
 
+    /// <summary>An engine whose attacks always land for full damage — the old deterministic behaviour.</summary>
     public static GameEngine Engine(params Character[] characters) =>
-        new(State(characters.Length == 0 ? [Hero(), Monster()] : characters));
+        new(State(characters.Length == 0 ? [Hero(), Monster()] : characters),
+            new SeededRng(1), CombatRules.NoGlancing);
+
+    /// <summary>An engine driven by an explicit rng and rules, for testing misses and glancing blows.</summary>
+    public static GameEngine Engine(IRng rng, CombatRules rules, params Character[] characters) =>
+        new(State(characters.Length == 0 ? [Hero(), Monster()] : characters), rng, rules);
 
     public static InventoryItem HealingPotion(int amount = 4) =>
         new("small-healing-potion", "Small Healing Potion", "A stoppered vial.", amount);

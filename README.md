@@ -132,6 +132,24 @@ exists. A turn ends when something the character attempts takes effect, or when 
 to end it. If nothing takes effect for `MaxConsecutiveIdleRounds` rounds, the encounter is stopped as
 a stalemate rather than grinding on to the round limit.
 
+## Randomness and seeds
+
+Combat now rolls dice. Each character has a hidden `HitChance` (scenario stat, default 75): an attack
+rolls d100 and lands when the roll is at or under the chance, otherwise it misses. A landed hit rolls
+again for a glancing blow (`Combat:GlancingBlowChance`, default 25), which deals half damage. Misses
+and glancing blows are narrated as such; hit chance is never shown to characters or narrated as a
+number. All rolls go through a single `IRng`, so nothing is random except through it.
+
+One master seed governs the whole run — the dice and all three agents' model sampling:
+
+- **`Harness:Seed` set** → fully deterministic. The same seed reproduces the same run (verified: identical rolls across runs). Use this for testing.
+- **`Harness:Seed` blank** → a random master is generated, printed, and recorded. Real runs use this.
+
+Either way the seed is recorded in `run.json` (master, derived game seed, and each agent's derived
+seed) and printed at startup, so **any run — including a random one — replays by setting `Harness:Seed`
+to the recorded value.** The per-agent seeds are derived from the master, so they are fixed under a
+fixed run, random under a random run, and always distinct from one another.
+
 ## Layout
 
 ```text
@@ -140,10 +158,11 @@ src/ModelsAndMonsters/
     AI/              model profiles, provider capabilities, chat client factory
     Configuration/   options and scenario definitions
     Domain/          characters, weapons, items, injuries, room, game state
-    Engine/          game actions, results, the deterministic engine
+    Engine/          game actions, results, combat rules, the engine
     Orchestration/   simulation runner, turn coordinator, narration log
     Presentation/    console output
     Prompts/         prompt library, state formatting, templates
+    Randomness/      IRng, seeded rng, master-seed derivation
     Tracing/         trace sink, event models, tracing chat client, run artefacts
 tests/ModelsAndMonsters.Tests/
 ```

@@ -745,6 +745,30 @@ public sealed class TurnOrchestrationTests
     }
 
     [Fact]
+    public async Task The_outcome_narration_names_the_acting_character_so_the_actor_cannot_be_inverted()
+    {
+        // The monster attacks. The outcome narration request must name Grik as the one who acted, so a
+        // model with a "hero attacks monster" prior cannot narrate Aric striking instead.
+        var harness = new OrchestrationHarness(
+            new ScriptedChatClient(
+                ScriptedChatClient.Call("dm-1", DungeonMasterTools.AttackCharacterName,
+                    ("attacker", "Grik"), ("target", "Aric"), ("weapon", "Rusty Axe")),
+                ScriptedChatClient.Text("Grik's rusty axe bites into Aric's side.")),
+            new ScriptedChatClient(),
+            new ScriptedChatClient(ScriptedChatClient.Call("m-1", CharacterTools.TakeActionName,
+                ("intent", "I swing my axe at Aric."))));
+
+        await harness.RunMonsterTurn();
+
+        var outcomeRequest = harness.Sink.Payloads<ModelRequestPayload>(TraceEventType.ModelRequest)
+            .First(r => r.Purpose == "dm.narrate.outcome");
+        var task = string.Join("\n", outcomeRequest.Messages.Select(m => m.Text));
+
+        Assert.Contains("Grik just acted", task, StringComparison.Ordinal);
+        Assert.Contains("Grik hit Aric with Rusty Axe", task, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task A_dead_character_does_not_take_a_turn()
     {
         var harness = new OrchestrationHarness(

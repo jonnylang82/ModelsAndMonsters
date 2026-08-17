@@ -468,6 +468,13 @@ public sealed record RunStartedPayload
     public required string ScenarioId { get; init; }
 
     public required string OutputDirectory { get; init; }
+
+    /// <summary>The master seed this run derives from, so the trace alone is enough to replay it.</summary>
+    public required long MasterSeed { get; init; }
+
+    public required bool SeedWasProvided { get; init; }
+
+    public required long GameSeed { get; init; }
 }
 
 public sealed record RunCompletedPayload

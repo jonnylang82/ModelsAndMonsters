@@ -65,6 +65,7 @@ public static class ScenarioFactory
             MaxHealth = maxHealth,
             Health = Math.Clamp(definition.Health ?? maxHealth, 0, maxHealth),
             Armour = Math.Max(0, definition.Armour),
+            HitChance = Math.Clamp(definition.HitChance, 0, 100),
             Weapon = definition.Weapon is null ? null : new Weapon(definition.Weapon.Name, definition.Weapon.Damage),
             Inventory = [.. definition.Inventory.Select(i => new InventoryItem(
                 string.IsNullOrWhiteSpace(i.Id) ? i.Name : i.Id,

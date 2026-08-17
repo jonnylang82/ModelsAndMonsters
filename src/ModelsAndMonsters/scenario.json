@@ -19,6 +19,7 @@
         "MaxHealth": 10,
         "Health": 10,
         "Armour": 1,
+        "HitChance": 80,
         "Weapon": {
           "Name": "Iron Sword",
           "Damage": 4
@@ -50,6 +51,7 @@
         "MaxHealth": 8,
         "Health": 8,
         "Armour": 1,
+        "HitChance": 70,
         "Weapon": {
           "Name": "Rusty Axe",
           "Damage": 3

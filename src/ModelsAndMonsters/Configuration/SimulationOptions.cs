@@ -10,6 +10,15 @@ public sealed class SimulationOptions
     public AgentsOptions Agents { get; set; } = new();
 
     public HarnessOptions Harness { get; set; } = new();
+
+    public CombatOptions Combat { get; set; } = new();
+}
+
+/// <summary>Tunable combat parameters that are not per-character.</summary>
+public sealed class CombatOptions
+{
+    /// <summary>Chance out of 100 that a landed hit is a glancing blow (half damage). 0 disables them.</summary>
+    public int GlancingBlowChance { get; set; } = 25;
 }
 
 public sealed class ProvidersOptions
@@ -63,7 +72,8 @@ public sealed class AgentProfileOptions
 
     public int? MaxOutputTokens { get; set; }
 
-    public long? Seed { get; set; }
+    // The model sampling seed is not configured per agent. It is derived from the run's master seed
+    // (Harness.Seed) so a whole run — game rolls and all three agents — replays from one number.
 
     /// <summary>
     /// Input context window in tokens. Sent to Ollama as <c>num_ctx</c>, and used by the harness to
@@ -87,6 +97,14 @@ public sealed class AgentProfileOptions
 /// </summary>
 public sealed class HarnessOptions
 {
+    /// <summary>
+    /// The master run seed. When set, the whole run is deterministic: the game rolls and each agent's
+    /// model sampling derive from it, so the same seed reproduces the same run. When null, a random
+    /// master is generated and recorded in run.json, so even a "random" run can be replayed by setting
+    /// this to the recorded value. Use a fixed seed for testing and leave it blank for real runs.
+    /// </summary>
+    public long? Seed { get; set; }
+
     public int MaxRounds { get; set; } = 8;
 
     /// <summary>Hard ceiling on model calls a single character may make in one turn.</summary>

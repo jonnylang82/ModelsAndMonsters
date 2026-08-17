@@ -1,4 +1,5 @@
 using ModelsAndMonsters.Domain;
+using ModelsAndMonsters.Randomness;
 
 namespace ModelsAndMonsters.Engine;
 
@@ -6,9 +7,14 @@ namespace ModelsAndMonsters.Engine;
 /// The minimal deterministic game engine.
 /// </summary>
 /// <remarks>
-/// <para>Attack rule: <c>damage = max(0, weaponDamage - targetArmour)</c>. An accepted attack always hits.</para>
+/// <para>
+/// Attack rule: the attacker rolls d100; the attack lands when the roll is at or under the attacker's
+/// hit chance, otherwise it misses. A landed hit rolls again for a glancing blow (half damage). Base
+/// damage is <c>max(0, weaponDamage - targetArmour)</c>. All rolls come from the injected
+/// <see cref="IRng"/>, so a run is reproducible from its seed and every roll is traced.
+/// </para>
 /// <para>Death: health clamps at 0 and a character is dead at 0.</para>
-/// <para>Healing: <c>newHealth = min(maxHealth, health + healingAmount)</c> and the item is consumed.</para>
+/// <para>Healing: <c>newHealth = min(maxHealth, health + healingAmount)</c> and the item is consumed. No roll.</para>
 /// <para>
 /// Injuries are recorded by a single deliberately trivial rule (crossing half health, or dying) so
 /// that persistent descriptive state demonstrably survives into later prompts. It is not intended to
@@ -17,11 +23,15 @@ namespace ModelsAndMonsters.Engine;
 /// </remarks>
 public sealed class GameEngine : IGameEngine
 {
+    private readonly IRng _rng;
+    private readonly CombatRules _combatRules;
     private GameState _state;
 
-    public GameEngine(GameState initialState)
+    public GameEngine(GameState initialState, IRng rng, CombatRules combatRules)
     {
         _state = initialState;
+        _rng = rng;
+        _combatRules = combatRules;
     }
 
     public GameState State => _state;
@@ -97,8 +107,47 @@ public sealed class GameEngine : IGameEngine
         }
 
         var weapon = attacker.Weapon;
-        var damage = Math.Max(0, weapon.Damage - target.Armour);
         var healthBefore = target.Health;
+
+        // The attack is a valid, accepted action; the rolls decide whether it lands and how hard.
+        var hitRoll = _rng.RollPercent();
+        var hit = hitRoll <= attacker.HitChance;
+
+        if (!hit)
+        {
+            // A miss changes nothing, but the turn is still spent, so it is an accepted action whose
+            // state is unchanged (state before == state after, version untouched).
+            var missOutcome = new AttackOutcome
+            {
+                AttackerId = attacker.Id,
+                AttackerName = attacker.Name,
+                TargetId = target.Id,
+                TargetName = target.Name,
+                WeaponName = weapon.Name,
+                WeaponDamage = weapon.Damage,
+                TargetArmour = target.Armour,
+                HitRoll = hitRoll,
+                HitChance = attacker.HitChance,
+                Hit = false,
+                GlancingRoll = null,
+                GlancingChance = _combatRules.GlancingBlowChance,
+                Glancing = false,
+                BaseDamage = 0,
+                DamageDealt = 0,
+                TargetHealthBefore = healthBefore,
+                TargetHealthAfter = healthBefore,
+                TargetMaxHealth = target.MaxHealth,
+                TargetDied = false
+            };
+
+            return EngineResult.Accept(action, state, state, missOutcome);
+        }
+
+        var glancingRoll = _rng.RollPercent();
+        var glancing = glancingRoll <= _combatRules.GlancingBlowChance;
+
+        var baseDamage = Math.Max(0, weapon.Damage - target.Armour);
+        var damage = glancing ? CombatRules.GlancingDamage(baseDamage) : baseDamage;
         var healthAfter = Math.Max(0, healthBefore - damage);
         var died = healthAfter <= 0;
 
@@ -120,6 +169,13 @@ public sealed class GameEngine : IGameEngine
             WeaponName = weapon.Name,
             WeaponDamage = weapon.Damage,
             TargetArmour = target.Armour,
+            HitRoll = hitRoll,
+            HitChance = attacker.HitChance,
+            Hit = true,
+            GlancingRoll = glancingRoll,
+            GlancingChance = _combatRules.GlancingBlowChance,
+            Glancing = glancing,
+            BaseDamage = baseDamage,
             DamageDealt = damage,
             TargetHealthBefore = healthBefore,
             TargetHealthAfter = healthAfter,

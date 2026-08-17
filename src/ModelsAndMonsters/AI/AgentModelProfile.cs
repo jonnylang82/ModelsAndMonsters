@@ -22,6 +22,10 @@ public sealed record AgentModelProfile
 
     public int? MaxOutputTokens { get; init; }
 
+    /// <summary>
+    /// Model sampling seed. Not read from per-agent config: it is derived from the run's master seed
+    /// and set on the profile by the runner, so the whole run replays from one number.
+    /// </summary>
     public long? Seed { get; init; }
 
     /// <summary>
@@ -75,7 +79,7 @@ public sealed record AgentModelProfile
             TopP = options.TopP,
             TopK = options.TopK,
             MaxOutputTokens = options.MaxOutputTokens,
-            Seed = options.Seed,
+            // Seed is not read from config here; the runner derives it from the master seed.
             ContextWindow = options.ContextWindow,
             Thinking = options.Thinking,
             Endpoint = string.IsNullOrWhiteSpace(options.Endpoint) ? null : options.Endpoint.Trim()

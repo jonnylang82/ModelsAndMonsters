@@ -49,6 +49,9 @@ public sealed class CharacterDefinition
 
     public int Armour { get; set; }
 
+    /// <summary>Chance out of 100 that this character's attacks land. Defaults to 75.</summary>
+    public int HitChance { get; set; } = 75;
+
     public WeaponDefinition? Weapon { get; set; }
 
     public List<ItemDefinition> Inventory { get; set; } = [];

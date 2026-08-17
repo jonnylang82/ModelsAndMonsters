@@ -24,6 +24,13 @@ public sealed record Character
 
     public required int Armour { get; init; }
 
+    /// <summary>
+    /// Chance out of 100 that this character's attacks land. Defaults to 100 (never misses) so code and
+    /// tests that do not care about the roll keep the old always-hit behaviour; scenarios set it lower.
+    /// It is a hidden mechanical stat — never shown to characters or narrated as a number.
+    /// </summary>
+    public int HitChance { get; init; } = 100;
+
     public Weapon? Weapon { get; init; }
 
     public ImmutableArray<InventoryItem> Inventory { get; init; } = [];

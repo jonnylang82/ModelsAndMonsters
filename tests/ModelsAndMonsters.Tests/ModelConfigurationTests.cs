@@ -15,7 +15,7 @@ public sealed class ModelConfigurationTests
         {
             DungeonMaster = new AgentProfileOptions { Provider = "Ollama", ModelId = "llama3.1", Temperature = 0.3f },
             Hero = new AgentProfileOptions { Provider = "Ollama", ModelId = "granite4.1:8b", Temperature = 0.9f, TopK = 40 },
-            Monster = new AgentProfileOptions { Provider = "OpenAI", ModelId = "gpt-4.1-mini", Seed = 7 }
+            Monster = new AgentProfileOptions { Provider = "OpenAI", ModelId = "gpt-4.1-mini" }
         };
 
         var dungeonMaster = AgentModelProfile.FromOptions("DungeonMaster", agents.DungeonMaster);
@@ -23,9 +23,13 @@ public sealed class ModelConfigurationTests
         var monster = AgentModelProfile.FromOptions("Grik", agents.Monster);
 
         Assert.Equal(ModelProvider.Ollama, dungeonMaster.Provider);
+        Assert.Equal(0.3f, dungeonMaster.Temperature);
         Assert.Equal("granite4.1:8b", hero.ModelId);
+        Assert.Equal(40, hero.TopK);
         Assert.Equal(ModelProvider.OpenAI, monster.Provider);
-        Assert.Equal(7, monster.Seed);
+
+        // The sampling seed is not read from per-agent config; the runner derives it from the master.
+        Assert.Null(monster.Seed);
     }
 
     [Fact]

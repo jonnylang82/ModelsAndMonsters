@@ -145,7 +145,14 @@ public sealed class RunReportTests : IDisposable
                 ["Monster"] = TracedAgentProfile.From(profile)
             },
             PromptVersions = new Dictionary<string, string> { ["character.system"] = "sha256:abc123" },
-            Harness = new HarnessOptions()
+            Harness = new HarnessOptions(),
+            Seeds = new RunSeedInfo
+            {
+                MasterSeed = 12345,
+                SeedWasProvided = true,
+                GameSeed = 999,
+                AgentSeeds = new Dictionary<string, long> { ["DungeonMaster"] = 1, ["Hero"] = 2, ["Monster"] = 3 }
+            }
         });
 
         RunArtifactWriter.WriteFinalState(paths, new FinalStateDocument

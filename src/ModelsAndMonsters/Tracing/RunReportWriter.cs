@@ -85,6 +85,14 @@ public static class RunReportWriter
         Row(report, "Completed", Text(finalState, "CompletedAt"));
         Row(report, "Application version", Text(manifest, "ApplicationVersion"));
         Row(report, "Operating system", Text(manifest, "MachineOperatingSystem"));
+
+        var master = Text(manifest, "Seeds", "MasterSeed");
+        if (master is not null)
+        {
+            var provided = Text(manifest, "Seeds", "SeedWasProvided") == "True";
+            Row(report, "Run seed", $"{master} ({(provided ? "fixed" : "random")})");
+            Row(report, "Replay", $"set `ModelsAndMonsters:Harness:Seed` to `{master}`");
+        }
         Row(report, "Scenario", Text(manifest, "Scenario", "Name") ?? Text(manifest, "Scenario", "Id"));
         Row(report, "Terminal condition", Text(finalState, "TerminalCondition"));
         Row(report, "Rounds played", Text(finalState, "RoundsPlayed"));

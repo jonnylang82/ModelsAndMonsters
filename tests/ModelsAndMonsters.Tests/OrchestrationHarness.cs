@@ -6,6 +6,7 @@ using ModelsAndMonsters.Engine;
 using ModelsAndMonsters.Orchestration;
 using ModelsAndMonsters.Presentation;
 using ModelsAndMonsters.Prompts;
+using ModelsAndMonsters.Randomness;
 using ModelsAndMonsters.Tracing;
 
 namespace ModelsAndMonsters.Tests;
@@ -70,7 +71,11 @@ internal sealed class OrchestrationHarness
         MonsterClient = monsterClient;
         Limits = limits ?? new HarnessOptions { MaxQuestionsPerTurn = 2, MaxActionAttemptsPerTurn = 3, MaxModelCallsPerTurn = 8 };
 
-        Engine = new GameEngine(initialState ?? TestWorld.State(TestWorld.Hero(), TestWorld.Monster()));
+        // Orchestration tests assert on damage, so the engine always lands full hits.
+        Engine = new GameEngine(
+            initialState ?? TestWorld.State(TestWorld.Hero(), TestWorld.Monster()),
+            new SeededRng(1),
+            CombatRules.NoGlancing);
         Trace = new ExperimentTrace("test-run", Sink);
 
         var scenario = TestWorld.Scenario();

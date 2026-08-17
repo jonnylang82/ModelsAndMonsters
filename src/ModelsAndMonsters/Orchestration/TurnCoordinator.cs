@@ -707,8 +707,10 @@ public sealed class TurnCoordinator
             };
         }
 
+        // The character whose turn it is is always the one who acted, so name them explicitly to the
+        // DM: a strong "the hero attacks the monster" prior otherwise makes some models invert the actor.
         var narration = await _dungeonMaster
-            .NarrateOutcomeAsync(engineResult.Outcome!.Summary, WorldStateFormatter.FormatAuthoritativeState(_engine.State), cancellationToken)
+            .NarrateOutcomeAsync(character.Name, engineResult.Outcome!.Summary, WorldStateFormatter.FormatAuthoritativeState(_engine.State), cancellationToken)
             .ConfigureAwait(false);
 
         if (string.IsNullOrWhiteSpace(narration))

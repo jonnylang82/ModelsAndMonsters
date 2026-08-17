@@ -90,12 +90,14 @@ public sealed class DungeonMasterAgent : ModelAgent
     /// to the DM as the tool result, so the DM is describing a fact rather than deciding one.
     /// </summary>
     public Task<string> NarrateOutcomeAsync(
+        string actorName,
         string engineResultSummary,
         string authoritativeState,
         CancellationToken cancellationToken) =>
         NarrateProjectedAsync(
             _prompts.Render("dungeon-master.outcome", new Dictionary<string, string?>
             {
+                ["actor"] = actorName,
                 ["result"] = engineResultSummary,
                 ["state"] = authoritativeState
             }),

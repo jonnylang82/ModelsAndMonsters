@@ -231,6 +231,95 @@ public sealed class GameEngineTests
     }
 
     [Fact]
+    public void A_missed_attack_deals_no_damage_and_changes_nothing()
+    {
+        // Grik has a hit chance of 70; a roll of 100 is above it, so the attack misses.
+        var engine = TestWorld.Engine(
+            new ScriptedRng(ScriptedRng.Misses),
+            CombatRules.Default,
+            TestWorld.Hero(), TestWorld.Monster(hitChance: 70));
+        var before = engine.State;
+
+        var result = engine.Execute(new AttackCharacterAction("Grik", "Aric", "Rusty Axe"));
+
+        // A miss is an accepted action (the turn is spent) that mutates nothing.
+        Assert.True(result.Accepted);
+        var outcome = Assert.IsType<AttackOutcome>(result.Outcome);
+        Assert.False(outcome.Hit);
+        Assert.Equal(0, outcome.DamageDealt);
+        Assert.Same(before, engine.State);
+        Assert.Equal(before.Version, engine.State.Version);
+        Assert.Equal(10, engine.State.RequireById(TestWorld.HeroId).Health);
+    }
+
+    [Fact]
+    public void A_hit_roll_at_or_under_the_hit_chance_lands()
+    {
+        var engine = TestWorld.Engine(
+            new ScriptedRng(ScriptedRng.Hits, ScriptedRng.Solid),
+            CombatRules.Default,
+            TestWorld.Hero(hitChance: 75), TestWorld.Monster(health: 8, armour: 1));
+
+        var result = engine.Execute(new AttackCharacterAction("Aric", "Grik", "Iron Sword"));
+
+        var outcome = Assert.IsType<AttackOutcome>(result.Outcome);
+        Assert.True(outcome.Hit);
+        Assert.False(outcome.Glancing);
+        Assert.Equal(3, outcome.DamageDealt); // full: 4 - 1
+        Assert.Equal(5, engine.State.RequireById(TestWorld.MonsterId).Health);
+    }
+
+    [Fact]
+    public void A_glancing_blow_deals_half_damage()
+    {
+        // Hit lands (roll 1), then the glancing roll (1) is under the 25% glancing chance.
+        var engine = TestWorld.Engine(
+            new ScriptedRng(ScriptedRng.Hits, ScriptedRng.Glances),
+            CombatRules.Default,
+            TestWorld.Hero(), TestWorld.Monster(health: 8, armour: 1));
+
+        var result = engine.Execute(new AttackCharacterAction("Aric", "Grik", "Iron Sword"));
+
+        var outcome = Assert.IsType<AttackOutcome>(result.Outcome);
+        Assert.True(outcome.Hit);
+        Assert.True(outcome.Glancing);
+        Assert.Equal(3, outcome.BaseDamage);
+        Assert.Equal(2, outcome.DamageDealt); // round(3 / 2) away from zero = 2
+        Assert.Equal(6, engine.State.RequireById(TestWorld.MonsterId).Health);
+    }
+
+    [Fact]
+    public void The_hit_roll_is_compared_to_the_attacker_not_the_target()
+    {
+        // Attacker Aric has hit chance 50; a roll of exactly 50 lands (roll <= chance).
+        var engine = TestWorld.Engine(
+            new ScriptedRng(50, ScriptedRng.Solid),
+            CombatRules.NoGlancing,
+            TestWorld.Hero(hitChance: 50), TestWorld.Monster(hitChance: 10));
+
+        var result = engine.Execute(new AttackCharacterAction("Aric", "Grik", "Iron Sword"));
+
+        Assert.True(((AttackOutcome)result.Outcome!).Hit);
+    }
+
+    [Fact]
+    public void The_outcome_records_the_rolls_for_replay()
+    {
+        var engine = TestWorld.Engine(
+            new ScriptedRng(42, 90),
+            CombatRules.Default,
+            TestWorld.Hero(hitChance: 80), TestWorld.Monster(health: 8, armour: 1));
+
+        var outcome = (AttackOutcome)engine.Execute(new AttackCharacterAction("Aric", "Grik", "Iron Sword")).Outcome!;
+
+        Assert.Equal(42, outcome.HitRoll);
+        Assert.Equal(80, outcome.HitChance);
+        Assert.Equal(90, outcome.GlancingRoll);
+        Assert.Equal(25, outcome.GlancingChance);
+        Assert.False(outcome.Glancing); // 90 is above the 25% glancing chance
+    }
+
+    [Fact]
     public void Seeding_a_scenario_produces_the_configured_state()
     {
         var state = ScenarioFactory.CreateInitialState(TestWorld.Scenario());

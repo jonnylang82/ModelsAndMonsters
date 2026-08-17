@@ -21,6 +21,21 @@ public sealed record AttackOutcome : ActionOutcome
     public required string WeaponName { get; init; }
     public required int WeaponDamage { get; init; }
     public required int TargetArmour { get; init; }
+
+    /// <summary>The d100 hit roll and the attacker's chance, so the outcome is fully reconstructable.</summary>
+    public required int HitRoll { get; init; }
+    public required int HitChance { get; init; }
+    public required bool Hit { get; init; }
+
+    /// <summary>The glancing roll and chance, null when the attack missed (no glancing roll was made).</summary>
+    public int? GlancingRoll { get; init; }
+    public required int GlancingChance { get; init; }
+    public required bool Glancing { get; init; }
+
+    /// <summary>Damage before any glancing reduction, i.e. <c>max(0, weapon - armour)</c>.</summary>
+    public required int BaseDamage { get; init; }
+
+    /// <summary>Damage actually applied: 0 on a miss, halved on a glancing blow.</summary>
     public required int DamageDealt { get; init; }
     public required int TargetHealthBefore { get; init; }
     public required int TargetHealthAfter { get; init; }
@@ -34,12 +49,21 @@ public sealed record AttackOutcome : ActionOutcome
     {
         get
         {
+            if (!Hit)
+            {
+                return $"{AttackerName} attacked {TargetName} with {WeaponName} but MISSED " +
+                       $"(rolled {HitRoll} against a hit chance of {HitChance}). No damage. " +
+                       $"{TargetName} is unharmed with {TargetHealthAfter}/{TargetMaxHealth} health.";
+            }
+
+            var quality = Glancing ? "a GLANCING blow (half damage)" : "a solid hit";
             var status = TargetDied
                 ? $"{TargetName} is dead."
                 : $"{TargetName} is alive with {TargetHealthAfter}/{TargetMaxHealth} health.";
             var injury = InjuryInflicted is null ? "" : $" New lasting injury recorded: {InjuryInflicted}.";
-            return $"{AttackerName} hit {TargetName} with {WeaponName}. " +
-                   $"Weapon damage {WeaponDamage} minus armour {TargetArmour} = {DamageDealt} damage dealt. " +
+            return $"{AttackerName} hit {TargetName} with {WeaponName} — {quality}. " +
+                   $"Weapon damage {WeaponDamage} minus armour {TargetArmour} = {BaseDamage}, " +
+                   $"{DamageDealt} damage dealt. " +
                    $"{TargetName} health {TargetHealthBefore} -> {TargetHealthAfter}. {status}{injury}";
         }
     }

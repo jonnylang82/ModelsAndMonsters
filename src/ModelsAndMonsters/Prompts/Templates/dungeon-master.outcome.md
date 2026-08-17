@@ -1,11 +1,20 @@
-The world resolved that action and reported exactly what happened:
+**{{actor}} just acted. You are narrating {{actor}}'s action.**
+
+The world resolved it and reported exactly what happened:
 
 {{result}}
+
+The one who acted is **{{actor}}**. Narrate {{actor}} doing this to the other character — {{actor}}'s weapon landing (or missing), or {{actor}} using an item. Do not swap the roles: even though the report names both characters, the attacker is {{actor}}. If it reads "{{actor}} hit" someone, it is {{actor}}'s blow, never the reverse.
 
 Updated authoritative world state:
 
 {{state}}
 
-Narrate this as the action happening: make clear who struck whom (or who used what), and show the blow landing and its effect. Lead with the action, not with a description of how someone is standing.
+Narrate {{actor}}'s action as it happens:
 
-Follow your narration rules. Do not change the facts, do not add events that were not reported, and do not use numbers. Reply with the narration only.
+- If it MISSED, narrate the miss — the blow going wide, turned aside or dodged. No wound, no blood, no damage; the target is untouched.
+- If it was a GLANCING blow, show it only grazing or catching a lesser cut.
+- If it was a solid hit, show the blow landing hard and its effect.
+- For an item, show {{actor}} using it.
+
+Lead with {{actor}}'s action. Follow your narration rules. Do not change the facts, do not use numbers. Reply with the narration only.

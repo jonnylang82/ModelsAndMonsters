@@ -8,6 +8,7 @@ using ModelsAndMonsters.Domain;
 using ModelsAndMonsters.Engine;
 using ModelsAndMonsters.Presentation;
 using ModelsAndMonsters.Prompts;
+using ModelsAndMonsters.Randomness;
 using ModelsAndMonsters.Tracing;
 
 namespace ModelsAndMonsters.Orchestration;
@@ -66,15 +67,39 @@ public sealed class SimulationRunner
         var sink = new JsonlTraceSink(paths.TraceJsonl);
         var trace = new ExperimentTrace(paths.RunId, sink);
 
+        // One master seed governs the whole run. When none is configured, generate a random one and
+        // record it, so a random run is still replayable by setting Harness.Seed to the recorded value.
+        var seedWasProvided = harness.Seed.HasValue;
+        var masterSeed = harness.Seed ?? RunSeeds.NewRandomMaster();
+        var gameSeed = RunSeeds.Derive(masterSeed, RunSeeds.GameKey);
+
         var initialState = ScenarioFactory.CreateInitialState(_scenario);
-        var engine = new GameEngine(initialState);
+        var engine = new GameEngine(initialState, new SeededRng(gameSeed), new CombatRules(_options.Combat.GlancingBlowChance));
 
         var heroDefinition = RequireCharacter(CharacterRole.Hero);
         var monsterDefinition = RequireCharacter(CharacterRole.Monster);
 
-        var dungeonMasterProfile = AgentModelProfile.FromOptions(DungeonMasterAgent.AgentIdentifier, _options.Agents.DungeonMaster);
-        var heroProfile = AgentModelProfile.FromOptions(heroDefinition.Name, _options.Agents.Hero);
-        var monsterProfile = AgentModelProfile.FromOptions(monsterDefinition.Name, _options.Agents.Monster);
+        // Each agent's model sampling seed is derived from the master too, so it is fixed under a fixed
+        // run and random under a random run, while staying distinct per agent.
+        var dungeonMasterProfile = AgentModelProfile.FromOptions(DungeonMasterAgent.AgentIdentifier, _options.Agents.DungeonMaster)
+            with { Seed = RunSeeds.Derive(masterSeed, RunSeeds.DungeonMasterKey) };
+        var heroProfile = AgentModelProfile.FromOptions(heroDefinition.Name, _options.Agents.Hero)
+            with { Seed = RunSeeds.Derive(masterSeed, RunSeeds.HeroKey) };
+        var monsterProfile = AgentModelProfile.FromOptions(monsterDefinition.Name, _options.Agents.Monster)
+            with { Seed = RunSeeds.Derive(masterSeed, RunSeeds.MonsterKey) };
+
+        var seeds = new RunSeedInfo
+        {
+            MasterSeed = masterSeed,
+            SeedWasProvided = seedWasProvided,
+            GameSeed = gameSeed,
+            AgentSeeds = new Dictionary<string, long>
+            {
+                [DungeonMasterAgent.AgentIdentifier] = dungeonMasterProfile.Seed!.Value,
+                ["Hero"] = heroProfile.Seed!.Value,
+                ["Monster"] = monsterProfile.Seed!.Value
+            }
+        };
 
         // Every agent gets its own client wrapper, its own profile and its own conversation.
         var clients = new List<IChatClient>();
@@ -94,18 +119,24 @@ public sealed class SimulationRunner
                 monsterDefinition, monsterProfile, CreateTracingClient(monsterProfile, trace, clients),
                 characterPrompts.CreateSystemPrompt(monsterDefinition));
 
-            WriteManifest(paths, startedAt, initialState, dungeonMasterProfile, heroProfile, monsterProfile);
+            WriteManifest(paths, startedAt, initialState, dungeonMasterProfile, heroProfile, monsterProfile, seeds);
 
             trace.Emit(TraceEventType.RunStarted, new RunStartedPayload
             {
                 RunId = paths.RunId,
                 ScenarioId = _scenario.Id,
-                OutputDirectory = paths.Directory
+                OutputDirectory = paths.Directory,
+                MasterSeed = seeds.MasterSeed,
+                SeedWasProvided = seeds.SeedWasProvided,
+                GameSeed = seeds.GameSeed
             });
 
             trace.Emit(TraceEventType.ScenarioSeeded, initialState);
 
             _console.RunHeader(paths.RunId, _scenario.Name, paths.Directory);
+            _console.Notice(seedWasProvided
+                ? $"Run seed: {masterSeed} (fixed)."
+                : $"Run seed: {masterSeed} (random). {seeds.ReplayHint}");
 
             var narrationLog = new NarrationLog();
             var formatter = new WorldStateFormatter(_prompts);
@@ -352,7 +383,8 @@ public sealed class SimulationRunner
         GameState initialState,
         AgentModelProfile dungeonMaster,
         AgentModelProfile hero,
-        AgentModelProfile monster) =>
+        AgentModelProfile monster,
+        RunSeedInfo seeds) =>
         RunArtifactWriter.WriteManifest(paths, new RunManifest
         {
             RunId = paths.RunId,
@@ -368,6 +400,7 @@ public sealed class SimulationRunner
                 ["Monster"] = TracedAgentProfile.From(monster)
             },
             PromptVersions = _prompts.Versions,
-            Harness = _options.Harness
+            Harness = _options.Harness,
+            Seeds = seeds
         });
 }
