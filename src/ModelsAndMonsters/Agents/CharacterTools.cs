@@ -14,9 +14,11 @@ public static class CharacterTools
 {
     public const string AskDmName = "ask_dm";
     public const string TakeActionName = "take_action";
+    public const string SayName = "say";
     public const string EndTurnName = "end_turn";
     public const string QuestionParameter = "question";
     public const string IntentParameter = "intent";
+    public const string MessageParameter = "message";
     public const string ReasonParameter = "reason";
 
     public static readonly AIFunctionDeclaration AskDm = AIFunctionFactory.CreateDeclaration(
@@ -54,6 +56,28 @@ public static class CharacterTools
         returnJsonSchema: null);
 
     /// <summary>
+    /// Lets a character speak aloud to the whole room. It does not consume the turn, so a character can
+    /// speak and then still ask, act or end its turn; the harness enforces the once-per-turn limit and
+    /// rejects empty or oversized messages.
+    /// </summary>
+    public static readonly AIFunctionDeclaration Say = AIFunctionFactory.CreateDeclaration(
+        SayName,
+        "Say something out loud. Everyone still alive in the room hears it. Speaking does not use up your turn, and you may speak at most once per turn.",
+        ToolSchema.Parse($$"""
+        {
+          "type": "object",
+          "properties": {
+            "{{MessageParameter}}": {
+              "type": "string",
+              "description": "The exact words you speak aloud, as you would say them. For example: 'Elara, get whatever is in that chest — I'll hold off the captain.'"
+            }
+          },
+          "required": ["{{MessageParameter}}"]
+        }
+        """),
+        returnJsonSchema: null);
+
+    /// <summary>
     /// Lets a character choose to do nothing. Without it, a character who has decided to hold back,
     /// give up or wait has no way to say so, and burns its whole turn on attempts the world refuses.
     /// </summary>
@@ -74,8 +98,8 @@ public static class CharacterTools
         """),
         returnJsonSchema: null);
 
-    public static readonly IReadOnlyList<AITool> All = [AskDm, TakeAction, EndTurn];
+    public static readonly IReadOnlyList<AITool> All = [AskDm, TakeAction, Say, EndTurn];
 
-    /// <summary>The three tool names, used to recognise a tool call a model wrote as prose.</summary>
-    public static readonly IReadOnlyList<string> Names = [AskDmName, TakeActionName, EndTurnName];
+    /// <summary>The tool names, used to recognise a tool call a model wrote as prose.</summary>
+    public static readonly IReadOnlyList<string> Names = [AskDmName, TakeActionName, SayName, EndTurnName];
 }

@@ -32,3 +32,22 @@ public sealed record UseItemAction(string ActorRef, string ItemRef, string? Targ
 
     public override string Describe() => $"UseItem(actor={ActorRef}, item={ItemRef}, target={TargetRef ?? "self"})";
 }
+
+/// <summary>Opens a closed container in the actor's room, revealing its contents. Uses no randomness.</summary>
+public sealed record OpenContainerAction(string ActorRef, string ContainerRef) : GameAction
+{
+    public override string ActionType => "open_container";
+
+    public override string Describe() => $"OpenContainer(actor={ActorRef}, container={ContainerRef})";
+}
+
+/// <summary>
+/// Transfers one item from an open container into the actor's inventory. Uses no randomness. The
+/// removal and the addition are one atomic state change, so two characters can never both acquire it.
+/// </summary>
+public sealed record TakeItemAction(string ActorRef, string ContainerRef, string ItemRef) : GameAction
+{
+    public override string ActionType => "take_item";
+
+    public override string Describe() => $"TakeItem(actor={ActorRef}, container={ContainerRef}, item={ItemRef})";
+}

@@ -255,13 +255,14 @@ public sealed class TurnOrchestrationTests
         Assert.Contains("10 / 10", turnContext, StringComparison.Ordinal);
         Assert.Contains("Iron Sword", turnContext, StringComparison.Ordinal);
 
-        // No authoritative numbers about the opponent leak into the character's context.
-        Assert.DoesNotContain("Grik", turnContext, StringComparison.Ordinal);
-        Assert.DoesNotContain("8 / 8", turnContext, StringComparison.Ordinal);
+        // The living roster now names the enemy — so a character cannot lose track of its side and strike
+        // a friend — but no authoritative numbers about the opponent leak into the character's context.
+        Assert.Contains("Grik", turnContext, StringComparison.Ordinal); // named as an enemy
+        Assert.DoesNotContain("8 / 8", turnContext, StringComparison.Ordinal); // but never its health
     }
 
     [Fact]
-    public async Task Characters_are_given_only_their_own_three_tools_and_never_engine_tools()
+    public async Task Characters_are_given_only_their_own_natural_tools_and_never_engine_tools()
     {
         var harness = new OrchestrationHarness(
             AcceptedAttackDungeonMaster(),
@@ -270,14 +271,21 @@ public sealed class TurnOrchestrationTests
 
         await harness.RunHeroTurn();
 
+        // The character sees only its four natural in-world tools, never any engine action.
         var heroTools = harness.HeroClient.RequestOptions[0]!.Tools!.Select(t => t.Name).ToList();
         Assert.Equal(
-            [CharacterTools.AskDmName, CharacterTools.TakeActionName, CharacterTools.EndTurnName],
+            [CharacterTools.AskDmName, CharacterTools.TakeActionName, CharacterTools.SayName, CharacterTools.EndTurnName],
             heroTools);
+        Assert.DoesNotContain(DungeonMasterTools.OpenContainerName, heroTools);
+        Assert.DoesNotContain(DungeonMasterTools.TakeItemName, heroTools);
 
         var dungeonMasterTools = harness.DungeonMasterClient.RequestOptions[0]!.Tools!.Select(t => t.Name).ToList();
         Assert.Equal(
-            [DungeonMasterTools.AttackCharacterName, DungeonMasterTools.UseItemName, DungeonMasterTools.RejectActionName],
+            [
+                DungeonMasterTools.AttackCharacterName, DungeonMasterTools.UseItemName,
+                DungeonMasterTools.OpenContainerName, DungeonMasterTools.TakeItemName,
+                DungeonMasterTools.RejectActionName
+            ],
             dungeonMasterTools);
 
         // Narration is a toolless call: the DM cannot change the world while describing it.
@@ -325,17 +333,21 @@ public sealed class TurnOrchestrationTests
     }
 
     [Fact]
-    public async Task Repeated_failures_stop_at_the_configured_attempt_limit()
+    public async Task Repeated_failures_stop_at_the_cap_without_requesting_and_discarding_a_further_decision()
     {
         var refusal = ScriptedChatClient.Call("dm", DungeonMasterTools.RejectActionName,
             ("category", "unsupported"), ("reason", "Nothing here can resolve that."));
 
+        // The third scripted reply is a perfectly valid attack. Once the two failed attempts hit the cap,
+        // the harness must stop rather than request that third decision only to throw it away unheard.
+        var heroClient = new ScriptedChatClient(
+            ScriptedChatClient.Call("h-1", CharacterTools.TakeActionName, ("intent", "I throw my sword.")),
+            ScriptedChatClient.Call("h-2", CharacterTools.TakeActionName, ("intent", "I throw my boot.")),
+            ScriptedChatClient.Call("h-3", CharacterTools.TakeActionName, ("intent", "I bring my sword down on Grik.")));
+
         var harness = new OrchestrationHarness(
             new ScriptedChatClient(refusal, refusal),
-            new ScriptedChatClient(
-                ScriptedChatClient.Call("h-1", CharacterTools.TakeActionName, ("intent", "I throw my sword.")),
-                ScriptedChatClient.Call("h-2", CharacterTools.TakeActionName, ("intent", "I throw my boot.")),
-                ScriptedChatClient.Call("h-3", CharacterTools.TakeActionName, ("intent", "I throw the bench."))),
+            heroClient,
             new ScriptedChatClient(),
             new HarnessOptions { MaxQuestionsPerTurn = 2, MaxActionAttemptsPerTurn = 2, MaxModelCallsPerTurn = 8 });
 
@@ -346,7 +358,99 @@ public sealed class TurnOrchestrationTests
         Assert.Contains(
             harness.Sink.Payloads<HarnessLimitPayload>(TraceEventType.HarnessLimitReached),
             l => l.Limit == nameof(HarnessOptions.MaxActionAttemptsPerTurn));
+
+        // The crux of the fix: the third decision was never requested (only two model calls were made),
+        // so no valid response was produced and then discarded. Every decision we ask for is adjudicated.
+        Assert.Equal(2, heroClient.CallCount);
         Assert.Equal(0, harness.Engine.State.Version);
+    }
+
+    [Fact]
+    public async Task A_rejection_that_leaks_the_machinery_is_rephrased_in_world_before_reaching_the_character()
+    {
+        const string leak = "You cannot shove it; the world can only resolve a direct weapon strike.";
+        const string inWorld = "It is too heavy and slick with water to shift; it does not move for you.";
+
+        var harness = new OrchestrationHarness(
+            new ScriptedChatClient(
+                // The DM refuses with a machinery-leaking reason...
+                ScriptedChatClient.Call("dm-1", DungeonMasterTools.RejectActionName,
+                    ("category", "unsupported"), ("reason", leak)),
+                // ...so the harness re-asks it to rephrase in-world, and it complies...
+                ScriptedChatClient.Text(inWorld),
+                // ...then narrates the character standing down.
+                ScriptedChatClient.Text("Aric sets his feet.")),
+            new ScriptedChatClient(
+                ScriptedChatClient.Call("h-1", CharacterTools.TakeActionName, ("intent", "I shove the crates at Grik.")),
+                ScriptedChatClient.Call("h-2", CharacterTools.EndTurnName, ("reason", "No use."))),
+            new ScriptedChatClient());
+
+        await harness.RunHeroTurn();
+
+        // The character was told the in-world reason, never the machinery.
+        var adjudication = harness.Sink.Payloads<DmAdjudicationPayload>(TraceEventType.DmAdjudication)
+            .Single(a => a.Category == ActionResolutionCategory.DmUnsupported.ToString());
+        Assert.Equal(inWorld, adjudication.Reason);
+        Assert.False(MachineryLanguage.IsLeak(adjudication.Reason));
+
+        // The original leak is preserved in the trace, not silently discarded.
+        var corrected = harness.Sink.Payloads<AdjudicationCorrectionPayload>(TraceEventType.AdjudicationCorrected)
+            .Single(c => c.Parameter == "reason");
+        Assert.Equal(leak, corrected.DungeonMasterValue);
+        Assert.Equal(inWorld, corrected.CorrectedValue);
+    }
+
+    [Fact]
+    public async Task A_rephrase_that_still_leaks_falls_back_to_a_neutral_in_world_line()
+    {
+        var harness = new OrchestrationHarness(
+            new ScriptedChatClient(
+                ScriptedChatClient.Call("dm-1", DungeonMasterTools.RejectActionName,
+                    ("category", "unsupported"), ("reason", "the world cannot resolve that")),
+                ScriptedChatClient.Text("That attempt is not supported by the engine."), // the rephrase leaks again
+                ScriptedChatClient.Text("Aric stands down.")),
+            new ScriptedChatClient(
+                ScriptedChatClient.Call("h-1", CharacterTools.TakeActionName, ("intent", "I do something strange.")),
+                ScriptedChatClient.Call("h-2", CharacterTools.EndTurnName, ("reason", "No use."))),
+            new ScriptedChatClient());
+
+        await harness.RunHeroTurn();
+
+        var adjudication = harness.Sink.Payloads<DmAdjudicationPayload>(TraceEventType.DmAdjudication)
+            .Single(a => a.Category == ActionResolutionCategory.DmUnsupported.ToString());
+
+        // Even a rephrase that still leaks never reaches the character: a neutral in-world line is used.
+        Assert.False(MachineryLanguage.IsLeak(adjudication.Reason));
+        Assert.Contains("finds no purchase", adjudication.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_valid_action_on_the_last_allowed_attempt_is_adjudicated_not_refused()
+    {
+        // Two failed attempts, then a valid attack on the third (== the cap). The attack we requested must
+        // be resolved, not pre-refused for being the last one allowed.
+        var refusal = ScriptedChatClient.Call("dm", DungeonMasterTools.RejectActionName,
+            ("category", "unsupported"), ("reason", "Nothing here can resolve that."));
+
+        var harness = new OrchestrationHarness(
+            new ScriptedChatClient(
+                refusal,
+                refusal,
+                ScriptedChatClient.Call("dm-hit", DungeonMasterTools.AttackCharacterName,
+                    ("attacker", "Aric"), ("target", "Grik"), ("weapon", "Iron Sword")),
+                ScriptedChatClient.Text("Aric's blade bites deep into the goblin.")),
+            new ScriptedChatClient(
+                ScriptedChatClient.Call("h-1", CharacterTools.TakeActionName, ("intent", "I throw my sword.")),
+                ScriptedChatClient.Call("h-2", CharacterTools.TakeActionName, ("intent", "I throw my boot.")),
+                ScriptedChatClient.Call("h-3", CharacterTools.TakeActionName, ("intent", "I bring my sword down on Grik."))),
+            new ScriptedChatClient(),
+            new HarnessOptions { MaxQuestionsPerTurn = 2, MaxActionAttemptsPerTurn = 3, MaxModelCallsPerTurn = 8 });
+
+        var result = await harness.RunHeroTurn();
+
+        Assert.Equal(TurnOutcome.ActionResolved, result.Outcome);
+        Assert.Equal(3, result.ActionAttempts);
+        Assert.Equal(1, harness.Engine.State.Version); // the third attempt landed
     }
 
     [Fact]

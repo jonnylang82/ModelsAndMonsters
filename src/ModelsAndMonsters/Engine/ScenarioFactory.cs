@@ -24,11 +24,23 @@ public static class ScenarioFactory
             throw new InvalidOperationException($"Duplicate character id '{duplicateId.Key}' in scenario '{scenario.Id}'.");
         }
 
+        var duplicateContainerId = scenario.Room.Containers
+            .GroupBy(c => c.Id, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault(g => g.Count() > 1);
+        if (duplicateContainerId is not null)
+        {
+            throw new InvalidOperationException(
+                $"Duplicate container id '{duplicateContainerId.Key}' in scenario '{scenario.Id}'.");
+        }
+
         var room = new Room(
             scenario.Room.Id,
             scenario.Room.Name,
             scenario.Room.Description,
-            [.. scenario.Room.Features]);
+            [.. scenario.Room.Features])
+        {
+            Objects = [.. scenario.Room.Containers.Select(ToContainer)]
+        };
 
         var characters = scenario.Characters.Select(ToCharacter).ToImmutableArray();
 
@@ -68,13 +80,42 @@ public static class ScenarioFactory
             Armour = Math.Max(0, definition.Armour),
             HitChance = Math.Clamp(definition.HitChance, 0, 100),
             Weapon = definition.Weapon is null ? null : new Weapon(definition.Weapon.Name, definition.Weapon.Damage),
-            Inventory = [.. definition.Inventory.Select(i => new InventoryItem(
-                string.IsNullOrWhiteSpace(i.Id) ? i.Name : i.Id,
-                i.Name,
-                i.Description,
-                i.HealingAmount))],
+            Inventory = [.. definition.Inventory.Select(ToItem)],
             Injuries = [.. definition.Injuries.Select(text => new Injury(text))],
             Abilities = [.. definition.Abilities]
         };
     }
+
+    private static Container ToContainer(ContainerDefinition definition)
+    {
+        if (string.IsNullOrWhiteSpace(definition.Id))
+        {
+            throw new InvalidOperationException($"Container '{definition.Name}' is missing an id.");
+        }
+
+        var duplicateItemId = definition.Contents
+            .Select(i => string.IsNullOrWhiteSpace(i.Id) ? i.Name : i.Id)
+            .GroupBy(id => id, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault(g => g.Count() > 1);
+        if (duplicateItemId is not null)
+        {
+            throw new InvalidOperationException(
+                $"Duplicate item id '{duplicateItemId.Key}' inside container '{definition.Id}'.");
+        }
+
+        return new Container
+        {
+            Id = definition.Id,
+            Name = definition.Name,
+            Description = definition.Description,
+            IsOpen = definition.IsOpen,
+            Contents = [.. definition.Contents.Select(ToItem)]
+        };
+    }
+
+    private static InventoryItem ToItem(ItemDefinition item) => new(
+        string.IsNullOrWhiteSpace(item.Id) ? item.Name : item.Id,
+        item.Name,
+        item.Description,
+        item.HealingAmount);
 }

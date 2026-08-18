@@ -8,4 +8,4 @@ Authoritative world state:
 
 "{{intent}}"
 
-Decide what this is and call exactly one tool: `attack_character`, `use_item`, or `reject_action`.
+Decide what this is and call exactly one tool: `attack_character`, `use_item`, `open_container`, `take_item`, or `reject_action`.

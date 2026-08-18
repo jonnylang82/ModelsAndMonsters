@@ -1,22 +1,37 @@
 namespace ModelsAndMonsters.Orchestration;
 
-/// <summary>One piece of Dungeon Master narration and who has already heard it.</summary>
+/// <summary>What kind of public-channel entry this is: Dungeon Master narration, or a character speaking.</summary>
+public enum PublicChannelKind
+{
+    Narration,
+    Speech
+}
+
+/// <summary>One entry on the public channel — narration or speech — and who has already heard it.</summary>
 public sealed class NarrationEntry
 {
     private readonly HashSet<string> _deliveredTo = new(StringComparer.OrdinalIgnoreCase);
 
-    public NarrationEntry(int id, string purpose, string text)
+    public NarrationEntry(int id, string purpose, string text, PublicChannelKind kind = PublicChannelKind.Narration, string? speakerId = null)
     {
         Id = id;
         Purpose = purpose;
         Text = text;
+        Kind = kind;
+        SpeakerId = speakerId;
     }
 
     public int Id { get; }
 
     public string Purpose { get; }
 
+    /// <summary>The text delivered into a recipient's context, already carrying speaker attribution for speech.</summary>
     public string Text { get; }
+
+    public PublicChannelKind Kind { get; }
+
+    /// <summary>For a speech entry, the id of the character who spoke. Null for narration.</summary>
+    public string? SpeakerId { get; }
 
     public IReadOnlyCollection<string> DeliveredTo => _deliveredTo;
 
@@ -42,6 +57,18 @@ public sealed class NarrationLog
     public NarrationEntry Record(string purpose, string text)
     {
         var entry = new NarrationEntry(_entries.Count + 1, purpose, text);
+        _entries.Add(entry);
+        return entry;
+    }
+
+    /// <summary>
+    /// Records a character speaking on the public channel. The stored text already carries the speaker's
+    /// attribution ("Rowan says: …"), so it delivers to other characters through exactly the same bounded
+    /// path as narration — no separate delivery mechanism, and no DM model call to paraphrase it.
+    /// </summary>
+    public NarrationEntry RecordSpeech(string speakerId, string attributedText)
+    {
+        var entry = new NarrationEntry(_entries.Count + 1, "speech", attributedText, PublicChannelKind.Speech, speakerId);
         _entries.Add(entry);
         return entry;
     }

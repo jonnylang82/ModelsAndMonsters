@@ -66,6 +66,7 @@ public static class RunReportWriter
         var report = new StringBuilder();
         WriteHeader(report, manifest, finalState, events, runDirectory);
         WritePerAgentActivity(report, events);
+        WriteCommunicationAndObjects(report, events);
         WriteScenario(report, manifest);
         WriteTeams(report, manifest);
         WriteTranscript(report, events);
@@ -317,6 +318,10 @@ public static class RunReportWriter
                     For(Text(d, "CharacterName")).Skips++;
                     break;
 
+                case "CharacterSpeech":
+                    For(Text(d, "SpeakerName")).Speeches++;
+                    break;
+
                 case "ToolCallRecovered":
                     For(Text(d, "AgentName")).Recovered++;
                     break;
@@ -349,14 +354,14 @@ public static class RunReportWriter
         report.AppendLine();
         var recoveredHeader = anyRecovered ? " Recovered |" : "";
         var recoveredDivider = anyRecovered ? " --- |" : "";
-        report.AppendLine("| Agent | Model calls | Input tokens | Output tokens | Latency (ms) | Questions | Attempts | Accepted | Rejected | Passes | Skips |" + recoveredHeader);
-        report.AppendLine("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |" + recoveredDivider);
+        report.AppendLine("| Agent | Model calls | Input tokens | Output tokens | Latency (ms) | Questions | Attempts | Accepted | Rejected | Speeches | Passes | Skips |" + recoveredHeader);
+        report.AppendLine("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |" + recoveredDivider);
         foreach (var (name, a) in agents.OrderByDescending(kv => kv.Value.ModelCalls).ThenBy(kv => kv.Key, StringComparer.Ordinal))
         {
             var recoveredCell = anyRecovered ? $" {a.Recovered} |" : "";
             report.AppendLine(
                 $"| {name} | {a.ModelCalls} | {a.InputTokens} | {a.OutputTokens} | {a.LatencyMs:N0} | " +
-                $"{a.Questions} | {a.Attempts} | {a.AcceptedActions} | {a.Rejections} | {a.Passes} | {a.Skips} |" + recoveredCell);
+                $"{a.Questions} | {a.Attempts} | {a.AcceptedActions} | {a.Rejections} | {a.Speeches} | {a.Passes} | {a.Skips} |" + recoveredCell);
         }
 
         var t = agents.Values;
@@ -364,7 +369,7 @@ public static class RunReportWriter
         report.AppendLine(
             $"| **Total** | {t.Sum(a => a.ModelCalls)} | {t.Sum(a => a.InputTokens)} | {t.Sum(a => a.OutputTokens)} | " +
             $"{t.Sum(a => a.LatencyMs):N0} | {t.Sum(a => a.Questions)} | {t.Sum(a => a.Attempts)} | " +
-            $"{t.Sum(a => a.AcceptedActions)} | {t.Sum(a => a.Rejections)} | {t.Sum(a => a.Passes)} | {t.Sum(a => a.Skips)} |" + totalRecoveredCell);
+            $"{t.Sum(a => a.AcceptedActions)} | {t.Sum(a => a.Rejections)} | {t.Sum(a => a.Speeches)} | {t.Sum(a => a.Passes)} | {t.Sum(a => a.Skips)} |" + totalRecoveredCell);
 
         report.AppendLine();
         if (anyRecovered)
@@ -386,9 +391,59 @@ public static class RunReportWriter
         public int Attempts;
         public int AcceptedActions;
         public int Rejections;
+        public int Speeches;
         public int Passes;
         public int Skips;
         public int Recovered;
+    }
+
+    /// <summary>
+    /// Attempt / acceptance / rejection counts for the two object actions, and the per-character speech
+    /// tally, drawn from the object-interaction and speech trace rows. Skipped entirely when a run had no
+    /// object interactions and no speech, so runs without the v0.3 features add no empty section.
+    /// </summary>
+    private static void WriteCommunicationAndObjects(StringBuilder report, IReadOnlyList<TraceRow> events)
+    {
+        var objectEvents = events.Where(e => e.EventType == "ObjectInteraction").ToList();
+        var speechEvents = events.Where(e => e.EventType == "CharacterSpeech").ToList();
+
+        if (objectEvents.Count == 0 && speechEvents.Count == 0)
+        {
+            return;
+        }
+
+        report.AppendLine("## Communication and object interaction");
+        report.AppendLine();
+
+        report.AppendLine($"Public utterances: **{speechEvents.Count}**.");
+        report.AppendLine();
+
+        if (speechEvents.Count > 0)
+        {
+            report.AppendLine("| Speaker | Utterances |");
+            report.AppendLine("| --- | --- |");
+            foreach (var group in speechEvents
+                .GroupBy(e => Text(e.Data, "SpeakerName") ?? "")
+                .OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal))
+            {
+                report.AppendLine($"| {group.Key} | {group.Count()} |");
+            }
+
+            report.AppendLine();
+        }
+
+        report.AppendLine("| Object action | Attempts | Accepted | Rejected |");
+        report.AppendLine("| --- | --- | --- | --- |");
+        foreach (var action in new[] { "open_container", "take_item" })
+        {
+            var rows = objectEvents.Where(e => Text(e.Data, "ActionType") == action).ToList();
+            var accepted = rows.Count(e => Text(e.Data, "ValidationResult") == "accepted");
+            report.AppendLine($"| `{action}` | {rows.Count} | {accepted} | {rows.Count - accepted} |");
+        }
+
+        var totalAccepted = objectEvents.Count(e => Text(e.Data, "ValidationResult") == "accepted");
+        report.AppendLine($"| **Total** | {objectEvents.Count} | {totalAccepted} | {objectEvents.Count - totalAccepted} |");
+        report.AppendLine();
     }
 
     /// <summary>Team membership, taken from the recorded initial state so it is always present.</summary>
@@ -442,6 +497,27 @@ public static class RunReportWriter
         {
             report.AppendLine($"**{Scalar(room, "Name")}** — {Scalar(room, "Description")}");
             report.AppendLine();
+
+            // Initial room objects and their authoritative contents. This is the authoritative scenario
+            // section, so a closed container's contents are shown here even though characters cannot yet
+            // see them.
+            if (room.TryGetProperty("Containers", out var containers)
+                && containers.ValueKind == JsonValueKind.Array
+                && containers.GetArrayLength() > 0)
+            {
+                report.AppendLine("**Objects in the room**");
+                report.AppendLine();
+                report.AppendLine("| Container | State | Contents (authoritative) |");
+                report.AppendLine("| --- | --- | --- |");
+                foreach (var container in containers.EnumerateArray())
+                {
+                    var open = container.TryGetProperty("IsOpen", out var o) && o.ValueKind == JsonValueKind.True;
+                    report.AppendLine(
+                        $"| {Scalar(container, "Name")} | {(open ? "open" : "closed")} | {NamesOf(container, "Contents")} |");
+                }
+
+                report.AppendLine();
+            }
         }
 
         if (scenario.TryGetProperty("Characters", out var characters) && characters.ValueKind == JsonValueKind.Array)
@@ -500,8 +576,10 @@ public static class RunReportWriter
                 // reader sees the character act before the engine and the DM respond to it.
                 "ToolCallDispatched" => TranscribeIntent(row),
                 "Narration" => $"**DM:** {Text(row.Data, "Narration")}",
-                "CharacterQuestion" => $"**{Text(row.Data, "CharacterName")} asks:** \"{Text(row.Data, "Question")}\"",
-                "DungeonMasterAnswer" => $"**DM:** {Text(row.Data, "Answer")}",
+                // Public speech, kept visually distinct from DM narration and from private questions.
+                "CharacterSpeech" => $"**{Text(row.Data, "SpeakerName")} says:** \"{Text(row.Data, "Message")}\"",
+                "CharacterQuestion" => $"**{Text(row.Data, "CharacterName")} asks (private):** \"{Text(row.Data, "Question")}\"",
+                "DungeonMasterAnswer" => $"**DM (private to {Text(row.Data, "CharacterName")}):** {Text(row.Data, "Answer")}",
                 "CharacterPassed" => $"**{Text(row.Data, "CharacterName")} holds back:** \"{Text(row.Data, "Reason")}\"",
                 "DmAdjudication" => TranscribeRuling(row),
                 "TargetResolved" => $"*[target — {Text(row.Data, "Note")}]*",
@@ -876,6 +954,31 @@ public static class RunReportWriter
                 yield return Quote($"**{Text(d, "CharacterName")} does nothing:** {Text(d, "Reason")}");
                 break;
 
+            case "CharacterSpeech":
+                yield return Bullets(
+                    ("Speaker", $"{Text(d, "SpeakerName")} (`{Text(d, "SpeakerId")}`), team {Text(d, "SpeakerTeam")}"),
+                    ("Utterance this turn", Text(d, "SpeechIndexWithinTurn")),
+                    ("Recipients (living, not the speaker)", JoinArray(d, "Recipients")),
+                    ("Delivery", Text(d, "DeliveryMechanism")),
+                    ("Public-channel entry", Text(d, "NarrationId")));
+                yield return "";
+                yield return Quote($"**{Text(d, "SpeakerName")} says:** {Text(d, "Message")}");
+                break;
+
+            case "ObjectInteraction":
+                yield return Bullets(
+                    ("Actor", $"`{Text(d, "ActorId")}`"),
+                    ("Action", $"`{Text(d, "ActionType")}`"),
+                    ("Container", Text(d, "ContainerId")),
+                    ("Item", Text(d, "ItemId")),
+                    ("Validation", $"`{Text(d, "ValidationResult")}`"),
+                    ("Rejection", Text(d, "RejectionReason")),
+                    ("World version", $"{Text(d, "WorldVersionBefore")} → {Text(d, "WorldVersionAfter")}"),
+                    ("Container open", $"{Text(d, "ContainerOpenBefore")} → {Text(d, "ContainerOpenAfter")}"),
+                    ("Container contents", $"[{JoinArray(d, "ContainerContentsBefore")}] → [{JoinArray(d, "ContainerContentsAfter")}]"),
+                    ("Actor inventory", $"[{JoinArray(d, "ActorInventoryBefore")}] → [{JoinArray(d, "ActorInventoryAfter")}]"));
+                break;
+
             case "Narration":
                 yield return Bullets(("Purpose", Text(d, "Purpose")), ("Narration ID", Text(d, "NarrationId")));
                 yield return "";
@@ -974,6 +1077,29 @@ public static class RunReportWriter
             ? characters.EnumerateArray()
             : [];
 
+    /// <summary>Final container open-state and contents, from the recorded final room objects.</summary>
+    private static void WriteFinalContainers(StringBuilder report, JsonElement state)
+    {
+        if (!state.TryGetProperty("Room", out var room)
+            || !room.TryGetProperty("Objects", out var objects)
+            || objects.ValueKind != JsonValueKind.Array
+            || objects.GetArrayLength() == 0)
+        {
+            return;
+        }
+
+        report.AppendLine("| Container | State | Contents |");
+        report.AppendLine("| --- | --- | --- |");
+        foreach (var container in objects.EnumerateArray())
+        {
+            var open = container.TryGetProperty("IsOpen", out var o) && o.ValueKind == JsonValueKind.True;
+            report.AppendLine(
+                $"| {Scalar(container, "Name")} | {(open ? "open" : "closed")} | {NamesOf(container, "Contents")} |");
+        }
+
+        report.AppendLine();
+    }
+
     private static void WriteFinalState(StringBuilder report, JsonElement? finalState)
     {
         report.AppendLine("## Final state");
@@ -986,13 +1112,9 @@ public static class RunReportWriter
             return;
         }
 
-        report.AppendLine("| | |");
-        report.AppendLine("| --- | --- |");
-        Row(report, "Terminal condition", Text(finalState, "TerminalCondition"));
-        Row(report, "Rounds played", Text(finalState, "RoundsPlayed"));
-        Row(report, "Trace events", Text(finalState, "TraceEventCount"));
-        report.AppendLine();
-
+        // The terminal condition, rounds played and trace-event count are already in the Run details
+        // header; repeating them here just printed the outcome twice, so this section shows only the
+        // end-state itself — the characters, their inventories, and the room's containers.
         if (TryGet(finalState, out var state, "State"))
         {
             report.AppendLine("| Character | Team | Health | Armour | Weapon | Inventory | Injuries | Alive |");
@@ -1011,6 +1133,8 @@ public static class RunReportWriter
             }
 
             report.AppendLine();
+            WriteFinalContainers(report, state);
+
             report.AppendLine("<details><summary>Complete final state</summary>");
             report.AppendLine();
             report.AppendLine("```json");

@@ -41,6 +41,8 @@ internal sealed class RecordingConsole : IGameConsole
 
     public void CharacterActs(string characterName, string intent) => Lines.Add($"acts:{characterName}:{intent}");
 
+    public void CharacterSpeaks(string characterName, string message) => Lines.Add($"says:{characterName}:{message}");
+
     public void CharacterPasses(string characterName, string reason) => Lines.Add($"passes:{characterName}:{reason}");
 
     public void CharacterRefused(string characterName, string explanation) => Lines.Add($"refused:{characterName}:{explanation}");

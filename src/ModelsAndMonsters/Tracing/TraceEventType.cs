@@ -50,8 +50,20 @@ public enum TraceEventType
     CharacterQuestion,
     DungeonMasterAnswer,
 
+    /// <summary>
+    /// A character spoke aloud to the room. Records the verbatim message and every living recipient, so
+    /// the delivery of public speech can be verified independently of the narration channel.
+    /// </summary>
+    CharacterSpeech,
+
     /// <summary>A character deliberately chose to do nothing with its turn.</summary>
     CharacterPassed,
+
+    /// <summary>
+    /// An attempt to open a container or take an item from one, accepted or rejected. Complements the
+    /// generic <see cref="EngineAction"/> row with the object-specific ids and version transition.
+    /// </summary>
+    ObjectInteraction,
 
     /// <summary>The harness corrected a tool argument the Dungeon Master got structurally wrong.</summary>
     AdjudicationCorrected,

@@ -2,16 +2,32 @@
   "Scenario": {
     "Id": "cellar-ambush-v1",
     "Name": "The Flooded Cellar",
-    "Summary": "Two adventurers corner two goblins in a cramped, flooded cellar — a fighter and a cleric against a goblin captain and its grunt, with nowhere for anyone to go.",
+    "Summary": "Two adventurers corner two goblins in a cramped, flooded cellar — a wounded cleric and a fighter against a goblin captain and its grunt. An old iron-bound chest the captain calls his own sits against the far wall, and nobody yet knows what waits inside it.",
 
     "Room": {
       "Id": "flooded-cellar",
       "Name": "Flooded Cellar",
-      "Description": "A low, brick-vaulted cellar under the ruined mill. Ankle-deep black water covers the floor and the single lantern throws four long shadows on the dripping walls. The way out is behind the goblins, and the way in behind the adventurers; all four stand within a few paces of one another, face to face.",
+      "Description": "A low, brick-vaulted cellar under the ruined mill. Ankle-deep black water covers the floor and the single lantern throws four long shadows on the dripping walls. All four stand within a few paces of one another, face to face, and an old iron-bound chest with its lid shut stands against the wall right there beside them, close enough for anyone to reach.",
       "Features": [
         "A guttering lantern hung from an iron hook",
         "Ankle-deep cold water across the whole floor",
         "Rotten crates stacked against one wall"
+      ],
+      "Containers": [
+        {
+          "Id": "old-iron-bound-chest",
+          "Name": "Old Iron-Bound Chest",
+          "Description": "A squat, iron-banded chest of dark wood, its lid shut but unlocked. It stands against the cellar wall within easy reach of everyone in the room.",
+          "IsOpen": false,
+          "Contents": [
+            {
+              "Id": "small-healing-potion",
+              "Name": "Small Healing Potion",
+              "Description": "A stoppered vial of cloudy red liquid.",
+              "HealingAmount": 5
+            }
+          ]
+        }
       ]
     },
 
@@ -33,11 +49,11 @@
         "Injuries": [],
         "Abilities": [],
         "Persona": {
-          "Backstory": "A veteran fighter who took this contract to clear the mill. You have stood in worse rooms than this one.",
-          "Personality": "Steady, brave and protective. You prefer to engage the most dangerous opponent and shield less martial companions from harm.",
-          "Wants": "To defeat the goblins without allowing Elara to be overwhelmed.",
+          "Backstory": "A veteran fighter who took this contract to clear the mill. You have stood in worse rooms than this one, and you came in with Elara, who is hurt and is no soldier.",
+          "Personality": "Steady, brave and protective. You put yourself between danger and those less able to weather it, and you would rather face the most dangerous enemy yourself than see a companion overwhelmed.",
+          "Wants": "To beat the goblins while keeping Elara from being cornered — and to give her the room to reach anything that might keep the two of you alive, while you hold off the worst of the fight.",
           "Fears": "Failing to protect a companion.",
-          "Goal": "Survive and defeat or otherwise overcome the goblins."
+          "Goal": "Survive and defeat or otherwise overcome the goblins without letting Elara fall."
         }
       },
       {
@@ -46,29 +62,25 @@
         "Role": "Hero",
         "Team": "Heroes",
         "MaxHealth": 11,
-        "Health": 11,
+        "Health": 6,
         "Armour": 2,
         "HitChance": 70,
         "Weapon": {
           "Name": "Iron Mace",
           "Damage": 3
         },
-        "Inventory": [
-          {
-            "Id": "small-healing-potion",
-            "Name": "Small Healing Potion",
-            "Description": "A stoppered vial of cloudy red liquid.",
-            "HealingAmount": 5
-          }
+        "Inventory": [],
+        "Injuries": [
+          "A sword-cut across the ribs from the ambush on the stair, bound with a hasty strip of cloth"
         ],
-        "Injuries": [],
         "Abilities": [],
         "Persona": {
-          "Backstory": "A cleric of a quiet roadside shrine, more used to tending the hurt than dealing hurt. You came because Rowan asked, and because someone had to.",
-          "Personality": "Compassionate, cautious and resolute. You avoid unnecessary risk but will fight when somebody depends on you.",
-          "Wants": "To keep yourself and Rowan alive.",
-          "Fears": "Being isolated and surrounded.",
-          "Goal": "Survive and help defeat or otherwise overcome the goblins."
+          "Backstory": "A cleric of a quiet roadside shrine, more used to tending the hurt than dealing hurt. You came because Rowan asked, and because someone had to. The goblins' ambush on the stair opened a gash along your ribs, and it aches with every breath.",
+          "Personality": "Compassionate, cautious and resolute. You avoid unnecessary risk but will fight when somebody depends on you, and you have a healer's eye for anything that might mend a wound.",
+          "Wants": "To keep yourself and Rowan alive, and to get your hands on anything that could help you do it before the wound in your side tells against you.",
+          "Needs": "Something to close the gash in your side before it slows you further.",
+          "Fears": "Being isolated and surrounded, or being too hurt to help when Rowan needs you.",
+          "Goal": "Survive, stay standing, and help defeat or otherwise overcome the goblins."
         }
       },
       {
@@ -88,11 +100,11 @@
         "Injuries": [],
         "Abilities": [],
         "Persona": {
-          "Backstory": "The captain of this warren's last two survivors. The mill was yours before the humans came sniffing.",
-          "Personality": "Cunning, domineering and self-preserving. You expect the grunt to take the risks while you attack whoever looks most vulnerable.",
-          "Wants": "To kill or drive off the intruders while preserving your own life.",
-          "Fears": "Losing authority, or being left to fight alone.",
-          "Goal": "Survive and defeat or otherwise overcome the heroes."
+          "Backstory": "The captain of this warren's last two survivors. The mill was yours before the humans came sniffing, and the old iron-bound chest against the wall is yours — you stashed it there, and whatever is inside belongs to you by right.",
+          "Personality": "Cunning, domineering and self-preserving. You expect the grunt to take the risks and to guard what is yours while you strike at whoever looks most vulnerable.",
+          "Wants": "To kill or drive off the intruders, keep your chest and its contents out of their hands, and come through it alive.",
+          "Fears": "Losing what is yours, losing authority, or being left to fight alone.",
+          "Goal": "Survive, keep the intruders away from your chest, and defeat or drive off the heroes."
         }
       },
       {
@@ -112,11 +124,11 @@
         "Injuries": [],
         "Abilities": [],
         "Persona": {
-          "Backstory": "The last grunt of the warren, kept alive so far by staying close to Vark and out of reach of everything else.",
-          "Personality": "Reckless, nervous and eager to impress the captain. You act boldly while Vark appears in control but become frightened when isolated.",
-          "Wants": "Vark's approval, and a share of anything taken from the intruders.",
-          "Fears": "Being abandoned by the captain.",
-          "Goal": "Survive and help defeat or otherwise overcome the heroes."
+          "Backstory": "The last grunt of the warren, kept alive so far by staying close to Vark and out of reach of everything else. The captain guards that chest of his jealously and expects you to help keep it safe.",
+          "Personality": "Reckless, nervous and eager to impress the captain. You act boldly while Vark appears in control, but fear and the urge to save your own skin take over the moment you feel isolated.",
+          "Wants": "Vark's approval, and a share of whatever the captain is hoarding in that chest.",
+          "Fears": "Being abandoned by the captain, and being left alone to face the humans.",
+          "Goal": "Survive, win Vark's favour, and help defeat or drive off the heroes."
         }
       }
     ]

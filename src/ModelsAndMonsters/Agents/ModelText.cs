@@ -141,7 +141,9 @@ public static partial class ModelText
             }
         }
 
-        // Form 2: a JSON object naming the tool and carrying its argument under any common key.
+        // Form 2: a JSON object naming the tool and carrying its argument under any common key. Tried
+        // before the bare-quoted form below, so a JSON tool call is parsed as JSON rather than having the
+        // quoted-string matcher pick a stray fragment (like a lone comma) out of its punctuation.
         var jsonName = TryExtractJsonField(cleaned, "name", "tool", "function");
         if (jsonName is not null && knownToolNames.Any(n => string.Equals(n, jsonName, StringComparison.OrdinalIgnoreCase)))
         {
@@ -150,6 +152,27 @@ public static partial class ModelText
             if (!string.IsNullOrWhiteSpace(argument))
             {
                 return (Canonical(knownToolNames, jsonName), argument.Trim());
+            }
+        }
+
+        // Form 3: name "argument", written without parentheses — e.g. say "Elara, look out!" or
+        // ask_dm: "Is it wounded?". A common prose shape (notably qwen-family models) that Form 1 misses.
+        // The opening quote fixes the closing quote, so apostrophes inside the message (you're, don't) do
+        // not truncate it. Straight and curly double quotes are both accepted. This is the loosest form,
+        // so it runs last and only on non-structured prose; JSON is handled above and never reaches it.
+        if (!LooksStructured(cleaned))
+        {
+            var quoted = Regex.Match(cleaned,
+                $"\\b({alternation})\\b\\s*[:=]?\\s*[\"“](?<arg>[^\"”]+)[\"”]",
+                RegexOptions.IgnoreCase);
+            if (quoted.Success)
+            {
+                var name = Canonical(knownToolNames, quoted.Groups[1].Value);
+                var argument = quoted.Groups["arg"].Value.Trim();
+                if (argument.Length > 0)
+                {
+                    return (name, argument);
+                }
             }
         }
 

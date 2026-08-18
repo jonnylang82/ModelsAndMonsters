@@ -189,6 +189,64 @@ internal static class TestWorld
 
     public static InventoryItem Rope() => new("rope", "Rope", "Twenty feet of hemp rope.");
 
+    // ------------------------------------------------------------------------------------------
+    // Objects: the contested chest (v0.3).
+    // ------------------------------------------------------------------------------------------
+
+    public const string ChestId = "old-iron-bound-chest";
+
+    /// <summary>The contested chest. Closed by default, holding a single Small Healing Potion.</summary>
+    public static Container Chest(bool open = false, IEnumerable<InventoryItem>? contents = null) => new()
+    {
+        Id = ChestId,
+        Name = "Old Iron-Bound Chest",
+        Description = "A squat, iron-banded chest of dark wood.",
+        IsOpen = open,
+        Contents = contents is null ? [HealingPotion(5)] : [.. contents]
+    };
+
+    /// <summary>A room state with a given set of objects and characters.</summary>
+    public static GameState StateWith(IEnumerable<WorldObject> objects, params Character[] characters) => new()
+    {
+        Room = new Room("flooded-cellar", "Flooded Cellar", "A cramped, flooded cellar.", ImmutableArray<string>.Empty)
+        {
+            Objects = [.. objects]
+        },
+        Characters = [.. characters],
+        Version = 0
+    };
+
+    /// <summary>The 2v2 state with the chest present. Elara starts wounded, as in the shipped scenario.</summary>
+    public static GameState TwoVsTwoStateWithChest(Container? chest = null) =>
+        StateWith([chest ?? Chest()], Rowan(), Elara(health: 6), Vark(), Skrit());
+
+    /// <summary>
+    /// The 2v2 scenario with the contested chest seeded into the room and the potion moved out of Elara's
+    /// inventory and into it, mirroring the shipped v0.3 scenario. Used where a run needs a manifest whose
+    /// authoritative scenario section carries the initial container and its contents.
+    /// </summary>
+    public static ScenarioDefinition TwoVsTwoScenarioWithChest()
+    {
+        var scenario = TwoVsTwoScenario();
+        scenario.Characters.First(c => c.Id == ElaraId).Inventory = [];
+        scenario.Characters.First(c => c.Id == ElaraId).Health = 6;
+        scenario.Room.Containers =
+        [
+            new ContainerDefinition
+            {
+                Id = ChestId,
+                Name = "Old Iron-Bound Chest",
+                Description = "A squat, iron-banded chest of dark wood.",
+                IsOpen = false,
+                Contents =
+                [
+                    new ItemDefinition { Id = "small-healing-potion", Name = "Small Healing Potion", Description = "A vial.", HealingAmount = 5 }
+                ]
+            }
+        ];
+        return scenario;
+    }
+
     public static ScenarioDefinition Scenario() => new()
     {
         Id = "test-scenario",

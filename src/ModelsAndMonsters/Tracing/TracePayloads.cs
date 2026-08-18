@@ -350,6 +350,79 @@ public sealed record CharacterPassedPayload
 }
 
 /// <summary>
+/// One public utterance. The verbatim message plus the exact set of living recipients make it possible
+/// to verify from the trace alone that speech reached everyone alive in the room and nobody else.
+/// </summary>
+public sealed record CharacterSpeechPayload
+{
+    public required string SpeakerId { get; init; }
+
+    public required string SpeakerName { get; init; }
+
+    public required string SpeakerTeam { get; init; }
+
+    /// <summary>The speaker's exact words, preserved verbatim and never paraphrased by a model.</summary>
+    public required string Message { get; init; }
+
+    public required int Round { get; init; }
+
+    public required int Turn { get; init; }
+
+    /// <summary>Which utterance this is within the speaker's current turn, 1-based.</summary>
+    public required int SpeechIndexWithinTurn { get; init; }
+
+    /// <summary>The living characters other than the speaker who are intended to hear this.</summary>
+    public required IReadOnlyList<string> Recipients { get; init; }
+
+    public required string DeliveryMechanism { get; init; }
+
+    /// <summary>The public-channel entry id, so the delivery to each recipient can be cross-referenced.</summary>
+    public required int NarrationId { get; init; }
+}
+
+/// <summary>
+/// A container or item interaction, accepted or rejected. Carries the object-specific ids and the world
+/// version transition that the generic <see cref="EngineActionPayload"/> does not surface directly, plus
+/// compact before/after snapshots that make a successful transfer's two halves — the container losing the
+/// item and the actor gaining it — explicit in one row.
+/// </summary>
+public sealed record ObjectInteractionPayload
+{
+    public required string ActorId { get; init; }
+
+    /// <summary>"open_container" or "take_item".</summary>
+    public required string ActionType { get; init; }
+
+    /// <summary>The object acted on (the container), by id, when it resolved.</summary>
+    public string? ObjectId { get; init; }
+
+    public string? ContainerId { get; init; }
+
+    public string? ItemId { get; init; }
+
+    /// <summary>"accepted" when the engine applied it, "rejected" otherwise.</summary>
+    public required string ValidationResult { get; init; }
+
+    public string? RejectionReason { get; init; }
+
+    public required int WorldVersionBefore { get; init; }
+
+    public required int WorldVersionAfter { get; init; }
+
+    public bool? ContainerOpenBefore { get; init; }
+
+    public bool? ContainerOpenAfter { get; init; }
+
+    public IReadOnlyList<string>? ContainerContentsBefore { get; init; }
+
+    public IReadOnlyList<string>? ContainerContentsAfter { get; init; }
+
+    public IReadOnlyList<string>? ActorInventoryBefore { get; init; }
+
+    public IReadOnlyList<string>? ActorInventoryAfter { get; init; }
+}
+
+/// <summary>
 /// Records where the harness overrode a Dungeon Master tool argument on structural grounds, so the
 /// correction is never invisible in the experiment.
 /// </summary>
@@ -537,6 +610,8 @@ public sealed record TurnEndedPayload
     public required int QuestionsAsked { get; init; }
 
     public required int ActionAttempts { get; init; }
+
+    public int SpeechActs { get; init; }
 
     public required int ModelCalls { get; init; }
 

@@ -46,6 +46,8 @@ public sealed class GameEngine : IGameEngine
         {
             AttackCharacterAction attack => ResolveAttack(attack),
             UseItemAction useItem => ResolveUseItem(useItem),
+            OpenContainerAction open => ResolveOpenContainer(open),
+            TakeItemAction take => ResolveTakeItem(take),
             _ => EngineResult.Reject(action, _state, EngineRejectionReason.UnsupportedAction,
                 $"The engine has no handler for action type '{action.ActionType}'.")
         };
@@ -201,7 +203,30 @@ public sealed class GameEngine : IGameEngine
             Injuries = injury is null ? target.Injuries : target.Injuries.Add(injury)
         };
 
-        var after = state.WithCharacter(updatedTarget) with { Version = state.Version + 1 };
+        // A character who dies carrying items leaves them as a lootable, already-open corpse container in
+        // the room, so nothing a character was holding becomes permanently unreachable. This composes with
+        // the existing container system: others loot it with the ordinary take_item action. No randomness.
+        Container? corpse = null;
+        GameState after;
+        if (died && updatedTarget.Inventory.Length > 0)
+        {
+            corpse = new Container
+            {
+                Id = $"corpse-{updatedTarget.Id}",
+                Name = $"{updatedTarget.Name}'s body",
+                Description = $"The fallen body of {updatedTarget.Name}, its belongings within reach.",
+                IsOpen = true,
+                Contents = updatedTarget.Inventory
+            };
+
+            var strippedTarget = updatedTarget with { Inventory = [] };
+            var roomWithCorpse = state.Room with { Objects = state.Room.Objects.Add(corpse) };
+            after = state.WithCharacter(strippedTarget) with { Room = roomWithCorpse, Version = state.Version + 1 };
+        }
+        else
+        {
+            after = state.WithCharacter(updatedTarget) with { Version = state.Version + 1 };
+        }
 
         var outcome = new AttackOutcome
         {
@@ -224,7 +249,9 @@ public sealed class GameEngine : IGameEngine
             TargetHealthAfter = healthAfter,
             TargetMaxHealth = target.MaxHealth,
             TargetDied = died,
-            InjuryInflicted = injury?.Description
+            InjuryInflicted = injury?.Description,
+            CorpseContainerName = corpse?.Name,
+            DroppedItems = corpse is null ? [] : [.. corpse.Contents.Select(i => i.Name)]
         };
 
         return EngineResult.Accept(action, state, after, outcome, draws);
@@ -301,6 +328,169 @@ public sealed class GameEngine : IGameEngine
         };
 
         return EngineResult.Accept(action, state, after, outcome);
+    }
+
+    /// <summary>
+    /// Opens a closed container. No randomness: opening either succeeds or is refused on authoritative
+    /// state alone, so its result carries no draws and the combat generator is never advanced.
+    /// </summary>
+    private EngineResult ResolveOpenContainer(OpenContainerAction action)
+    {
+        var state = _state;
+
+        var actor = state.Resolve(action.ActorRef);
+        if (actor is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.UnknownActor,
+                $"There is no character called '{action.ActorRef}' in the room.");
+        }
+
+        if (!actor.IsAlive)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.ActorIsDead,
+                $"{actor.Name} is dead and cannot act.");
+        }
+
+        var resolution = state.ResolveObject(action.ContainerRef);
+        if (resolution.Ambiguous)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.ContainerReferenceAmbiguous,
+                $"'{action.ContainerRef}' could mean more than one thing in the room; it is not clear which is meant.");
+        }
+
+        if (resolution.Object is not Container container)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.UnknownContainer,
+                $"There is no container called '{action.ContainerRef}' in the room.");
+        }
+
+        if (container.IsOpen)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.ContainerAlreadyOpen,
+                $"The {container.Name} is already open.");
+        }
+
+        var opened = container with { IsOpen = true };
+        var after = state.WithContainer(opened) with { Version = state.Version + 1 };
+
+        var outcome = new OpenContainerOutcome
+        {
+            ActorId = actor.Id,
+            ActorName = actor.Name,
+            ContainerId = container.Id,
+            ContainerName = container.Name,
+            RevealedContents = [.. opened.Contents.Select(i => i.Name)]
+        };
+
+        return EngineResult.Accept(action, state, after, outcome);
+    }
+
+    /// <summary>
+    /// Moves one item from an open container into the actor's inventory as a single atomic change. No
+    /// randomness. Because the removal and the addition are one new state, a second character attempting
+    /// the same item afterwards finds it gone and is refused — two characters can never both acquire it.
+    /// </summary>
+    private EngineResult ResolveTakeItem(TakeItemAction action)
+    {
+        var state = _state;
+
+        var actor = state.Resolve(action.ActorRef);
+        if (actor is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.UnknownActor,
+                $"There is no character called '{action.ActorRef}' in the room.");
+        }
+
+        if (!actor.IsAlive)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.ActorIsDead,
+                $"{actor.Name} is dead and cannot act.");
+        }
+
+        var resolution = state.ResolveObject(action.ContainerRef);
+        if (resolution.Ambiguous)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.ContainerReferenceAmbiguous,
+                $"'{action.ContainerRef}' could mean more than one thing in the room; it is not clear which is meant.");
+        }
+
+        if (resolution.Object is not Container container)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.UnknownContainer,
+                $"There is no container called '{action.ContainerRef}' in the room.");
+        }
+
+        if (!container.IsOpen)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.ContainerClosed,
+                $"The {container.Name} is closed; nothing can be taken from it until it is opened.");
+        }
+
+        var (item, ambiguousItem) = ResolveContainedItem(container, action.ItemRef);
+        if (ambiguousItem)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.ItemReferenceAmbiguous,
+                $"'{action.ItemRef}' matches more than one thing inside the {container.Name}; it is not clear which is meant.");
+        }
+
+        if (item is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.ItemNotInContainer,
+                $"There is no '{action.ItemRef}' inside the {container.Name}.");
+        }
+
+        var index = container.Contents.IndexOf(item);
+        var emptiedContainer = container with { Contents = container.Contents.RemoveAt(index) };
+        var carryingActor = actor with { Inventory = actor.Inventory.Add(item) };
+
+        // One new state carries both halves of the transfer, then a single version increment.
+        var after = state
+            .WithContainer(emptiedContainer)
+            .WithCharacter(carryingActor) with { Version = state.Version + 1 };
+
+        var outcome = new TakeItemOutcome
+        {
+            ActorId = actor.Id,
+            ActorName = actor.Name,
+            ContainerId = container.Id,
+            ContainerName = container.Name,
+            ItemId = item.Id,
+            ItemName = item.Name,
+            RemainingContents = [.. emptiedContainer.Contents.Select(i => i.Name)]
+        };
+
+        return EngineResult.Accept(action, state, after, outcome);
+    }
+
+    /// <summary>
+    /// Resolves an item reference against a container's contents, reporting ambiguity rather than
+    /// guessing — the same discipline the engine applies to characters and objects.
+    /// </summary>
+    private static (InventoryItem? Item, bool Ambiguous) ResolveContainedItem(Container container, string itemRef)
+    {
+        if (string.IsNullOrWhiteSpace(itemRef))
+        {
+            return (null, false);
+        }
+
+        var needle = itemRef.Trim();
+
+        var byId = container.Contents.FirstOrDefault(i => string.Equals(i.Id, needle, StringComparison.OrdinalIgnoreCase));
+        if (byId is not null)
+        {
+            return (byId, false);
+        }
+
+        var byName = container.Contents
+            .Where(i => string.Equals(i.Name, needle, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        return byName.Count switch
+        {
+            0 => (null, false),
+            1 => (byName[0], false),
+            _ => (null, true)
+        };
     }
 
     private static System.Collections.Immutable.ImmutableArray<InventoryItem> RemoveFirst(Character actor, InventoryItem item)

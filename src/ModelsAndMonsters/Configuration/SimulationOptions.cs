@@ -205,6 +205,19 @@ public sealed class HarnessOptions
 
     public int MaxActionAttemptsPerTurn { get; set; } = 3;
 
+    /// <summary>
+    /// How many times a character may speak aloud in one turn. Defaults to 1. Speaking does not consume
+    /// the turn, so this is the only thing bounding how much a character can say before it must act or end.
+    /// </summary>
+    public int MaxSpeechActsPerTurn { get; set; } = 1;
+
+    /// <summary>
+    /// Upper bound on the length of a single spoken message, in characters. A message beyond this is
+    /// rejected at the harness boundary without being delivered, so one runaway reply cannot flood every
+    /// other character's context. Empty messages are always rejected regardless of this value.
+    /// </summary>
+    public int MaxSpeechCharacters { get; set; } = 600;
+
     /// <summary>Extra attempts allowed when the DM answers an adjudication without calling a tool.</summary>
     public int MaxAdjudicationRetries { get; set; } = 1;
 

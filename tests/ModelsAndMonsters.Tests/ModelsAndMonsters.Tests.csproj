@@ -28,6 +28,12 @@
     <None Include="..\..\src\ModelsAndMonsters\Prompts\Templates\*.md"
           Link="Prompts\Templates\%(Filename)%(Extension)"
           CopyToOutputDirectory="PreserveNewest" />
+
+    <!-- The shipped scenario is linked so tests can assert on the real seeded chest and its contents,
+         rather than a copy that could drift from what actually ships. -->
+    <None Include="..\..\src\ModelsAndMonsters\scenario.json"
+          Link="scenario.json"
+          CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

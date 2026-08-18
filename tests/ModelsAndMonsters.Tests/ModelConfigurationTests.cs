@@ -729,7 +729,9 @@ public sealed class ModelConfigurationTests
             Assert.IsNotAssignableFrom<AIFunction>(tool);
         }
 
-        Assert.Equal(6, allTools.Count);
+        // Characters: ask_dm, take_action, say, end_turn. Dungeon Master: attack_character, use_item,
+        // open_container, take_item, reject_action.
+        Assert.Equal(9, allTools.Count);
     }
 
     [Fact]

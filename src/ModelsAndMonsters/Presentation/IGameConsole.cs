@@ -19,6 +19,9 @@ public interface IGameConsole
 
     void CharacterActs(string characterName, string intent);
 
+    /// <summary>A character speaking aloud to the whole room.</summary>
+    void CharacterSpeaks(string characterName, string message);
+
     /// <summary>A character choosing to do nothing this turn.</summary>
     void CharacterPasses(string characterName, string reason);
 

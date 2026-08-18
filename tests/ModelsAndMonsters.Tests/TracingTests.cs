@@ -61,7 +61,8 @@ public sealed class TracingTests
         Assert.Equal(20, request.RequestedOptions.TopK);
         Assert.Equal(42, request.RequestedOptions.Seed);
 
-        Assert.Equal(3, request.Tools.Count);
+        // The character's four natural tools: ask_dm, take_action, say, end_turn.
+        Assert.Equal(4, request.Tools.Count);
         var askDm = request.Tools.First(t => t.Name == CharacterTools.AskDmName);
         Assert.NotNull(askDm.JsonSchema);
         Assert.True(askDm.JsonSchema!.Value.GetProperty("properties").TryGetProperty("question", out _));

@@ -66,6 +66,9 @@ public sealed record TurnResult
 
     public required int ActionAttempts { get; init; }
 
+    /// <summary>How many times the character spoke aloud this turn. Speaking never consumes the turn.</summary>
+    public int SpeechActs { get; init; }
+
     public required int ModelCalls { get; init; }
 
     public string? AcceptedAction { get; init; }

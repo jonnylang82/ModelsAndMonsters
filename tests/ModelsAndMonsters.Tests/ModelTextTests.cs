@@ -32,11 +32,20 @@ public sealed class ModelTextTests
     }
 
     [Theory]
+    // Form 1: name(argument).
     [InlineData("`take_action(I strike the goblin.)`", "take_action", "I strike the goblin.")]
     [InlineData("take_action(I strike)", "take_action", "I strike")]
     [InlineData("Hmm. ask_dm(Does it look hurt?)", "ask_dm", "Does it look hurt?")]
     [InlineData("end_turn(I have no strength left, and I wait.)", "end_turn", "I have no strength left, and I wait.")]
     [InlineData("```\ntake_action(I lunge at Vark)\n```", "take_action", "I lunge at Vark")]
+    // Form 1b: name "argument" with no parentheses — the qwen-family prose shape.
+    [InlineData("say \"Elara, look out!\"", "say", "Elara, look out!")]
+    [InlineData("ask_dm: \"Does it look hurt?\"", "ask_dm", "Does it look hurt?")]
+    [InlineData("say = \"Hold the line!\"", "say", "Hold the line!")]
+    // An opening quote fixes the closing quote, so apostrophes inside do not truncate the message.
+    [InlineData("say \"Elara, you're bleeding! Stay back!\"", "say", "Elara, you're bleeding! Stay back!")]
+    // Curly quotes are accepted too.
+    [InlineData("say “Hold the line!”", "say", "Hold the line!")]
     public void A_tool_call_written_as_prose_is_recovered(string text, string name, string argument)
     {
         var recovered = ModelText.TryRecoverToolCall(text, CharacterTools.Names);
@@ -44,6 +53,22 @@ public sealed class ModelTextTests
         Assert.NotNull(recovered);
         Assert.Equal(name, recovered.Value.Name);
         Assert.Equal(argument, recovered.Value.Argument);
+    }
+
+    [Fact]
+    public void A_say_written_as_prose_after_a_monologue_is_recovered_verbatim()
+    {
+        // Vark's exact real-world reply that the old paren-only recovery missed, sending him into a
+        // nudge loop: an in-character monologue followed by a parenthesis-free say "...".
+        const string reply =
+            "My eyes lock onto Elara, her ribs wrapped in cloth. I need to keep the intruders away from my chest.\n\n" +
+            "say \"Elara, you're bleeding! Stay back and let me handle these pests!\"";
+
+        var recovered = ModelText.TryRecoverToolCall(reply, CharacterTools.Names);
+
+        Assert.NotNull(recovered);
+        Assert.Equal("say", recovered.Value.Name);
+        Assert.Equal("Elara, you're bleeding! Stay back and let me handle these pests!", recovered.Value.Argument);
     }
 
     [Fact]

@@ -124,7 +124,7 @@ public sealed class TurnCoordinator
             };
         }
 
-        var selfState = _formatter.FormatCharacterSelfState(self);
+        var selfState = _formatter.FormatCharacterSelfState(self, _engine.State);
         var pendingNarration = _narrationLog.TakeUndelivered(character.CharacterId);
 
         if (pendingNarration.Count > 0)
@@ -158,6 +158,7 @@ public sealed class TurnCoordinator
 
         var questionsAsked = 0;
         var actionAttempts = 0;
+        var speechActs = 0;
         var modelCalls = 0;
         var outcome = TurnOutcome.AbandonedAtLimit;
         string? acceptedAction = null;
@@ -252,18 +253,12 @@ public sealed class TurnCoordinator
 
                     case CharacterTools.TakeActionName:
                     {
-                        if (actionAttempts >= _limits.MaxActionAttemptsPerTurn)
-                        {
-                            EmitLimit(nameof(HarnessOptions.MaxActionAttemptsPerTurn), _limits.MaxActionAttemptsPerTurn,
-                                $"{character.Name}'s turn was abandoned after too many failed attempts.");
-                            DispatchAndRecord(character, call,
-                                "You hesitate too long, and the moment passes.",
-                                "refused-attempt-limit");
-                            turnEnded = true;
-                            outcome = TurnOutcome.AbandonedAtLimit;
-                            break;
-                        }
-
+                        // Every attempt we were handed is adjudicated — a decision we requested is never
+                        // refused unheard just because it is the last one allowed. The cap governs whether
+                        // we ask for a *further* decision, not whether we honour this one; once it is
+                        // reached on a failed attempt we stop rather than request one more only to discard
+                        // it. (A model may also emit several take_action calls in one reply; the second and
+                        // later are caught by the turn-ended guard above once this one resolves the turn.)
                         actionAttempts++;
                         var attempt = await HandleTakeActionAsync(character, call, cancellationToken).ConfigureAwait(false);
 
@@ -272,6 +267,36 @@ public sealed class TurnCoordinator
                             turnEnded = true;
                             outcome = TurnOutcome.ActionResolved;
                             acceptedAction = attempt.Action?.Describe();
+                        }
+                        else if (actionAttempts >= _limits.MaxActionAttemptsPerTurn)
+                        {
+                            EmitLimit(nameof(HarnessOptions.MaxActionAttemptsPerTurn), _limits.MaxActionAttemptsPerTurn,
+                                $"{character.Name}'s turn was abandoned after too many failed attempts.");
+                            turnEnded = true;
+                            outcome = TurnOutcome.AbandonedAtLimit;
+                        }
+
+                        break;
+                    }
+
+                    case CharacterTools.SayName:
+                    {
+                        if (speechActs >= _limits.MaxSpeechActsPerTurn)
+                        {
+                            EmitLimit(nameof(HarnessOptions.MaxSpeechActsPerTurn), _limits.MaxSpeechActsPerTurn,
+                                $"{character.Name} had already spoken this turn and was not heard again.");
+                            DispatchAndRecord(character, call,
+                                "You have already spoken this turn. Act, ask, or end your turn.",
+                                "refused-speech-limit");
+                            break;
+                        }
+
+                        // Speaking never ends the turn: the character may still ask, act or end afterwards.
+                        var spoke = await HandleSayAsync(character, call, round, turn, speechActs + 1, cancellationToken)
+                            .ConfigureAwait(false);
+                        if (spoke)
+                        {
+                            speechActs++;
                         }
 
                         break;
@@ -317,6 +342,7 @@ public sealed class TurnCoordinator
             Outcome = outcome,
             QuestionsAsked = questionsAsked,
             ActionAttempts = actionAttempts,
+            SpeechActs = speechActs,
             ModelCalls = modelCalls,
             AcceptedAction = acceptedAction
         };
@@ -334,6 +360,7 @@ public sealed class TurnCoordinator
             Result = result.Outcome.ToString(),
             QuestionsAsked = result.QuestionsAsked,
             ActionAttempts = result.ActionAttempts,
+            SpeechActs = result.SpeechActs,
             ModelCalls = result.ModelCalls,
             AcceptedAction = result.AcceptedAction
         });
@@ -474,6 +501,88 @@ public sealed class TurnCoordinator
     }
 
     // -----------------------------------------------------------------------------------------
+    // say
+    // -----------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// A character speaking aloud. Speech is a public event routed by the orchestrator, not adjudicated:
+    /// the words are delivered verbatim, with attribution, and never paraphrased by a Dungeon Master
+    /// model call. It reaches every other living character through the same bounded public channel as
+    /// narration, so nobody hears it until their own next turn. Returns true when a valid message was
+    /// delivered, false when it was rejected at the harness boundary (empty or oversized).
+    /// </summary>
+    private async Task<bool> HandleSayAsync(
+        CharacterAgent character,
+        FunctionCallContent call,
+        int round,
+        int turn,
+        int speechIndex,
+        CancellationToken cancellationToken)
+    {
+        var message = ToolArguments.GetString(call, CharacterTools.MessageParameter);
+
+        // Reject empty or unreasonably large messages at the harness boundary, without delivering them.
+        var rejection = message switch
+        {
+            null => "You did not actually say anything aloud. Speak real words, or do something.",
+            _ when message.Length > _limits.MaxSpeechCharacters =>
+                "That is far too much to call out across a room mid-fight. Say it in a sentence or two.",
+            _ => null
+        };
+
+        _trace.Emit(TraceEventType.ToolCallDispatched, new ToolCallDispatchPayload
+        {
+            AgentName = character.Name,
+            CallId = call.CallId,
+            ToolName = call.Name,
+            Arguments = ChatTraceMapper.MapArguments(call.Arguments),
+            DispatchDecision = rejection is null
+                ? "Delivered verbatim to every other living character in the room. Does not consume the turn."
+                : $"Rejected at the harness boundary: {rejection}"
+        });
+
+        if (rejection is not null)
+        {
+            RecordToolResult(character, call, rejection);
+            return false;
+        }
+
+        var spoken = message!.Trim();
+
+        // The stored public-channel text already carries attribution, so recipients read the speaker's
+        // exact words rather than a paraphrase, and delivery reuses the narration path unchanged.
+        var entry = _narrationLog.RecordSpeech(character.CharacterId, $"{character.Name} says:\n\"{spoken}\"");
+
+        // The speaker has just said it; it must not be re-delivered to them as "newly heard" next turn.
+        entry.MarkDeliveredTo(character.CharacterId);
+
+        var self = _engine.State.FindById(character.CharacterId);
+        var recipients = LivingRecipientsExcept(character.CharacterId);
+
+        _console.CharacterSpeaks(character.Name, spoken);
+
+        _trace.Emit(TraceEventType.CharacterSpeech, new CharacterSpeechPayload
+        {
+            SpeakerId = character.CharacterId,
+            SpeakerName = character.Name,
+            SpeakerTeam = self?.Team ?? "",
+            Message = spoken,
+            Round = round,
+            Turn = turn,
+            SpeechIndexWithinTurn = speechIndex,
+            Recipients = recipients,
+            DeliveryMechanism = "public-channel (delivered at each recipient's next turn)",
+            NarrationId = entry.Id
+        });
+
+        // Answer the say tool so the speaker's history stays valid; its own words are already present in
+        // that history as the tool-call argument, so the result is only an acknowledgement.
+        RecordToolResult(character, call,
+            "Your words carry across the room. You may still ask, act, or end your turn.");
+        return true;
+    }
+
+    // -----------------------------------------------------------------------------------------
     // take_action
     // -----------------------------------------------------------------------------------------
 
@@ -606,14 +715,17 @@ public sealed class TurnCoordinator
 
         return primary.Name switch
         {
-            DungeonMasterTools.RejectActionName => HandleDungeonMasterRejection(character, intent, primary),
-            DungeonMasterTools.AttackCharacterName or DungeonMasterTools.UseItemName =>
+            DungeonMasterTools.RejectActionName =>
+                await HandleDungeonMasterRejection(character, intent, primary, cancellationToken).ConfigureAwait(false),
+            DungeonMasterTools.AttackCharacterName or DungeonMasterTools.UseItemName
+                or DungeonMasterTools.OpenContainerName or DungeonMasterTools.TakeItemName =>
                 await HandleEngineActionAsync(character, intent, primary, cancellationToken).ConfigureAwait(false),
             _ => HandleUnknownDungeonMasterTool(character, intent, primary)
         };
     }
 
-    private ActionAttemptOutcome HandleDungeonMasterRejection(CharacterAgent character, string intent, FunctionCallContent call)
+    private async Task<ActionAttemptOutcome> HandleDungeonMasterRejection(
+        CharacterAgent character, string intent, FunctionCallContent call, CancellationToken cancellationToken)
     {
         var rawCategory = ToolArguments.GetString(call, DungeonMasterTools.CategoryParameter);
         var reason = ToolArguments.GetString(call, DungeonMasterTools.ReasonParameter)
@@ -635,6 +747,10 @@ public sealed class TurnCoordinator
         }, DungeonMasterAgent.AgentIdentifier);
 
         RecordDungeonMasterToolResult(call, "Refusal recorded. The character may attempt something else.");
+
+        // Guarantee the reason reaches the character in-world, rephrasing it if it leaked the machinery.
+        reason = await InWorldRejectionAsync(character, reason, cancellationToken).ConfigureAwait(false);
+
         EmitAdjudication(character, intent, category, reason, null, null);
         _console.CharacterRefused(character.Name, reason);
 
@@ -717,6 +833,10 @@ public sealed class TurnCoordinator
             StateAfter = engineResult.StateAfter
         });
 
+        // Object interactions get an extra, object-specific trace row alongside the generic engine action,
+        // so container/item ids, the world-version transition and both halves of a transfer are explicit.
+        EmitObjectInteraction(character, action, engineResult);
+
         var resultForDungeonMaster = engineResult.Accepted
             ? engineResult.Outcome!.Summary
             : $"REJECTED BY THE WORLD: {engineResult.RejectionMessage}";
@@ -734,6 +854,8 @@ public sealed class TurnCoordinator
                 explanation = engineResult.RejectionMessage!;
             }
 
+            explanation = await InWorldRejectionAsync(character, explanation, cancellationToken).ConfigureAwait(false);
+
             EmitAdjudication(character, intent, ActionResolutionCategory.EngineRejected, explanation, action, null);
             _console.CharacterRefused(character.Name, explanation);
 
@@ -748,8 +870,14 @@ public sealed class TurnCoordinator
 
         // The character whose turn it is is always the one who acted, so name them explicitly to the
         // DM: a strong "the hero attacks the monster" prior otherwise makes some models invert the actor.
-        var narration = await _dungeonMaster
-            .NarrateOutcomeAsync(character.Name, engineResult.Outcome!.Summary, WorldStateFormatter.FormatAuthoritativeState(_engine.State), cancellationToken)
+        // Opening a container or taking an item is narrated on its own path, which is free to name the
+        // now-visible contents rather than describing a weapon strike.
+        var stateAfterText = WorldStateFormatter.FormatAuthoritativeState(_engine.State);
+        var isObjectAction = action is OpenContainerAction or TakeItemAction;
+        var narration = await (isObjectAction
+                ? _dungeonMaster.NarrateObjectOutcomeAsync(character.Name, engineResult.Outcome!.Summary,
+                    DescribeObjectTransition(engineResult.Outcome!), stateAfterText, cancellationToken)
+                : _dungeonMaster.NarrateOutcomeAsync(character.Name, engineResult.Outcome!.Summary, stateAfterText, cancellationToken))
             .ConfigureAwait(false);
 
         if (string.IsNullOrWhiteSpace(narration))
@@ -766,7 +894,7 @@ public sealed class TurnCoordinator
         _trace.Emit(TraceEventType.Narration, new NarrationPayload
         {
             Purpose = "action-outcome",
-            StateSuppliedToDungeonMaster = WorldStateFormatter.FormatAuthoritativeState(_engine.State),
+            StateSuppliedToDungeonMaster = stateAfterText,
             ContextSuppliedToDungeonMaster = engineResult.Outcome!.Summary,
             Narration = narration,
             NarrationId = entry.Id,
@@ -791,6 +919,59 @@ public sealed class TurnCoordinator
             Action = action,
             EngineResult = engineResult
         };
+    }
+
+    /// <summary>
+    /// The exact before→after change for an object action, handed to the narration so the Dungeon Master
+    /// describes only what happened. It is spelled out because a take from an already-open container was
+    /// otherwise narrated as the lid being lifted; the transition makes "already open, stays open" explicit.
+    /// </summary>
+    private static string DescribeObjectTransition(ActionOutcome outcome) => outcome switch
+    {
+        OpenContainerOutcome o =>
+            $"{o.ContainerName} went from CLOSED to OPEN. Nothing was taken out of it. Its contents are now " +
+            $"simply in plain view: {(o.RevealedContents.Count == 0 ? "it is empty" : string.Join(", ", o.RevealedContents))}.",
+        TakeItemOutcome t =>
+            $"{t.ContainerName} was ALREADY OPEN and stays open — it is not opened in this moment and no lid " +
+            $"is lifted. The only change is that {t.ActorName} took the {t.ItemName} out of it and now holds it.",
+        _ => outcome.Summary
+    };
+
+    /// <summary>The neutral in-world line used when even a rephrase still leaks the machinery.</summary>
+    private const string GenericInWorldRefusal =
+        "Whatever you meant to do there finds no purchase, and nothing comes of it.";
+
+    /// <summary>
+    /// Guarantees a rejection reason reaches the character in-world. A prompt cannot reliably stop the
+    /// Dungeon Master naming the machinery ("the world cannot resolve that", or even listing the actions),
+    /// so a leaked reason is caught here and rephrased once; if the rephrase still leaks, a neutral in-world
+    /// line is used instead. The original leak is recorded on an <see cref="TraceEventType.AdjudicationCorrected"/>
+    /// event, so nothing the model produced is hidden.
+    /// </summary>
+    private async Task<string> InWorldRejectionAsync(CharacterAgent character, string reason, CancellationToken cancellationToken)
+    {
+        if (!MachineryLanguage.IsLeak(reason))
+        {
+            return reason;
+        }
+
+        var rephrased = await _dungeonMaster.RephraseRejectionInWorldAsync(reason, character.Name, cancellationToken)
+            .ConfigureAwait(false);
+
+        var corrected = !string.IsNullOrWhiteSpace(rephrased) && !MachineryLanguage.IsLeak(rephrased)
+            ? rephrased
+            : GenericInWorldRefusal;
+
+        _trace.Emit(TraceEventType.AdjudicationCorrected, new AdjudicationCorrectionPayload
+        {
+            ToolName = DungeonMasterTools.RejectActionName,
+            Parameter = "reason",
+            DungeonMasterValue = reason,
+            CorrectedValue = corrected,
+            Justification = "The refusal named the machinery (the rules/engine or what can be resolved); rephrased in-world."
+        }, DungeonMasterAgent.AgentIdentifier);
+
+        return corrected;
     }
 
     private ActionAttemptOutcome HandleUnknownDungeonMasterTool(CharacterAgent character, string intent, FunctionCallContent call)
@@ -833,6 +1014,17 @@ public sealed class TurnCoordinator
                     ResolveActingCharacter(call, DungeonMasterTools.ActorParameter, character),
                     ToolArguments.GetRequiredString(call, DungeonMasterTools.ItemParameter),
                     ToolArguments.GetString(call, DungeonMasterTools.TargetParameter));
+
+            case DungeonMasterTools.OpenContainerName:
+                return new OpenContainerAction(
+                    ResolveActingCharacter(call, DungeonMasterTools.ActorParameter, character),
+                    ToolArguments.GetRequiredString(call, DungeonMasterTools.ContainerParameter));
+
+            case DungeonMasterTools.TakeItemName:
+                return new TakeItemAction(
+                    ResolveActingCharacter(call, DungeonMasterTools.ActorParameter, character),
+                    ToolArguments.GetRequiredString(call, DungeonMasterTools.ContainerParameter),
+                    ToolArguments.GetRequiredString(call, DungeonMasterTools.ItemParameter));
 
             default:
                 throw new ArgumentException($"No engine action is mapped to tool '{call.Name}'.");
@@ -1026,6 +1218,73 @@ public sealed class TurnCoordinator
     /// </summary>
     private IReadOnlyList<string> LivingRecipients() =>
         [.. _engine.State.Characters.Where(c => c.IsAlive).Select(c => c.Id)];
+
+    /// <summary>Every living character except the given one — the intended audience for that character's speech.</summary>
+    private IReadOnlyList<string> LivingRecipientsExcept(string speakerId) =>
+    [
+        .. _engine.State.Characters
+            .Where(c => c.IsAlive && !string.Equals(c.Id, speakerId, StringComparison.OrdinalIgnoreCase))
+            .Select(c => c.Id)
+    ];
+
+    /// <summary>
+    /// Records the object-specific detail of an open/take attempt: the container and item ids, the world
+    /// version transition, and compact before/after snapshots so a successful transfer shows both the
+    /// container losing the item and the actor gaining it. Emitted for accepted and rejected attempts
+    /// alike; a no-op for non-object actions.
+    /// </summary>
+    private void EmitObjectInteraction(CharacterAgent character, GameAction action, EngineResult result)
+    {
+        if (action is not (OpenContainerAction or TakeItemAction))
+        {
+            return;
+        }
+
+        var before = result.StateBefore;
+        var after = result.StateAfter;
+
+        var containerRef = action switch
+        {
+            OpenContainerAction open => open.ContainerRef,
+            TakeItemAction take => take.ContainerRef,
+            _ => null
+        };
+        var itemRef = action is TakeItemAction t ? t.ItemRef : null;
+
+        var containerBefore = containerRef is null ? null : before.ResolveObject(containerRef).Object as Container;
+        var containerId = (result.Outcome as OpenContainerOutcome)?.ContainerId
+            ?? (result.Outcome as TakeItemOutcome)?.ContainerId
+            ?? containerBefore?.Id;
+        var containerAfter = containerId is null
+            ? null
+            : after.Objects.OfType<Container>()
+                .FirstOrDefault(c => string.Equals(c.Id, containerId, StringComparison.OrdinalIgnoreCase));
+
+        var itemId = (result.Outcome as TakeItemOutcome)?.ItemId
+            ?? (containerBefore is not null && itemRef is not null ? containerBefore.FindItem(itemRef)?.Id : null);
+
+        var actorBefore = before.FindById(character.CharacterId);
+        var actorAfter = after.FindById(character.CharacterId);
+
+        _trace.Emit(TraceEventType.ObjectInteraction, new ObjectInteractionPayload
+        {
+            ActorId = character.CharacterId,
+            ActionType = action.ActionType,
+            ObjectId = containerId,
+            ContainerId = containerId,
+            ItemId = itemId,
+            ValidationResult = result.Accepted ? "accepted" : "rejected",
+            RejectionReason = result.RejectionReason?.ToString(),
+            WorldVersionBefore = before.Version,
+            WorldVersionAfter = after.Version,
+            ContainerOpenBefore = containerBefore?.IsOpen,
+            ContainerOpenAfter = containerAfter?.IsOpen,
+            ContainerContentsBefore = containerBefore is null ? null : [.. containerBefore.Contents.Select(i => i.Name)],
+            ContainerContentsAfter = containerAfter is null ? null : [.. containerAfter.Contents.Select(i => i.Name)],
+            ActorInventoryBefore = actorBefore is null ? null : [.. actorBefore.Inventory.Select(i => i.Name)],
+            ActorInventoryAfter = actorAfter is null ? null : [.. actorAfter.Inventory.Select(i => i.Name)]
+        }, character.Name);
+    }
 
     private void EmitLimit(string limit, int value, string effect) =>
         _trace.Emit(TraceEventType.HarnessLimitReached, new HarnessLimitPayload

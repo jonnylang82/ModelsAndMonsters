@@ -15,6 +15,15 @@ public enum EngineRejectionReason
     ItemNotPossessed,
     ItemHasNoSupportedEffect,
     ItemTargetNotSupported,
+
+    // Object and container interaction (v0.3).
+    UnknownContainer,
+    ContainerReferenceAmbiguous,
+    ContainerAlreadyOpen,
+    ContainerClosed,
+    ItemNotInContainer,
+    ItemReferenceAmbiguous,
+
     UnsupportedAction
 }
 

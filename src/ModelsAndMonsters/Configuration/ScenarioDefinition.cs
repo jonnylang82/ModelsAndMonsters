@@ -31,6 +31,27 @@ public sealed class RoomDefinition
     public string Description { get; set; } = "";
 
     public List<string> Features { get; set; } = [];
+
+    /// <summary>Persistent containers seeded into the room, such as the contested chest.</summary>
+    public List<ContainerDefinition> Containers { get; set; } = [];
+}
+
+/// <summary>
+/// A container seeded into a room. Its <see cref="Contents"/> reuse the same item definition characters
+/// carry, so an item taken from it is indistinguishable from one that began in an inventory.
+/// </summary>
+public sealed class ContainerDefinition
+{
+    public string Id { get; set; } = "";
+
+    public string Name { get; set; } = "";
+
+    public string Description { get; set; } = "";
+
+    /// <summary>Whether the container starts open. Defaults to closed.</summary>
+    public bool IsOpen { get; set; }
+
+    public List<ItemDefinition> Contents { get; set; } = [];
 }
 
 public sealed class CharacterDefinition

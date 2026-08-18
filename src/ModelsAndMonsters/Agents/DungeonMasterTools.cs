@@ -14,6 +14,8 @@ public static class DungeonMasterTools
 {
     public const string AttackCharacterName = "attack_character";
     public const string UseItemName = "use_item";
+    public const string OpenContainerName = "open_container";
+    public const string TakeItemName = "take_item";
     public const string RejectActionName = "reject_action";
 
     public const string AttackerParameter = "attacker";
@@ -21,6 +23,7 @@ public static class DungeonMasterTools
     public const string WeaponParameter = "weapon";
     public const string ActorParameter = "actor";
     public const string ItemParameter = "item";
+    public const string ContainerParameter = "container";
     public const string CategoryParameter = "category";
     public const string ReasonParameter = "reason";
 
@@ -59,6 +62,37 @@ public static class DungeonMasterTools
         """),
         returnJsonSchema: null);
 
+    public static readonly AIFunctionDeclaration OpenContainer = AIFunctionFactory.CreateDeclaration(
+        OpenContainerName,
+        "Resolve a character opening a closed container that is in the room. Use only for opening — not for taking anything out.",
+        ToolSchema.Parse($$"""
+        {
+          "type": "object",
+          "properties": {
+            "{{ActorParameter}}":     { "type": "string", "description": "Name of the character opening the container, exactly as given in the authoritative state." },
+            "{{ContainerParameter}}": { "type": "string", "description": "Name of the container, exactly as given in the authoritative state." }
+          },
+          "required": ["{{ActorParameter}}", "{{ContainerParameter}}"]
+        }
+        """),
+        returnJsonSchema: null);
+
+    public static readonly AIFunctionDeclaration TakeItem = AIFunctionFactory.CreateDeclaration(
+        TakeItemName,
+        "Resolve a character taking one item out of an already-open container in the room, into their own inventory.",
+        ToolSchema.Parse($$"""
+        {
+          "type": "object",
+          "properties": {
+            "{{ActorParameter}}":     { "type": "string", "description": "Name of the character taking the item, exactly as given in the authoritative state." },
+            "{{ContainerParameter}}": { "type": "string", "description": "Name of the container the item is taken from, exactly as given in the authoritative state." },
+            "{{ItemParameter}}":      { "type": "string", "description": "Name of the item being taken, exactly as it appears in the container's visible contents." }
+          },
+          "required": ["{{ActorParameter}}", "{{ContainerParameter}}", "{{ItemParameter}}"]
+        }
+        """),
+        returnJsonSchema: null);
+
     public static readonly AIFunctionDeclaration RejectAction = AIFunctionFactory.CreateDeclaration(
         RejectActionName,
         "Refuse the stated intent because it cannot happen. Use this whenever the intent is not a direct weapon strike or an item use.",
@@ -81,5 +115,5 @@ public static class DungeonMasterTools
         """),
         returnJsonSchema: null);
 
-    public static readonly IReadOnlyList<AITool> All = [AttackCharacter, UseItem, RejectAction];
+    public static readonly IReadOnlyList<AITool> All = [AttackCharacter, UseItem, OpenContainer, TakeItem, RejectAction];
 }

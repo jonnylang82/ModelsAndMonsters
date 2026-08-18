@@ -105,6 +105,29 @@ public sealed class DungeonMasterAgent : ModelAgent
             cancellationToken);
 
     /// <summary>
+    /// Narrates an accepted object interaction — a container opened, or an item taken from it. Like
+    /// <see cref="NarrateOutcomeAsync"/> it runs only after the engine has applied and reported the
+    /// change, so the DM describes a fact. When a container has just been opened, the reported contents
+    /// are now public and may be named.
+    /// </summary>
+    public Task<string> NarrateObjectOutcomeAsync(
+        string actorName,
+        string engineResultSummary,
+        string transition,
+        string authoritativeState,
+        CancellationToken cancellationToken) =>
+        NarrateProjectedAsync(
+            _prompts.Render("dungeon-master.object-outcome", new Dictionary<string, string?>
+            {
+                ["actor"] = actorName,
+                ["result"] = engineResultSummary,
+                ["transition"] = transition,
+                ["state"] = authoritativeState
+            }),
+            "dm.narrate.object-outcome",
+            cancellationToken);
+
+    /// <summary>
     /// Narrates a character deliberately doing nothing. No engine action is involved; the world simply
     /// has to describe someone holding back so the other character can perceive it.
     /// </summary>
@@ -185,6 +208,27 @@ public sealed class DungeonMasterAgent : ModelAgent
     /// </summary>
     public void AppendAdjudicationToolResult(FunctionCallContent call, object? result) =>
         AdjudicationContext().AppendToolResult(call.CallId, result);
+
+    /// <summary>
+    /// Rewrites a refusal that leaked the machinery (the rules/engine/what "can be resolved") into an
+    /// in-world explanation. Runs on a fresh, toolless projection: it only rephrases a string, so it needs
+    /// none of the adjudication context and cannot change the world while doing it.
+    /// </summary>
+    public async Task<string> RephraseRejectionInWorldAsync(
+        string leakedReason,
+        string characterName,
+        CancellationToken cancellationToken)
+    {
+        var conversation = NarrationContext();
+        conversation.AppendUser(_prompts.Render("dungeon-master.rephrase-rejection", new Dictionary<string, string?>
+        {
+            ["character"] = characterName,
+            ["reason"] = leakedReason
+        }));
+
+        var response = await CallModelAsync(conversation, "dm.rephrase.rejection", tools: null, cancellationToken).ConfigureAwait(false);
+        return ModelText.Clean(response);
+    }
 
     /// <summary>
     /// Turns an engine rejection into an in-world explanation the character can act on. Runs on the
