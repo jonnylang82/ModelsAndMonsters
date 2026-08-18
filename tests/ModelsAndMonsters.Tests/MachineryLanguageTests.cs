@@ -12,18 +12,33 @@ public sealed class MachineryLanguageTests
     [InlineData("The engine has no handler for that.")]
     [InlineData("There is no way to resolve that here.")]
     [InlineData("It cannot be resolved by the world.")]
+    // Knowledge-view scaffolding a weak instruct model (granite4.1) parroted into its ANSWERS, plus markdown.
+    [InlineData("Rowan directly knows that the two supply cases are shut and grime-covered.")]
+    [InlineData("You have not been told anything about their contents.")]
+    [InlineData("Skrit, you cannot see inside; nor has anyone told you what lies within.")]
+    [InlineData("You have not inspected the case closely, so its markings are unknown to you.")]
+    [InlineData("The case is **CLOSED** and covered in grime.")]
+    [InlineData("- Vark is **lightly wounded**.")]
+    // Rejection variants that slipped past the first detector (the "a" defeats a bare "not supported").
+    [InlineData("That is not a supported action in this world.")]
+    [InlineData("You must land a direct hit to resolve the encounter.")]
+    [InlineData("Shoving is not a permitted action here.")]
     public void Machinery_language_is_detected(string text) =>
         Assert.True(MachineryLanguage.IsLeak(text));
 
     [Theory]
-    // Ordinary in-world refusals must pass through untouched — the detector matches machinery-specific
-    // wording, not everyday words a person would use.
+    // Ordinary in-world lines must pass through untouched — the detector matches framing-specific wording
+    // and markup, not everyday words a person would use. This covers refusals and question answers alike.
     [InlineData("There is nowhere in this cramped room to open real distance.")]
     [InlineData("You have no way to leave the ground, so the ceiling is beyond you.")]
     [InlineData("Your blade only skids off the wet stone and finds no purchase.")]
     [InlineData("You could throw it, but nothing here comes of that.")]
+    [InlineData("The two cases stand shut before you, their markings caked in grime.")]
+    [InlineData("You saw a potion inside earlier, but you cannot tell if it is still there.")]
+    [InlineData("You have not looked closely enough to read the faded mark.")]
+    [InlineData("The goblin looks wounded, favouring one side.")]
     [InlineData("")]
     [InlineData(null)]
-    public void In_world_refusals_are_not_flagged(string? text) =>
+    public void In_world_lines_are_not_flagged(string? text) =>
         Assert.False(MachineryLanguage.IsLeak(text));
 }

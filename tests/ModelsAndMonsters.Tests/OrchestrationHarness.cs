@@ -37,6 +37,8 @@ internal sealed class RecordingConsole : IGameConsole
 
     public void DungeonMaster(string text) => Lines.Add($"dm:{text}");
 
+    public void PrivateObservation(string characterName, string observation) => Lines.Add($"private:{characterName}:{observation}");
+
     public void CharacterAsks(string characterName, string question) => Lines.Add($"asks:{characterName}:{question}");
 
     public void CharacterActs(string characterName, string intent) => Lines.Add($"acts:{characterName}:{intent}");
@@ -105,7 +107,7 @@ internal sealed class OrchestrationHarness
 
         Coordinator = new TurnCoordinator(
             Engine, DungeonMaster, SharedPrompts, new WorldStateFormatter(SharedPrompts),
-            NarrationLog, Trace, Console, Limits);
+            NarrationLog, Knowledge, Trace, Console, Limits);
     }
 
     public RecordingTraceSink Sink { get; } = new();
@@ -113,6 +115,8 @@ internal sealed class OrchestrationHarness
     public RecordingConsole Console { get; } = new();
 
     public NarrationLog NarrationLog { get; } = new();
+
+    public Knowledge.KnowledgeLedger Knowledge { get; } = new();
 
     public ExperimentTrace Trace { get; }
 

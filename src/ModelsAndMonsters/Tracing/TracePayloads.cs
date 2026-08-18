@@ -299,6 +299,24 @@ public sealed record ToolCallRecoveredPayload
     public required string OriginalText { get; init; }
 }
 
+/// <summary>
+/// A character wrote a spoken line in prose (a quoted utterance) rather than calling <c>say</c>. The
+/// attempted words are captured so a report never concludes the character stayed silent, but they are not
+/// delivered — the character is nudged to speak properly.
+/// </summary>
+public sealed record UnstructuredSpeechAttemptPayload
+{
+    public required string CharacterId { get; init; }
+
+    public required string CharacterName { get; init; }
+
+    /// <summary>The quoted utterance detected in the prose. Recorded, never delivered to anyone.</summary>
+    public required string AttemptedText { get; init; }
+
+    /// <summary>Whether the reply that carried it was cut off at the output-token limit.</summary>
+    public required bool WasTruncated { get; init; }
+}
+
 public sealed record ToolCallErrorPayload
 {
     public required string AgentName { get; init; }
@@ -338,6 +356,17 @@ public sealed record DungeonMasterAnswerPayload
     public required string Question { get; init; }
 
     public required string Answer { get; init; }
+
+    /// <summary>
+    /// The exact information view the Dungeon Master was given for this character — what it directly knew
+    /// and what it had only heard — preserved so the record can show why an answer was, or was not, allowed
+    /// to reveal something. Private to the asking character; the answer must respect this boundary.
+    /// </summary>
+    public string? AskingCharacterKnowledge { get; init; }
+
+    public string Visibility => "private";
+
+    public int WorldVersion { get; init; }
 }
 
 public sealed record CharacterPassedPayload
@@ -422,6 +451,140 @@ public sealed record ObjectInteractionPayload
     public IReadOnlyList<string>? ActorInventoryAfter { get; init; }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Knowledge and information channels (v0.4)
+// ---------------------------------------------------------------------------------------------
+
+/// <summary>
+/// A close inspection of an object: who examined what, whether the container was open, and which facts (if
+/// any) it yielded. <see cref="LearnedSomethingNew"/> is false when the inspector already knew everything a
+/// closer look could reveal.
+/// </summary>
+public sealed record ObjectInspectedPayload
+{
+    public required string ActorId { get; init; }
+
+    public required string ActorName { get; init; }
+
+    public required string ObjectId { get; init; }
+
+    public required string ObjectName { get; init; }
+
+    public required bool WasOpen { get; init; }
+
+    /// <summary>Ids of the facts the inspection surfaced (whether or not they were new to this inspector).</summary>
+    public required IReadOnlyList<string> DiscoveredFactIds { get; init; }
+
+    public required bool LearnedSomethingNew { get; init; }
+
+    public required int WorldVersion { get; init; }
+}
+
+/// <summary>
+/// A discoverable fact minted in the ledger for the first time. Emitted once per fact, so the trace holds
+/// exactly one authoritative definition of each fact's id, subject, type and description.
+/// </summary>
+public sealed record KnowledgeFactCreatedPayload
+{
+    public required string FactId { get; init; }
+
+    public required string SubjectId { get; init; }
+
+    public required string FactType { get; init; }
+
+    public required string Description { get; init; }
+
+    public required int WorldVersion { get; init; }
+
+    /// <summary>The kind of discovery that first minted the fact (backstory, inspection, opening, public event).</summary>
+    public required string CreatedBySource { get; init; }
+
+    /// <summary>The action or event that produced it, e.g. "open_container", "take_item", "seed".</summary>
+    public string? RelatedAction { get; init; }
+}
+
+/// <summary>
+/// A character learned a fact. Denormalised (it repeats the fact's detail) so the discovery timeline and
+/// the per-character knowledge tables can be reconstructed from this one event without joining back to the
+/// creation event. Hearsay never produces one of these.
+/// </summary>
+public sealed record KnowledgeFactLearnedPayload
+{
+    public required string FactId { get; init; }
+
+    public required string SubjectId { get; init; }
+
+    public required string FactType { get; init; }
+
+    public required string Description { get; init; }
+
+    public required string CharacterId { get; init; }
+
+    public required string CharacterName { get; init; }
+
+    public required string Source { get; init; }
+
+    public required int Round { get; init; }
+
+    public required int Turn { get; init; }
+
+    public required int ObservedWorldVersion { get; init; }
+
+    /// <summary>"private" for a first-hand discovery, "public" for something learned in the open.</summary>
+    public required string Visibility { get; init; }
+
+    /// <summary>Everyone the underlying delivery reached; a single-name list for a private discovery.</summary>
+    public required IReadOnlyList<string> Recipients { get; init; }
+
+    public string? RelatedAction { get; init; }
+}
+
+/// <summary>
+/// A private observation delivered to exactly one character — an inspection result or the contents seen on
+/// opening. It records the recipient, the facts it conveyed and the world version, and it is by construction
+/// never delivered to anyone else.
+/// </summary>
+public sealed record PrivateObservationDeliveredPayload
+{
+    public required string RecipientId { get; init; }
+
+    public required string RecipientName { get; init; }
+
+    /// <summary>The exact private text handed to the recipient.</summary>
+    public required string Observation { get; init; }
+
+    public required IReadOnlyList<string> RelatedFactIds { get; init; }
+
+    public required int WorldVersion { get; init; }
+
+    public string Visibility => "private";
+
+    /// <summary>The action that produced the observation, e.g. "inspect_object", "open_container".</summary>
+    public required string SourceEvent { get; init; }
+}
+
+/// <summary>
+/// A publicly observable fact delivered to everyone alive in the room — a visible item being carried off.
+/// The full recipient set is recorded so it is provable from the trace that a public event reached exactly
+/// the living and nobody else.
+/// </summary>
+public sealed record PublicFactDeliveredPayload
+{
+    /// <summary>The public statement delivered, e.g. "Skrit removed the Small Healing Potion and now carries it."</summary>
+    public required string Fact { get; init; }
+
+    public required IReadOnlyList<string> Recipients { get; init; }
+
+    public required IReadOnlyList<string> RelatedFactIds { get; init; }
+
+    public required int WorldVersion { get; init; }
+
+    public string Visibility => "public";
+
+    /// <summary>The action that produced the public fact, e.g. "take_item".</summary>
+    public required string SourceEvent { get; init; }
+}
+
 /// <summary>
 /// Records where the harness overrode a Dungeon Master tool argument on structural grounds, so the
 /// correction is never invisible in the experiment.
@@ -456,6 +619,13 @@ public sealed record DmAdjudicationPayload
     public object? TranslatedAction { get; init; }
 
     public string? DungeonMasterText { get; init; }
+
+    /// <summary>
+    /// The acting character's information view supplied to the Dungeon Master for this ruling — its
+    /// first-hand knowledge and its hearsay — preserved so it is reconstructable why an action was allowed
+    /// on a basis of direct knowledge or hearsay, or refused as something the character could not know.
+    /// </summary>
+    public string? ActingCharacterKnowledge { get; init; }
 }
 
 public sealed record EngineActionPayload
@@ -499,6 +669,15 @@ public sealed record NarrationPayload
     /// separately as <see cref="NarrationDeliveredPayload"/> events.
     /// </summary>
     public IReadOnlyList<string> IntendedRecipients { get; init; } = [];
+
+    /// <summary>"public" for room-wide narration, "private" for an observation meant for one character.</summary>
+    public string Visibility { get; init; } = "public";
+
+    /// <summary>The world version the narration describes, so a narration can be tied to a moment.</summary>
+    public int WorldVersion { get; init; }
+
+    /// <summary>Ids of any knowledge facts this narration relates to. Empty for ordinary combat narration.</summary>
+    public IReadOnlyList<string> RelatedFactIds { get; init; } = [];
 }
 
 /// <summary>

@@ -71,6 +71,28 @@ public sealed class ModelTextTests
         Assert.Equal("Elara, you're bleeding! Stay back and let me handle these pests!", recovered.Value.Argument);
     }
 
+    [Theory]
+    // A shout at another character written as prose instead of calling say — the real qwen/granite shape.
+    [InlineData("I shout: \"Vark! Don't stand there gawking, decide now.\"", "Vark! Don't stand there gawking, decide now.")]
+    [InlineData("I'm pressed to the wall. I shout at him: \"Vark, help me or stay silent!\"", "Vark, help me or stay silent!")]
+    [InlineData("say \"Elara, get behind me now\"", "Elara, get behind me now")]
+    [InlineData("Skrit yells, \"We must seize the moment before Rowan moves\"", "We must seize the moment before Rowan moves")]
+    [InlineData("I whisper to her: “Stay close and watch the captain”", "Stay close and watch the captain")]
+    public void An_attempted_spoken_line_in_prose_is_extracted(string text, string expected) =>
+        Assert.Equal(expected, ModelText.TryExtractSpokenAttempt(text));
+
+    [Theory]
+    // Not speech: no quote at all, a tool call written as prose (no speech verb before the quote), or a cry
+    // of fewer than three words, so an action reply is never mistaken for an attempt to talk.
+    [InlineData("I bring my sword down hard on the goblin's shoulder.")]
+    [InlineData("take_action(\"I bring my sword down on the goblin\")")]
+    [InlineData("ask_dm(\"Is the goblin wounded?\")")]
+    [InlineData("I swing my axe and yell \"Die!\"")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void Non_speech_prose_is_not_mistaken_for_a_spoken_line(string? text) =>
+        Assert.Null(ModelText.TryExtractSpokenAttempt(text));
+
     [Fact]
     public void A_tool_call_written_as_json_is_recovered()
     {

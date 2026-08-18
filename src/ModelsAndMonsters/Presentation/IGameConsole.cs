@@ -15,6 +15,9 @@ public interface IGameConsole
 
     void DungeonMaster(string text);
 
+    /// <summary>A private observation only one character receives — an inspection result, or contents seen on opening.</summary>
+    void PrivateObservation(string characterName, string observation);
+
     void CharacterAsks(string characterName, string question);
 
     void CharacterActs(string characterName, string intent);

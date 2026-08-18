@@ -109,7 +109,8 @@ public static class ScenarioFactory
             Name = definition.Name,
             Description = definition.Description,
             IsOpen = definition.IsOpen,
-            Contents = [.. definition.Contents.Select(ToItem)]
+            Contents = [.. definition.Contents.Select(ToItem)],
+            ExteriorClue = string.IsNullOrWhiteSpace(definition.ExteriorClue) ? null : definition.ExteriorClue.Trim()
         };
     }
 

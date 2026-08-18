@@ -72,9 +72,14 @@ public sealed class WorldStateFormatter
         builder.AppendLine("- The only state that exists is what is listed above: each character's condition, the weapon they hold, what they carry, their injuries, and the room's objects.");
         if (state.Room.Objects.OfType<Container>().Any(c => !c.IsOpen))
         {
-            builder.AppendLine("- A CLOSED container hides its contents. Its listed contents are authoritative knowledge for you alone: never reveal, name, hint at, or narrate what is inside a closed container, even if a character asks directly. Only once a container has been opened do its contents become something anyone can see.");
+            builder.AppendLine("- A CLOSED container hides its contents. Its listed contents are authoritative knowledge for you alone: never reveal, name, hint at, or narrate what is inside a closed container, even if a character asks directly.");
         }
-        builder.AppendLine("- ACTIONS THE WORLD CAN RESOLVE: attack_character, use_item, open_container, take_item. Nothing else exists.");
+        if (state.Room.Objects.OfType<Container>().Any())
+        {
+            builder.AppendLine("- Opening a container does NOT make its contents public. Only the character who opened it — or who has since inspected it while open, seen an item carried out of it, or been told — knows what is inside. Being in the room is not enough. When you answer or adjudicate for a character, you are told exactly what THAT character knows; never hand them contents they have not discovered, even for an open container.");
+            builder.AppendLine("- An exterior marking on a container is legible only to a character who spends a turn inspecting it closely. Never reveal a marking in an answer or narration; it is discovered only through inspection, and then only by the one inspecting.");
+        }
+        builder.AppendLine("- ACTIONS THE WORLD CAN RESOLVE: attack_character, use_item, open_container, take_item, inspect_object. Nothing else exists.");
 
         return builder.ToString().TrimEnd();
     }
@@ -97,12 +102,22 @@ public sealed class WorldStateFormatter
 
         if (container.IsOpen)
         {
-            builder.AppendLine($"{container.Name} (id: {container.Id}) - OPEN. In plain view inside, for everyone to see: {contents}.");
+            builder.AppendLine($"{container.Name} (id: {container.Id}) - OPEN.");
+            builder.AppendLine(
+                $"  Authoritative contents (a character knows these ONLY if they opened it, inspected it while open, " +
+                $"saw an item taken from it, or were told — being open does NOT reveal them to everyone): {contents}.");
         }
         else
         {
             builder.AppendLine($"{container.Name} (id: {container.Id}) - CLOSED. Nobody in the room can see inside it.");
-            builder.AppendLine($"  Authoritative contents (FOR YOU ONLY — do not reveal while closed): {contents}.");
+            builder.AppendLine($"  Authoritative contents (FOR YOU ONLY — do not reveal to anyone who has not discovered them): {contents}.");
+        }
+
+        if (container.ExteriorClue is { } clue)
+        {
+            builder.AppendLine(
+                "  Exterior marking (FOR YOU ONLY — cannot be read from the general room description; legible only " +
+                $"to a character who spends a turn inspecting it closely, and then only to that character): {clue}");
         }
     }
 

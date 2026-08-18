@@ -24,6 +24,11 @@ public enum EngineRejectionReason
     ItemNotInContainer,
     ItemReferenceAmbiguous,
 
+    // Close inspection (v0.4).
+    UnknownObject,
+    ObjectReferenceAmbiguous,
+    NothingToInspect,
+
     UnsupportedAction
 }
 

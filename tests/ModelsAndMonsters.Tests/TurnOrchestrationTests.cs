@@ -284,7 +284,7 @@ public sealed class TurnOrchestrationTests
             [
                 DungeonMasterTools.AttackCharacterName, DungeonMasterTools.UseItemName,
                 DungeonMasterTools.OpenContainerName, DungeonMasterTools.TakeItemName,
-                DungeonMasterTools.RejectActionName
+                DungeonMasterTools.InspectObjectName, DungeonMasterTools.RejectActionName
             ],
             dungeonMasterTools);
 
@@ -396,6 +396,39 @@ public sealed class TurnOrchestrationTests
         // The original leak is preserved in the trace, not silently discarded.
         var corrected = harness.Sink.Payloads<AdjudicationCorrectionPayload>(TraceEventType.AdjudicationCorrected)
             .Single(c => c.Parameter == "reason");
+        Assert.Equal(leak, corrected.DungeonMasterValue);
+        Assert.Equal(inWorld, corrected.CorrectedValue);
+    }
+
+    [Fact]
+    public async Task An_answer_that_parrots_the_knowledge_scaffolding_is_rephrased_in_world_before_reaching_the_character()
+    {
+        const string leak = "Aric directly knows the goblin is **wounded**; he has not been told anything more.";
+        const string inWorld = "The goblin looks wounded, favouring one side.";
+
+        var harness = new OrchestrationHarness(
+            new ScriptedChatClient(
+                // The DM answers, but parrots the knowledge-view scaffolding and uses markdown...
+                ScriptedChatClient.Text(leak),
+                // ...so the harness re-asks it to rephrase in-world, and it complies...
+                ScriptedChatClient.Text(inWorld),
+                // ...then narrates the character standing down.
+                ScriptedChatClient.Text("Aric watches, waiting.")),
+            new ScriptedChatClient(
+                ScriptedChatClient.Call("h-1", CharacterTools.AskDmName, ("question", "Does the goblin look hurt?")),
+                ScriptedChatClient.Call("h-2", CharacterTools.EndTurnName, ("reason", "Seen enough."))),
+            new ScriptedChatClient());
+
+        await harness.RunHeroTurn();
+
+        // The character was told the in-world answer, never the knowledge bookkeeping.
+        var answer = Assert.Single(harness.Sink.Payloads<DungeonMasterAnswerPayload>(TraceEventType.DungeonMasterAnswer));
+        Assert.Equal(inWorld, answer.Answer);
+        Assert.False(MachineryLanguage.IsLeak(answer.Answer));
+
+        // The original leak is preserved in the trace, tagged as an answer correction.
+        var corrected = harness.Sink.Payloads<AdjudicationCorrectionPayload>(TraceEventType.AdjudicationCorrected)
+            .Single(c => c.Parameter == "answer");
         Assert.Equal(leak, corrected.DungeonMasterValue);
         Assert.Equal(inWorld, corrected.CorrectedValue);
     }
@@ -905,6 +938,39 @@ public sealed class TurnOrchestrationTests
         Assert.Equal("I bring my sword down on the goblin.", dispatched.Arguments!.Values.First());
         Assert.Single(harness.Sink.OfType(TraceEventType.EngineAction));
         Assert.Equal(1, harness.Engine.State.Version);
+    }
+
+    [Fact]
+    public async Task A_spoken_line_written_as_prose_is_recorded_as_an_attempt_and_nudged_never_delivered()
+    {
+        // Even with recovery on, a say written as prose is NOT silently delivered — its words are never put
+        // in the character's mouth and broadcast. The attempt is recorded (so a report does not read it as
+        // silence) and the character is nudged to call say properly, then ends its turn.
+        var harness = new OrchestrationHarness(
+            new ScriptedChatClient(ScriptedChatClient.Text("Aric holds his ground, watchful.")),
+            new ScriptedChatClient(
+                ScriptedChatClient.Text("I brace against the wall. I shout: \"Grik, back off or I'll cut you down!\""),
+                ScriptedChatClient.Call("h-2", CharacterTools.EndTurnName, ("reason", "Said my piece."))),
+            new ScriptedChatClient(),
+            new HarnessOptions
+            {
+                RecoverTextToolCalls = true,
+                MaxQuestionsPerTurn = 2,
+                MaxActionAttemptsPerTurn = 3,
+                MaxModelCallsPerTurn = 8
+            });
+
+        await harness.RunHeroTurn();
+
+        // The attempt was recorded, capturing the words the character tried to speak...
+        var attempt = Assert.Single(
+            harness.Sink.Payloads<UnstructuredSpeechAttemptPayload>(TraceEventType.UnstructuredSpeechAttempt));
+        Assert.Equal("Aric", attempt.CharacterName);
+        Assert.Contains("back off", attempt.AttemptedText, StringComparison.Ordinal);
+
+        // ...but nothing was delivered as speech, and it was not silently recovered as a tool call.
+        Assert.Empty(harness.Sink.OfType(TraceEventType.CharacterSpeech));
+        Assert.Empty(harness.Sink.OfType(TraceEventType.ToolCallRecovered));
     }
 
     [Fact]

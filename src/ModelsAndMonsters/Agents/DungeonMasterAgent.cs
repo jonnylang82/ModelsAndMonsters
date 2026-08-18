@@ -37,8 +37,8 @@ public sealed class DungeonMasterAgent : ModelAgent
     private readonly PromptLibrary _prompts;
     private readonly bool _useProjections;
 
-    // The adjudication projection persists between the proposal call and its tool-result answer, so a
-    // field rather than a local. Reset at the start of each new adjudication.
+    // The adjudication projection persists between the proposal (or mapping) call and its tool-result
+    // answer, so a field rather than a local. Reset at the start of each new adjudication.
     private AgentConversation? _adjudication;
 
     // Whether the DM has narrated at least once, so updates after the opening can be told to describe
@@ -146,10 +146,17 @@ public sealed class DungeonMasterAgent : ModelAgent
             "dm.narrate.pass",
             cancellationToken);
 
-    /// <summary>Answers one character's question using what that character could perceive.</summary>
+    /// <summary>
+    /// Answers one character's question within that character's information boundary. The DM holds
+    /// omniscient state, but <paramref name="characterKnowledge"/> is what that character actually knows —
+    /// first-hand and by hearsay — and the answer must respect it: direct knowledge may be confirmed,
+    /// hearsay must be described as something another character said, and what the character has not
+    /// observed must not be revealed just because the DM can see it.
+    /// </summary>
     public async Task<string> AnswerQuestionAsync(
         string authoritativeState,
         string characterName,
+        string characterKnowledge,
         string question,
         CancellationToken cancellationToken)
     {
@@ -160,6 +167,7 @@ public sealed class DungeonMasterAgent : ModelAgent
         {
             ["state"] = authoritativeState,
             ["character"] = characterName,
+            ["knowledge"] = characterKnowledge,
             ["question"] = question
         }));
 
@@ -168,12 +176,33 @@ public sealed class DungeonMasterAgent : ModelAgent
     }
 
     /// <summary>
+    /// Narrates a close inspection to the room. Public: it says only that the character examined the object.
+    /// The findings are delivered privately by the orchestration layer and are never given to this call, so
+    /// this narration cannot leak them.
+    /// </summary>
+    public Task<string> NarrateInspectionAsync(
+        string actorName,
+        string objectName,
+        string authoritativeState,
+        CancellationToken cancellationToken) =>
+        NarrateProjectedAsync(
+            _prompts.Render("dungeon-master.inspect-outcome", new Dictionary<string, string?>
+            {
+                ["actor"] = actorName,
+                ["object"] = objectName,
+                ["state"] = authoritativeState
+            }),
+            "dm.narrate.inspect-outcome",
+            cancellationToken);
+
+    /// <summary>
     /// Asks the DM to translate a character's natural-language intent into exactly one tool call.
     /// The response is returned raw: interpreting and dispatching it is the orchestrator's job.
     /// </summary>
     public Task<ChatResponse> ProposeActionAsync(
         string authoritativeState,
         string characterName,
+        string characterKnowledge,
         string intent,
         CancellationToken cancellationToken)
     {
@@ -185,6 +214,7 @@ public sealed class DungeonMasterAgent : ModelAgent
         {
             ["state"] = authoritativeState,
             ["character"] = characterName,
+            ["knowledge"] = characterKnowledge,
             ["intent"] = intent
         }));
 
@@ -227,6 +257,28 @@ public sealed class DungeonMasterAgent : ModelAgent
         }));
 
         var response = await CallModelAsync(conversation, "dm.rephrase.rejection", tools: null, cancellationToken).ConfigureAwait(false);
+        return ModelText.Clean(response);
+    }
+
+    /// <summary>
+    /// Rewrites a question answer that broke character — narrating the character's knowledge state ("you
+    /// directly know", "you have not been told"), naming the machinery, or using markdown — back into a
+    /// plain spoken reply. Like the rejection rephrase it runs on a fresh, toolless projection: it only
+    /// restates a string in-world, revealing exactly what the original revealed and nothing more.
+    /// </summary>
+    public async Task<string> RephraseAnswerInWorldAsync(
+        string leakedAnswer,
+        string characterName,
+        CancellationToken cancellationToken)
+    {
+        var conversation = NarrationContext();
+        conversation.AppendUser(_prompts.Render("dungeon-master.rephrase-answer", new Dictionary<string, string?>
+        {
+            ["character"] = characterName,
+            ["answer"] = leakedAnswer
+        }));
+
+        var response = await CallModelAsync(conversation, "dm.rephrase.answer", tools: null, cancellationToken).ConfigureAwait(false);
         return ModelText.Clean(response);
     }
 

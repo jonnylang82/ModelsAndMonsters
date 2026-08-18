@@ -47,6 +47,13 @@ public enum TraceEventType
     /// <summary>A tool call the model wrote as prose was parsed and dispatched as if it had been called.</summary>
     ToolCallRecovered,
 
+    /// <summary>
+    /// A character wrote a spoken line in prose (a quoted utterance) instead of calling <c>say</c>. Recorded
+    /// so behavioural analysis can see the character tried to communicate; the words are never delivered —
+    /// the character is nudged to call <c>say</c> properly instead.
+    /// </summary>
+    UnstructuredSpeechAttempt,
+
     CharacterQuestion,
     DungeonMasterAnswer,
 
@@ -64,6 +71,35 @@ public enum TraceEventType
     /// generic <see cref="EngineAction"/> row with the object-specific ids and version transition.
     /// </summary>
     ObjectInteraction,
+
+    /// <summary>A character examined an object closely, with what (if anything) it discovered.</summary>
+    ObjectInspected,
+
+    /// <summary>
+    /// A discoverable fact was minted in the knowledge ledger for the first time, with its stable id and
+    /// the world version it describes. Emitted once per fact, however many characters later learn it.
+    /// </summary>
+    KnowledgeFactCreated,
+
+    /// <summary>
+    /// A character learned a fact — its full detail plus how, when and at what world version it was
+    /// observed. This is the record from which per-character knowledge and the discovery timeline are
+    /// reconstructed. Hearsay never produces one of these; only first-hand or public knowledge does.
+    /// </summary>
+    KnowledgeFactLearned,
+
+    /// <summary>
+    /// A private observation delivered to a single character — an inspection result, or the contents seen
+    /// on opening — recording its recipient, related facts and world version. It is never delivered to
+    /// anyone else.
+    /// </summary>
+    PrivateObservationDelivered,
+
+    /// <summary>
+    /// A publicly observable fact delivered to everyone alive in the room — a visible item being carried
+    /// off — recording all recipients, related facts and world version.
+    /// </summary>
+    PublicFactDelivered,
 
     /// <summary>The harness corrected a tool argument the Dungeon Master got structurally wrong.</summary>
     AdjudicationCorrected,

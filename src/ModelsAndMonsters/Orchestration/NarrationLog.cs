@@ -73,6 +73,19 @@ public sealed class NarrationLog
         return entry;
     }
 
+    /// <summary>
+    /// The speech this character has heard: public utterances by <em>someone else</em> that have already
+    /// been delivered to it. This is the raw material of hearsay — things others said, which are never the
+    /// same as something the character verified for itself, and are surfaced to the Dungeon Master as
+    /// reported speech rather than as authoritative knowledge.
+    /// </summary>
+    public IReadOnlyList<NarrationEntry> SpeechHeardBy(string characterId) =>
+    [
+        .. _entries.Where(e => e.Kind == PublicChannelKind.Speech
+            && !string.Equals(e.SpeakerId, characterId, StringComparison.OrdinalIgnoreCase)
+            && e.HasBeenDeliveredTo(characterId))
+    ];
+
     /// <summary>Returns everything this character has not yet heard, and marks it as delivered.</summary>
     public IReadOnlyList<NarrationEntry> TakeUndelivered(string characterId)
     {

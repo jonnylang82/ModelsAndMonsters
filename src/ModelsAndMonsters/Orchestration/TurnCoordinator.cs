@@ -3,6 +3,7 @@ using ModelsAndMonsters.Agents;
 using ModelsAndMonsters.Configuration;
 using ModelsAndMonsters.Domain;
 using ModelsAndMonsters.Engine;
+using ModelsAndMonsters.Knowledge;
 using ModelsAndMonsters.Presentation;
 using ModelsAndMonsters.Prompts;
 using ModelsAndMonsters.Tracing;
@@ -31,9 +32,17 @@ public sealed class TurnCoordinator
     private readonly PromptLibrary _prompts;
     private readonly WorldStateFormatter _formatter;
     private readonly NarrationLog _narrationLog;
+    private readonly KnowledgeLedger _knowledge;
     private readonly ExperimentTrace _trace;
     private readonly IGameConsole _console;
     private readonly HarnessOptions _limits;
+
+    /// <summary>
+    /// The acting character's information view for the adjudication currently in flight, so the ruling can
+    /// be traced with the exact view the Dungeon Master was given. Set at the start of each adjudication;
+    /// safe as a field because orchestration is strictly sequential.
+    /// </summary>
+    private string? _actingKnowledgeView;
 
     public TurnCoordinator(
         IGameEngine engine,
@@ -41,6 +50,7 @@ public sealed class TurnCoordinator
         PromptLibrary prompts,
         WorldStateFormatter formatter,
         NarrationLog narrationLog,
+        KnowledgeLedger knowledge,
         ExperimentTrace trace,
         IGameConsole console,
         HarnessOptions limits)
@@ -50,6 +60,7 @@ public sealed class TurnCoordinator
         _prompts = prompts;
         _formatter = formatter;
         _narrationLog = narrationLog;
+        _knowledge = knowledge;
         _trace = trace;
         _console = console;
         _limits = limits;
@@ -138,10 +149,18 @@ public sealed class TurnCoordinator
             });
         }
 
+        // A short, deliberately projected reminder of what this character has discovered first-hand. It is
+        // bounded (a handful of current facts), never the whole lifetime knowledge history, so injecting it
+        // every turn does not grow the context without limit.
+        var knowledgeSummary = CharacterKnowledgeView.RenderSelfSummary(character.CharacterId, _knowledge, _engine.State);
+
         character.BeginTurn(_prompts.Render("character.turn", new Dictionary<string, string?>
         {
             ["name"] = character.Name,
             ["state"] = selfState,
+            ["knowledge"] = string.IsNullOrWhiteSpace(knowledgeSummary)
+                ? "You have discovered nothing in particular beyond what anyone here can plainly see."
+                : knowledgeSummary,
             ["narration"] = pendingNarration.Count == 0
                 ? "Nothing has changed since you last looked."
                 : string.Join("\n\n", pendingNarration.Select(n => n.Text))
@@ -182,6 +201,26 @@ public sealed class TurnCoordinator
                 // ran out of output budget mid-reply. They need different nudges and, more
                 // importantly, they must not be confused with each other in the trace.
                 var truncated = ModelAgent.WasTruncated(response);
+
+                // A character may write a spoken line as prose ("I shout: \"Vark! decide now…\"") instead of
+                // calling say. We never put those inferred words in its mouth and broadcast them; instead we
+                // record the attempt — so a report does not read it as silence — and nudge it to call say
+                // properly. Checked before recovery, so a prose say is never silently delivered.
+                var spokenAttempt = ModelText.TryExtractSpokenAttempt(ModelText.Clean(response));
+                if (spokenAttempt is not null)
+                {
+                    _trace.Emit(TraceEventType.UnstructuredSpeechAttempt, new UnstructuredSpeechAttemptPayload
+                    {
+                        CharacterId = character.CharacterId,
+                        CharacterName = character.Name,
+                        AttemptedText = spokenAttempt,
+                        WasTruncated = truncated
+                    }, character.Name);
+
+                    _console.Notice($"{character.Name} tried to speak in prose; nudged to call say().");
+                    character.AppendNudge(_prompts.Render("character.speech-retry"));
+                    continue;
+                }
 
                 // A model may understand the protocol but write the call as prose rather than calling
                 // it. When recovery is enabled, salvage that call and dispatch it as if it had been made,
@@ -408,8 +447,15 @@ public sealed class TurnCoordinator
         });
 
         var stateText = WorldStateFormatter.FormatAuthoritativeState(_engine.State);
+
+        // The DM holds omniscient state but must answer within this character's information boundary, so it
+        // is handed exactly what this character directly knows and what it has merely heard — and nothing
+        // that belongs only to somebody else.
+        var knowledgeView = CharacterKnowledgeView.RenderForDungeonMaster(
+            character.CharacterId, character.Name, _knowledge, _narrationLog, _engine.State);
+
         var answer = await _dungeonMaster
-            .AnswerQuestionAsync(stateText, character.Name, question, cancellationToken)
+            .AnswerQuestionAsync(stateText, character.Name, knowledgeView, question, cancellationToken)
             .ConfigureAwait(false);
 
         if (string.IsNullOrWhiteSpace(answer))
@@ -417,12 +463,19 @@ public sealed class TurnCoordinator
             answer = "You cannot tell.";
         }
 
+        // Guarantee the answer reaches the character in character. A weaker instruct model as DM parrots
+        // the knowledge-view scaffolding back ("you directly know…", "you have not been told…", state words
+        // in bold); a prompt cannot reliably stop it, so a leaked answer is caught here and rephrased once.
+        answer = await InWorldAnswerAsync(character, answer, cancellationToken).ConfigureAwait(false);
+
         _trace.Emit(TraceEventType.DungeonMasterAnswer, new DungeonMasterAnswerPayload
         {
             CharacterId = character.CharacterId,
             CharacterName = character.Name,
             Question = question,
-            Answer = answer
+            Answer = answer,
+            AskingCharacterKnowledge = knowledgeView,
+            WorldVersion = _engine.State.Version
         }, DungeonMasterAgent.AgentIdentifier);
 
         _console.DungeonMaster(answer);
@@ -637,8 +690,16 @@ public sealed class TurnCoordinator
         CancellationToken cancellationToken)
     {
         var stateText = WorldStateFormatter.FormatAuthoritativeState(_engine.State);
+
+        // The DM adjudicates within the acting character's information boundary: it may allow an action
+        // taken on a basis of first-hand knowledge or of hearsay, but it must reject a specific hidden fact
+        // the character has neither seen nor been told, and never substitute stale knowledge for current
+        // truth. The view is recorded on the adjudication so the ruling's informational basis is auditable.
+        _actingKnowledgeView = CharacterKnowledgeView.RenderForDungeonMaster(
+            character.CharacterId, character.Name, _knowledge, _narrationLog, _engine.State);
+
         var response = await _dungeonMaster
-            .ProposeActionAsync(stateText, character.Name, intent, cancellationToken)
+            .ProposeActionAsync(stateText, character.Name, _actingKnowledgeView, intent, cancellationToken)
             .ConfigureAwait(false);
 
         var calls = ModelAgent.GetToolCalls(response);
@@ -718,7 +779,8 @@ public sealed class TurnCoordinator
             DungeonMasterTools.RejectActionName =>
                 await HandleDungeonMasterRejection(character, intent, primary, cancellationToken).ConfigureAwait(false),
             DungeonMasterTools.AttackCharacterName or DungeonMasterTools.UseItemName
-                or DungeonMasterTools.OpenContainerName or DungeonMasterTools.TakeItemName =>
+                or DungeonMasterTools.OpenContainerName or DungeonMasterTools.TakeItemName
+                or DungeonMasterTools.InspectObjectName =>
                 await HandleEngineActionAsync(character, intent, primary, cancellationToken).ConfigureAwait(false),
             _ => HandleUnknownDungeonMasterTool(character, intent, primary)
         };
@@ -868,57 +930,214 @@ public sealed class TurnCoordinator
             };
         }
 
-        // The character whose turn it is is always the one who acted, so name them explicitly to the
-        // DM: a strong "the hero attacks the monster" prior otherwise makes some models invert the actor.
-        // Opening a container or taking an item is narrated on its own path, which is free to name the
-        // now-visible contents rather than describing a weapon strike.
-        var stateAfterText = WorldStateFormatter.FormatAuthoritativeState(_engine.State);
-        var isObjectAction = action is OpenContainerAction or TakeItemAction;
-        var narration = await (isObjectAction
-                ? _dungeonMaster.NarrateObjectOutcomeAsync(character.Name, engineResult.Outcome!.Summary,
-                    DescribeObjectTransition(engineResult.Outcome!), stateAfterText, cancellationToken)
-                : _dungeonMaster.NarrateOutcomeAsync(character.Name, engineResult.Outcome!.Summary, stateAfterText, cancellationToken))
-            .ConfigureAwait(false);
+        // Accepted. Each kind of action delivers its own outcome, because who learns what now differs by
+        // action: a blow is narrated to the whole room; opening reveals contents only to the opener; a
+        // visible take is a public event; a close inspection yields a private observation. The message
+        // returned is exactly what the acting character receives as its tool result.
+        var messageToCharacter = engineResult.Outcome switch
+        {
+            OpenContainerOutcome open => await DeliverContainerOpenedAsync(character, open, cancellationToken).ConfigureAwait(false),
+            TakeItemOutcome take => DeliverItemTaken(character, take, await NarrateObjectAsync(character, take, cancellationToken).ConfigureAwait(false)),
+            InspectObjectOutcome inspect => await DeliverInspectionAsync(character, inspect, cancellationToken).ConfigureAwait(false),
+            _ => await DeliverCombatOutcomeAsync(character, engineResult, cancellationToken).ConfigureAwait(false)
+        };
 
+        EmitAdjudication(character, intent, ActionResolutionCategory.EngineAccepted, null, action, null);
+
+        return new ActionAttemptOutcome
+        {
+            Category = ActionResolutionCategory.EngineAccepted,
+            MessageToCharacter = messageToCharacter,
+            Action = action,
+            EngineResult = engineResult
+        };
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Outcome delivery — one path per kind, because who learns what now differs by action
+    // -----------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// A combat outcome (a blow or a heal): narrated to the whole room. The acting character hears it at
+    /// once as its tool result; everyone else hears it when their own turn begins. No private channel.
+    /// </summary>
+    private async Task<string> DeliverCombatOutcomeAsync(CharacterAgent character, EngineResult engineResult, CancellationToken cancellationToken)
+    {
+        var stateAfterText = WorldStateFormatter.FormatAuthoritativeState(_engine.State);
+
+        // The character whose turn it is is always the one who acted, so name them explicitly to the DM:
+        // a strong "the hero attacks the monster" prior otherwise makes some models invert the actor.
+        var narration = await _dungeonMaster
+            .NarrateOutcomeAsync(character.Name, engineResult.Outcome!.Summary, stateAfterText, cancellationToken)
+            .ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(narration))
         {
             narration = engineResult.Outcome!.Summary;
         }
 
-        var entry = _narrationLog.Record("action-outcome", narration);
+        RecordPublicNarration("action-outcome", stateAfterText, engineResult.Outcome!.Summary, narration, character);
+        _console.DungeonMaster(narration);
+        return narration;
+    }
 
-        // The acting character hears this immediately, as its tool result. Everyone else hears it when
-        // their own turn begins.
-        entry.MarkDeliveredTo(character.CharacterId);
+    /// <summary>Narrates an object outcome (open/take) to the room, returning the public narration text.</summary>
+    private async Task<string> NarrateObjectAsync(CharacterAgent character, ActionOutcome outcome, CancellationToken cancellationToken)
+    {
+        var stateAfterText = WorldStateFormatter.FormatAuthoritativeState(_engine.State);
+        var narration = await _dungeonMaster
+            .NarrateObjectOutcomeAsync(character.Name, outcome.Summary,
+                DescribeObjectTransition(outcome), stateAfterText, cancellationToken)
+            .ConfigureAwait(false);
+        return string.IsNullOrWhiteSpace(narration) ? outcome.Summary : narration;
+    }
 
-        _trace.Emit(TraceEventType.Narration, new NarrationPayload
+    /// <summary>
+    /// Opening a container. The room is told only that it was opened; the opener alone directly observes
+    /// its current contents, recorded as private <c>OpenedContainer</c> knowledge and delivered as a
+    /// private observation. Being open does not make the contents public.
+    /// </summary>
+    private async Task<string> DeliverContainerOpenedAsync(CharacterAgent character, OpenContainerOutcome outcome, CancellationToken cancellationToken)
+    {
+        var publicNarration = await NarrateObjectAsync(character, outcome, cancellationToken).ConfigureAwait(false);
+
+        var stateAfterText = WorldStateFormatter.FormatAuthoritativeState(_engine.State);
+        RecordPublicNarration("container-opened", stateAfterText, outcome.Summary, publicNarration, character);
+        _console.DungeonMaster(publicNarration);
+
+        // The opener directly observes the current contents, at the post-open world version.
+        var worldVersion = _engine.State.Version;
+        var container = FindContainer(outcome.ContainerId);
+        var contents = container is null ? [] : container.Contents;
+        var fact = _knowledge.GetOrAddContentsFact(outcome.ContainerId, outcome.ContainerName, contents, worldVersion);
+        TraceFactCreatedIfNew(fact, KnowledgeSource.OpenedContainer, "open_container", character.Name);
+        LearnAndTrace(character.CharacterId, character.Name, fact.Fact, KnowledgeSource.OpenedContainer, worldVersion,
+            "private", [character.CharacterId], "open_container");
+
+        var observation = outcome.RevealedContents.Count == 0
+            ? $"You look inside the {outcome.ContainerName}. It is empty."
+            : $"You look inside the {outcome.ContainerName}. Inside, you see {NaturalJoin(outcome.RevealedContents)}.";
+        DeliverPrivateObservation(character, observation, [fact.Fact.Id], worldVersion, "open_container");
+
+        return $"{publicNarration}\n\n{observation}";
+    }
+
+    /// <summary>
+    /// Taking a visibly identifiable item. The removal is a public event: everyone alive learns that the
+    /// item is now carried, and the whole room hears the narration. There is no private channel.
+    /// </summary>
+    private string DeliverItemTaken(CharacterAgent character, TakeItemOutcome outcome, string publicNarration)
+    {
+        var stateAfterText = WorldStateFormatter.FormatAuthoritativeState(_engine.State);
+        var worldVersion = _engine.State.Version;
+
+        var fact = _knowledge.GetOrAddRemovalFact(
+            outcome.ItemId, outcome.ItemName, outcome.ActorName, outcome.ContainerName, outcome.ContainerId, worldVersion);
+        TraceFactCreatedIfNew(fact, KnowledgeSource.PublicEvent, "take_item", character.Name);
+
+        var recipients = LivingRecipients();
+        foreach (var recipientId in recipients)
         {
-            Purpose = "action-outcome",
-            StateSuppliedToDungeonMaster = stateAfterText,
-            ContextSuppliedToDungeonMaster = engineResult.Outcome!.Summary,
-            Narration = narration,
-            NarrationId = entry.Id,
-            IntendedRecipients = LivingRecipients()
-        }, DungeonMasterAgent.AgentIdentifier);
+            var name = _engine.State.FindById(recipientId)?.Name ?? recipientId;
+            LearnAndTrace(recipientId, name, fact.Fact, KnowledgeSource.PublicEvent, worldVersion, "public", recipients, "take_item");
+        }
 
-        _trace.Emit(TraceEventType.NarrationDelivered, new NarrationDeliveredPayload
+        _trace.Emit(TraceEventType.PublicFactDelivered, new PublicFactDeliveredPayload
         {
-            NarrationId = entry.Id,
-            Narration = narration,
-            DeliveredTo = [character.CharacterId],
-            DeliveryMechanism = "take_action tool result"
+            Fact = fact.Fact.Description,
+            Recipients = recipients,
+            RelatedFactIds = [fact.Fact.Id],
+            WorldVersion = worldVersion,
+            SourceEvent = "take_item"
         });
 
-        EmitAdjudication(character, intent, ActionResolutionCategory.EngineAccepted, null, action, null);
-        _console.DungeonMaster(narration);
+        RecordPublicNarration("item-taken", stateAfterText, outcome.Summary, publicNarration, character, [fact.Fact.Id]);
+        _console.DungeonMaster(publicNarration);
+        return publicNarration;
+    }
 
-        return new ActionAttemptOutcome
+    /// <summary>
+    /// A close inspection. The room learns only that the character examined the object; the inspector alone
+    /// receives the discovered marking and (for an open container) the current contents, as private
+    /// <c>DirectInspection</c> knowledge and a private observation. No RNG, no mutation.
+    /// </summary>
+    private async Task<string> DeliverInspectionAsync(CharacterAgent character, InspectObjectOutcome outcome, CancellationToken cancellationToken)
+    {
+        // Inspection does not change the world, so the observation is at the current version.
+        var worldVersion = _engine.State.Version;
+        var discoveredFactIds = new List<string>();
+        var learnedSomethingNew = false;
+
+        if (outcome.ExteriorClue is { } clue)
         {
-            Category = ActionResolutionCategory.EngineAccepted,
-            MessageToCharacter = narration,
-            Action = action,
-            EngineResult = engineResult
-        };
+            var marking = _knowledge.GetOrAddMarkingFact(outcome.ObjectId, clue);
+            TraceFactCreatedIfNew(marking, KnowledgeSource.DirectInspection, "inspect_object", character.Name);
+            discoveredFactIds.Add(marking.Fact.Id);
+            learnedSomethingNew |= LearnAndTrace(character.CharacterId, character.Name, marking.Fact,
+                KnowledgeSource.DirectInspection, worldVersion, "private", [character.CharacterId], "inspect_object");
+        }
+
+        if (outcome is { IsContainer: true, IsOpen: true })
+        {
+            var container = FindContainer(outcome.ObjectId);
+            var contents = container is null ? [] : container.Contents;
+            var contentsFact = _knowledge.GetOrAddContentsFact(outcome.ObjectId, outcome.ObjectName, contents, worldVersion);
+            TraceFactCreatedIfNew(contentsFact, KnowledgeSource.DirectInspection, "inspect_object", character.Name);
+            discoveredFactIds.Add(contentsFact.Fact.Id);
+            learnedSomethingNew |= LearnAndTrace(character.CharacterId, character.Name, contentsFact.Fact,
+                KnowledgeSource.DirectInspection, worldVersion, "private", [character.CharacterId], "inspect_object");
+        }
+
+        _trace.Emit(TraceEventType.ObjectInspected, new ObjectInspectedPayload
+        {
+            ActorId = character.CharacterId,
+            ActorName = character.Name,
+            ObjectId = outcome.ObjectId,
+            ObjectName = outcome.ObjectName,
+            WasOpen = outcome.IsOpen,
+            DiscoveredFactIds = discoveredFactIds,
+            LearnedSomethingNew = learnedSomethingNew,
+            WorldVersion = worldVersion
+        }, character.Name);
+
+        var stateAfterText = WorldStateFormatter.FormatAuthoritativeState(_engine.State);
+        var publicNarration = await _dungeonMaster
+            .NarrateInspectionAsync(character.Name, outcome.ObjectName, stateAfterText, cancellationToken)
+            .ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(publicNarration))
+        {
+            publicNarration = outcome.Summary;
+        }
+
+        RecordPublicNarration("object-inspected", stateAfterText, outcome.Summary, publicNarration, character);
+        _console.DungeonMaster(publicNarration);
+
+        var observation = ComposeInspectionObservation(outcome, learnedSomethingNew);
+        DeliverPrivateObservation(character, observation, discoveredFactIds, worldVersion, "inspect_object");
+
+        return $"{publicNarration}\n\n{observation}";
+    }
+
+    private static string ComposeInspectionObservation(InspectObjectOutcome outcome, bool learnedSomethingNew)
+    {
+        if (!learnedSomethingNew)
+        {
+            return $"You examine the {outcome.ObjectName} closely, but learn nothing beyond what you already know.";
+        }
+
+        var parts = new List<string> { $"You examine the {outcome.ObjectName} closely." };
+        if (outcome.ExteriorClue is { } clue)
+        {
+            parts.Add(clue);
+        }
+
+        if (outcome is { IsContainer: true, IsOpen: true })
+        {
+            parts.Add(outcome.CurrentContents.Count == 0
+                ? $"The {outcome.ObjectName} is currently empty."
+                : $"The {outcome.ObjectName} currently holds {NaturalJoin(outcome.CurrentContents)}.");
+        }
+
+        return string.Join(" ", parts);
     }
 
     /// <summary>
@@ -929,12 +1148,117 @@ public sealed class TurnCoordinator
     private static string DescribeObjectTransition(ActionOutcome outcome) => outcome switch
     {
         OpenContainerOutcome o =>
-            $"{o.ContainerName} went from CLOSED to OPEN. Nothing was taken out of it. Its contents are now " +
-            $"simply in plain view: {(o.RevealedContents.Count == 0 ? "it is empty" : string.Join(", ", o.RevealedContents))}.",
+            $"{o.ContainerName} went from CLOSED to OPEN and {o.ActorName} looked inside. Nothing was taken out. " +
+            $"Do NOT state what is inside: {o.ActorName} can see the contents, but they are {o.ActorName}'s to see, " +
+            "not the room's — narrate only that the lid is up and " + $"{o.ActorName} is looking in.",
         TakeItemOutcome t =>
             $"{t.ContainerName} was ALREADY OPEN and stays open — it is not opened in this moment and no lid " +
-            $"is lifted. The only change is that {t.ActorName} took the {t.ItemName} out of it and now holds it.",
+            $"is lifted. The only change is that {t.ActorName} took the {t.ItemName} out of it and now holds it " +
+            "in plain sight, where everyone can see what it is.",
         _ => outcome.Summary
+    };
+
+    /// <summary>
+    /// Records a public narration on the shared channel, delivered to the acting character at once and to
+    /// everyone else when their own turn begins, and traces both the narration and that first delivery.
+    /// </summary>
+    private void RecordPublicNarration(
+        string purpose,
+        string stateText,
+        string context,
+        string narration,
+        CharacterAgent actor,
+        IReadOnlyList<string>? relatedFactIds = null)
+    {
+        var entry = _narrationLog.Record(purpose, narration);
+        entry.MarkDeliveredTo(actor.CharacterId);
+
+        _trace.Emit(TraceEventType.Narration, new NarrationPayload
+        {
+            Purpose = purpose,
+            StateSuppliedToDungeonMaster = stateText,
+            ContextSuppliedToDungeonMaster = context,
+            Narration = narration,
+            NarrationId = entry.Id,
+            IntendedRecipients = LivingRecipients(),
+            Visibility = "public",
+            WorldVersion = _engine.State.Version,
+            RelatedFactIds = relatedFactIds ?? []
+        }, DungeonMasterAgent.AgentIdentifier);
+
+        _trace.Emit(TraceEventType.NarrationDelivered, new NarrationDeliveredPayload
+        {
+            NarrationId = entry.Id,
+            Narration = narration,
+            DeliveredTo = [actor.CharacterId],
+            DeliveryMechanism = "take_action tool result"
+        });
+    }
+
+    /// <summary>Delivers a private observation to exactly one character and traces it. Never reaches anyone else.</summary>
+    private void DeliverPrivateObservation(
+        CharacterAgent character,
+        string observation,
+        IReadOnlyList<string> relatedFactIds,
+        int worldVersion,
+        string sourceEvent)
+    {
+        _console.PrivateObservation(character.Name, observation);
+
+        _trace.Emit(TraceEventType.PrivateObservationDelivered, new PrivateObservationDeliveredPayload
+        {
+            RecipientId = character.CharacterId,
+            RecipientName = character.Name,
+            Observation = observation,
+            RelatedFactIds = relatedFactIds,
+            WorldVersion = worldVersion,
+            SourceEvent = sourceEvent
+        }, character.Name);
+    }
+
+    private void TraceFactCreatedIfNew(KnowledgeLedger.FactResult fact, KnowledgeSource source, string relatedAction, string actor)
+    {
+        if (fact.WasCreated)
+        {
+            KnowledgeTracing.FactCreated(_trace, fact.Fact, source, relatedAction, actor);
+        }
+    }
+
+    /// <summary>
+    /// Records a character learning a fact and, when it is genuinely new to them, traces it. Returns whether
+    /// it was new, so callers can tell an inspector who found something from one who learned nothing.
+    /// </summary>
+    private bool LearnAndTrace(
+        string characterId,
+        string characterName,
+        Knowledge.KnowledgeFact fact,
+        KnowledgeSource source,
+        int observedWorldVersion,
+        string visibility,
+        IReadOnlyList<string> recipients,
+        string relatedAction)
+    {
+        var record = _knowledge.Learn(characterId, fact.Id, source,
+            _trace.Round, _trace.Turn, observedWorldVersion);
+        if (record is null)
+        {
+            return false;
+        }
+
+        KnowledgeTracing.FactLearned(_trace, fact, record, characterName, visibility, recipients, relatedAction, characterName);
+        return true;
+    }
+
+    private Container? FindContainer(string containerId) =>
+        _engine.State.Objects.OfType<Container>()
+            .FirstOrDefault(c => string.Equals(c.Id, containerId, StringComparison.OrdinalIgnoreCase));
+
+    private static string NaturalJoin(IReadOnlyList<string> values) => values.Count switch
+    {
+        0 => "nothing",
+        1 => values[0],
+        2 => $"{values[0]} and {values[1]}",
+        _ => $"{string.Join(", ", values.Take(values.Count - 1))}, and {values[^1]}"
     };
 
     /// <summary>The neutral in-world line used when even a rephrase still leaks the machinery.</summary>
@@ -969,6 +1293,40 @@ public sealed class TurnCoordinator
             DungeonMasterValue = reason,
             CorrectedValue = corrected,
             Justification = "The refusal named the machinery (the rules/engine or what can be resolved); rephrased in-world."
+        }, DungeonMasterAgent.AgentIdentifier);
+
+        return corrected;
+    }
+
+    /// <summary>
+    /// Guarantees a question answer reaches the character in character. The same detector that catches a
+    /// machinery-leaking refusal also catches an answer that parrots the knowledge-view scaffolding ("you
+    /// directly know…", "you have not been told…") or uses markdown; a leaked answer is rephrased in-world
+    /// once. Unlike a refusal, a leaked answer already respects the information boundary (it just says it
+    /// clumsily), so if the rephrase still leaks the original answer is kept rather than a generic line —
+    /// losing the perception would be worse than an ugly register. The correction is traced either way.
+    /// </summary>
+    private async Task<string> InWorldAnswerAsync(CharacterAgent character, string answer, CancellationToken cancellationToken)
+    {
+        if (!MachineryLanguage.IsLeak(answer))
+        {
+            return answer;
+        }
+
+        var rephrased = await _dungeonMaster.RephraseAnswerInWorldAsync(answer, character.Name, cancellationToken)
+            .ConfigureAwait(false);
+
+        var corrected = !string.IsNullOrWhiteSpace(rephrased) && !MachineryLanguage.IsLeak(rephrased)
+            ? rephrased
+            : answer;
+
+        _trace.Emit(TraceEventType.AdjudicationCorrected, new AdjudicationCorrectionPayload
+        {
+            ToolName = CharacterTools.AskDmName,
+            Parameter = "answer",
+            DungeonMasterValue = answer,
+            CorrectedValue = corrected,
+            Justification = "The answer broke character (narrated the character's knowledge, named the machinery, or used markdown); rephrased in-world."
         }, DungeonMasterAgent.AgentIdentifier);
 
         return corrected;
@@ -1025,6 +1383,11 @@ public sealed class TurnCoordinator
                     ResolveActingCharacter(call, DungeonMasterTools.ActorParameter, character),
                     ToolArguments.GetRequiredString(call, DungeonMasterTools.ContainerParameter),
                     ToolArguments.GetRequiredString(call, DungeonMasterTools.ItemParameter));
+
+            case DungeonMasterTools.InspectObjectName:
+                return new InspectObjectAction(
+                    ResolveActingCharacter(call, DungeonMasterTools.ActorParameter, character),
+                    ToolArguments.GetRequiredString(call, DungeonMasterTools.ObjectParameter));
 
             default:
                 throw new ArgumentException($"No engine action is mapped to tool '{call.Name}'.");
@@ -1133,7 +1496,8 @@ public sealed class TurnCoordinator
             Category = category.ToString(),
             Reason = reason,
             TranslatedAction = action,
-            DungeonMasterText = dungeonMasterText
+            DungeonMasterText = dungeonMasterText,
+            ActingCharacterKnowledge = _actingKnowledgeView
         }, DungeonMasterAgent.AgentIdentifier);
 
     private void DispatchAndRecord(CharacterAgent character, FunctionCallContent call, string result, string decision)
@@ -1235,7 +1599,7 @@ public sealed class TurnCoordinator
     /// </summary>
     private void EmitObjectInteraction(CharacterAgent character, GameAction action, EngineResult result)
     {
-        if (action is not (OpenContainerAction or TakeItemAction))
+        if (action is not (OpenContainerAction or TakeItemAction or InspectObjectAction))
         {
             return;
         }
@@ -1247,6 +1611,7 @@ public sealed class TurnCoordinator
         {
             OpenContainerAction open => open.ContainerRef,
             TakeItemAction take => take.ContainerRef,
+            InspectObjectAction inspect => inspect.ObjectRef,
             _ => null
         };
         var itemRef = action is TakeItemAction t ? t.ItemRef : null;

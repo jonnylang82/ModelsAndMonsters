@@ -3,6 +3,7 @@ using ModelsAndMonsters.Agents;
 using ModelsAndMonsters.Configuration;
 using ModelsAndMonsters.Domain;
 using ModelsAndMonsters.Engine;
+using ModelsAndMonsters.Knowledge;
 using ModelsAndMonsters.Orchestration;
 using ModelsAndMonsters.Prompts;
 using ModelsAndMonsters.Randomness;
@@ -41,8 +42,13 @@ internal sealed class MultiActorHarness
             rng ?? new SeededRng(1),
             rules ?? CombatRules.NoGlancing);
 
-        var definitions = (scenario ?? TestWorld.TwoVsTwoScenario()).Characters;
+        var resolvedScenario = scenario ?? TestWorld.TwoVsTwoScenario();
+        var definitions = resolvedScenario.Characters;
         var characterPrompts = new CharacterPromptFactory(SharedPrompts);
+
+        // Seed the ledger with any private backstory knowledge the scenario grants, from the same state the
+        // engine started with, so tests exercise the real seeding path.
+        KnowledgeSeeder.Seed(Ledger, resolvedScenario, Engine.State);
 
         DungeonMaster = new DungeonMasterAgent(
             Profile(DungeonMasterAgent.AgentIdentifier),
@@ -69,7 +75,7 @@ internal sealed class MultiActorHarness
 
         Coordinator = new TurnCoordinator(
             Engine, DungeonMaster, SharedPrompts, new WorldStateFormatter(SharedPrompts),
-            NarrationLog, Trace, Console, Limits);
+            NarrationLog, Ledger, Trace, Console, Limits);
     }
 
     public RecordingTraceSink Sink { get; } = new();
@@ -77,6 +83,9 @@ internal sealed class MultiActorHarness
     public RecordingConsole Console { get; } = new();
 
     public NarrationLog NarrationLog { get; } = new();
+
+    /// <summary>The knowledge ledger the coordinator uses, seeded from the scenario's backstory knowledge.</summary>
+    public KnowledgeLedger Ledger { get; } = new();
 
     public ExperimentTrace Trace { get; }
 

@@ -16,6 +16,7 @@ public static class DungeonMasterTools
     public const string UseItemName = "use_item";
     public const string OpenContainerName = "open_container";
     public const string TakeItemName = "take_item";
+    public const string InspectObjectName = "inspect_object";
     public const string RejectActionName = "reject_action";
 
     public const string AttackerParameter = "attacker";
@@ -24,6 +25,7 @@ public static class DungeonMasterTools
     public const string ActorParameter = "actor";
     public const string ItemParameter = "item";
     public const string ContainerParameter = "container";
+    public const string ObjectParameter = "object";
     public const string CategoryParameter = "category";
     public const string ReasonParameter = "reason";
 
@@ -93,6 +95,21 @@ public static class DungeonMasterTools
         """),
         returnJsonSchema: null);
 
+    public static readonly AIFunctionDeclaration InspectObject = AIFunctionFactory.CreateDeclaration(
+        InspectObjectName,
+        "Resolve a character examining an object in the room closely — studying its markings, wiping off grime, peering at an already-open container's contents. Use for looking, not for opening or taking. It consumes the turn and reveals what is found only to the one inspecting.",
+        ToolSchema.Parse($$"""
+        {
+          "type": "object",
+          "properties": {
+            "{{ActorParameter}}":  { "type": "string", "description": "Name of the character examining the object, exactly as given in the authoritative state." },
+            "{{ObjectParameter}}": { "type": "string", "description": "Name of the object being examined, exactly as given in the authoritative state." }
+          },
+          "required": ["{{ActorParameter}}", "{{ObjectParameter}}"]
+        }
+        """),
+        returnJsonSchema: null);
+
     public static readonly AIFunctionDeclaration RejectAction = AIFunctionFactory.CreateDeclaration(
         RejectActionName,
         "Refuse the stated intent because it cannot happen. Use this whenever the intent is not a direct weapon strike or an item use.",
@@ -115,5 +132,5 @@ public static class DungeonMasterTools
         """),
         returnJsonSchema: null);
 
-    public static readonly IReadOnlyList<AITool> All = [AttackCharacter, UseItem, OpenContainer, TakeItem, RejectAction];
+    public static readonly IReadOnlyList<AITool> All = [AttackCharacter, UseItem, OpenContainer, TakeItem, InspectObject, RejectAction];
 }

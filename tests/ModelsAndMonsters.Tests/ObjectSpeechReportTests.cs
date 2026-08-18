@@ -51,8 +51,8 @@ public sealed class ObjectSpeechReportTests : IDisposable
 
         var report = File.ReadAllText(RunReportWriter.Write(WriteArtefacts(harness).Directory));
 
-        // Speech: reconstructed in the transcript, verbatim and attributed.
-        Assert.Contains($"**Rowan says:** \"{Plan}\"", report, StringComparison.Ordinal);
+        // Speech: reconstructed in the transcript, verbatim, attributed, and labelled public.
+        Assert.Contains($"**Rowan says (public):** \"{Plan}\"", report, StringComparison.Ordinal);
 
         // Initial container state and contents, in the authoritative scenario section.
         Assert.Contains("Objects in the room", report, StringComparison.Ordinal);

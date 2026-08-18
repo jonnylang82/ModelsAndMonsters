@@ -183,9 +183,11 @@ public sealed class ObjectOrchestrationTests
         Assert.Contains("FOR YOU ONLY", block, StringComparison.Ordinal);
         Assert.Contains("do not reveal", block, StringComparison.OrdinalIgnoreCase);
 
-        // Once opened, the same contents are described as plainly visible instead.
+        // Once opened, the contents are still the DM's to hold: being open does not make them public, so the
+        // block must not describe them as visible to everyone, only as known to those who observed them.
         var openBlock = WorldStateFormatter.FormatAuthoritativeState(TestWorld.TwoVsTwoStateWithChest(TestWorld.Chest(open: true)));
         Assert.Contains("OPEN", openBlock, StringComparison.Ordinal);
-        Assert.Contains("in plain view", openBlock, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("in plain view", openBlock, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("being open does NOT reveal them to everyone", openBlock, StringComparison.Ordinal);
     }
 }

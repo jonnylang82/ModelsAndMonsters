@@ -6,6 +6,7 @@ using ModelsAndMonsters.Agents;
 using ModelsAndMonsters.Configuration;
 using ModelsAndMonsters.Domain;
 using ModelsAndMonsters.Engine;
+using ModelsAndMonsters.Knowledge;
 using ModelsAndMonsters.Presentation;
 using ModelsAndMonsters.Prompts;
 using ModelsAndMonsters.Randomness;
@@ -77,6 +78,11 @@ public sealed class SimulationRunner
 
         var initialState = ScenarioFactory.CreateInitialState(_scenario);
         var engine = new GameEngine(initialState, new SeededRng(gameSeed), new CombatRules(_options.Combat.GlancingBlowChance));
+
+        // The application-owned knowledge ledger, seeded with the scenario's private backstory knowledge.
+        // It is separate from authoritative game state: game state is current mechanical truth, this is the
+        // growing record of who has observed what.
+        var knowledge = new KnowledgeLedger();
 
         // The Dungeon Master and every character inherit the shared defaults, then apply their own
         // overrides; the resolved profile is what its model calls actually use, so that is what is recorded.
@@ -153,6 +159,26 @@ public sealed class SimulationRunner
 
             trace.Emit(TraceEventType.ScenarioSeeded, initialState);
 
+            // Seed and trace the private backstory knowledge before play begins, so the record shows who
+            // knew what from the outset and nobody else silently inherits it.
+            var seed = KnowledgeSeeder.Seed(knowledge, _scenario, initialState);
+            foreach (var fact in seed.CreatedFacts)
+            {
+                KnowledgeTracing.FactCreated(trace, fact, Knowledge.KnowledgeSource.Backstory, "seed", "harness");
+            }
+
+            foreach (var record in seed.LearnedRecords)
+            {
+                var fact = knowledge.FindFact(record.FactId);
+                if (fact is null)
+                {
+                    continue;
+                }
+
+                var name = initialState.FindById(record.CharacterId)?.Name ?? record.CharacterId;
+                KnowledgeTracing.FactLearned(trace, fact, record, name, "private", [record.CharacterId], "seed", "harness");
+            }
+
             _console.RunHeader(paths.RunId, _scenario.Name, paths.Directory);
             _console.Notice(seedWasProvided
                 ? $"Run seed: {masterSeed} (fixed)."
@@ -162,7 +188,7 @@ public sealed class SimulationRunner
             var narrationLog = new NarrationLog();
             var formatter = new WorldStateFormatter(_prompts);
             var coordinator = new TurnCoordinator(
-                engine, dungeonMaster, _prompts, formatter, narrationLog, trace, _console, harness);
+                engine, dungeonMaster, _prompts, formatter, narrationLog, knowledge, trace, _console, harness);
 
             return await RunLoopAsync(coordinator, engine, trace, paths, turnOrder, cancellationToken)
                 .ConfigureAwait(false);

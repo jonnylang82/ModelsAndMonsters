@@ -9,7 +9,7 @@ public sealed class ConsolePresenter : IGameConsole
 
     public void RunHeader(string runId, string scenarioName, string outputDirectory)
     {
-        Write(ConsoleColor.DarkGray, $"Models & Monsters v0.2 — {scenarioName}");
+        Write(ConsoleColor.DarkGray, $"Models & Monsters v0.4 — {scenarioName}");
         Write(ConsoleColor.DarkGray, $"run {runId} → {outputDirectory}");
         Console.WriteLine();
     }
@@ -21,6 +21,9 @@ public sealed class ConsolePresenter : IGameConsole
     }
 
     public void DungeonMaster(string text) => Block(ConsoleColor.Cyan, "DM:", ConsoleColor.Gray, text);
+
+    public void PrivateObservation(string characterName, string observation) =>
+        Block(ConsoleColor.Magenta, $"DM (only {characterName} notices):", ConsoleColor.Gray, observation);
 
     public void CharacterAsks(string characterName, string question) =>
         Block(ConsoleColor.Yellow, $"{characterName} asks:", ConsoleColor.White, Quote(question));

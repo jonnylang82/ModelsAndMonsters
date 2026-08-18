@@ -183,6 +183,64 @@ public static partial class ModelText
         knownToolNames.FirstOrDefault(n => string.Equals(n, matched, StringComparison.OrdinalIgnoreCase)) ?? matched;
 
     /// <summary>
+    /// Detects a spoken line a character wrote as prose instead of calling <c>say</c>, returning the
+    /// attempted utterance or null.
+    /// </summary>
+    /// <remarks>
+    /// Small models under the immersive character prompt sometimes reply with first-person prose that
+    /// contains a shout at another character — <c>I shout: "Vark! decide now…"</c> — and never call a tool.
+    /// This finds such an utterance so the orchestration can record the communication attempt and nudge the
+    /// character to speak properly, rather than silently ignoring it. It is deliberately conservative: it
+    /// wants a quoted span of at least a few words that is introduced by a speech verb, so an action reply
+    /// that merely ends on a battle-cry ("…and yell 'Die!'") and — crucially — a tool call written as prose
+    /// (<c>take_action("I strike")</c>, whose quote is not preceded by a speech verb) do not trip it. No
+    /// model call — a plain heuristic, so it adds no latency.
+    /// </remarks>
+    public static string? TryExtractSpokenAttempt(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        var cleaned = Clean(text);
+        if (cleaned.Length == 0)
+        {
+            return null;
+        }
+
+        foreach (Match match in QuotedSpan().Matches(cleaned))
+        {
+            var utterance = match.Groups[1].Value.Trim();
+            var words = utterance.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
+            if (words < 3)
+            {
+                continue;
+            }
+
+            var before = cleaned[..match.Index];
+            var tail = before.Length <= 40 ? before : before[^40..];
+            if (SpeechVerb().IsMatch(tail))
+            {
+                return utterance;
+            }
+        }
+
+        return null;
+    }
+
+    // A span between straight or curly double quotes, capturing at least three characters inside.
+    [GeneratedRegex("[\"“”]([^\"“”]{3,})[\"“”]")]
+    private static partial Regex QuotedSpan();
+
+    // A speech verb close to (immediately before) an opening quote — the strong signal that a quote is an
+    // utterance the character meant to say, not incidental quoted text.
+    [GeneratedRegex(
+        @"\b(say|says|said|shout|shouts|shouted|yell|yells|yelled|call|calls|called|cry|cries|cried|tell|tells|told|whisper|whispers|whispered|hiss|hisses|hissed|snarl|snarls|snarled|growl|growls|growled|bark|barks|barked|roar|roars|roared|declare|declares|announce|announces)\b[^“”""]{0,25}$",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex SpeechVerb();
+
+    /// <summary>
     /// Returns the assistant's prose. Reasoning models that emit literal think blocks in their text
     /// have them stripped: that content is the model's private working, not something a character in
     /// the world perceived. The unedited text is still recorded in the trace.

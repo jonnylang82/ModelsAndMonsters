@@ -65,6 +65,15 @@ public sealed record Container : WorldObject
     /// <summary>The items currently inside. Authoritative even while closed; only visibility depends on open state.</summary>
     public ImmutableArray<InventoryItem> Contents { get; init; } = [];
 
+    /// <summary>
+    /// An observer-neutral fact about the container's exterior — a faded maker's or purpose mark — that
+    /// cannot be read from the general room description and is legible only to a character who spends a
+    /// turn inspecting it closely. Null when the container has no such distinguishing mark (for example a
+    /// corpse left by the death-looting rule). It never changes and is never revealed by opening; it is the
+    /// discoverable payload of <c>inspect_object</c>.
+    /// </summary>
+    public string? ExteriorClue { get; init; }
+
     public override string Kind => "container";
 
     /// <summary>Finds an item inside this container by id or name, case-insensitively.</summary>

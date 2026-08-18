@@ -106,30 +106,55 @@ public sealed record OpenContainerOutcome : ActionOutcome
     public required string ContainerId { get; init; }
     public required string ContainerName { get; init; }
 
-    /// <summary>The names of the items now visible inside, revealed to everyone by the opening.</summary>
+    /// <summary>
+    /// The names of the items the opener now sees inside. In v0.4 these are revealed only to the opener,
+    /// not to the room: the orchestration layer delivers them as a private observation. The public
+    /// <see cref="Summary"/> deliberately does not name them.
+    /// </summary>
     public required IReadOnlyList<string> RevealedContents { get; init; }
 
     public override string OutcomeType => "open_container";
 
-    public override string Summary
-    {
-        get
-        {
-            var contents = RevealedContents.Count == 0
-                ? "It is empty."
-                : $"Inside is {NaturalJoin(RevealedContents)}.";
-            return $"{ActorName} opened the {ContainerName}. {contents} " +
-                   "The contents are now visible to everyone in the room.";
-        }
-    }
+    /// <summary>
+    /// The public account of the opening. It states only that the container was opened and the opener
+    /// looked inside — never what is within, which is the opener's private observation.
+    /// </summary>
+    public override string Summary =>
+        $"{ActorName} opened the {ContainerName} and looked inside. " +
+        $"Only {ActorName} can see what is within; its contents are not revealed to anyone else by the opening.";
+}
 
-    private static string NaturalJoin(IReadOnlyList<string> values) => values.Count switch
-    {
-        0 => "nothing",
-        1 => values[0],
-        2 => $"{values[0]} and {values[1]}",
-        _ => $"{string.Join(", ", values.Take(values.Count - 1))}, and {values[^1]}"
-    };
+/// <summary>
+/// The result of an accepted close inspection. It carries what the inspector could discover — an exterior
+/// marking, and, for an open container, the current contents — so the orchestration layer can record the
+/// right private knowledge and deliver a private observation. The physical object is unchanged; the public
+/// <see cref="Summary"/> says only that the actor examined it, never what was found.
+/// </summary>
+public sealed record InspectObjectOutcome : ActionOutcome
+{
+    public required string ActorId { get; init; }
+    public required string ActorName { get; init; }
+    public required string ObjectId { get; init; }
+    public required string ObjectName { get; init; }
+
+    /// <summary>True when the inspected object is a container (so open-state and contents are meaningful).</summary>
+    public required bool IsContainer { get; init; }
+
+    /// <summary>Whether the inspected container was open, so its current contents were observable.</summary>
+    public required bool IsOpen { get; init; }
+
+    /// <summary>The exterior marking discoverable by inspection, or null when the object bears none.</summary>
+    public string? ExteriorClue { get; init; }
+
+    /// <summary>The item names currently inside, meaningful only for an open container. Delivered privately.</summary>
+    public IReadOnlyList<string> CurrentContents { get; init; } = [];
+
+    public override string OutcomeType => "inspect_object";
+
+    /// <summary>The public account: only that the actor examined the object closely. Never the findings.</summary>
+    public override string Summary =>
+        $"{ActorName} examined the {ObjectName} closely. What {ActorName} noticed is theirs alone; " +
+        "nothing about the object was revealed to anyone else.";
 }
 
 public sealed record TakeItemOutcome : ActionOutcome

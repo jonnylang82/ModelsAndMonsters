@@ -45,7 +45,7 @@ public sealed class ContextTruncationTests
         var large = ContextTruncation.EstimateSentTokens([new ChatMessage(ChatRole.User, new string('x', 4000))]);
 
         Assert.True(small < 20);
-        Assert.InRange(large, 900, 1100); // ~4000 chars / 4 chars-per-token
+        Assert.InRange(large, 850, 1000); // ~4000 chars / 4.4 chars-per-token (calibrated to qwen's tokenizer)
     }
 
     [Fact]

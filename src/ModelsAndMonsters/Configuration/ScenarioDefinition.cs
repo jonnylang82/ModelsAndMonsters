@@ -52,6 +52,13 @@ public sealed class ContainerDefinition
     public bool IsOpen { get; set; }
 
     public List<ItemDefinition> Contents { get; set; } = [];
+
+    /// <summary>
+    /// An exterior marking discoverable only by closely inspecting the object. It is not part of the
+    /// general room description, so a character learns it only by spending a turn examining the container.
+    /// Left blank, the container has no distinguishing mark to discover.
+    /// </summary>
+    public string? ExteriorClue { get; set; }
 }
 
 public sealed class CharacterDefinition
@@ -88,6 +95,14 @@ public sealed class CharacterDefinition
     public List<string> Injuries { get; set; } = [];
 
     public List<string> Abilities { get; set; } = [];
+
+    /// <summary>
+    /// Container ids this character begins the encounter already knowing about — both that the container
+    /// exists and what it initially holds — as first-hand backstory rather than anything they must
+    /// perceive. Used to seed private <c>Backstory</c> knowledge, for example a goblin captain who knows
+    /// what is in his own supply cases. Others do not automatically share it.
+    /// </summary>
+    public List<string> BackstoryKnowledge { get; set; } = [];
 
     public PersonaDefinition Persona { get; set; } = new();
 }

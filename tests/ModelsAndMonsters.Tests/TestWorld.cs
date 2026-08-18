@@ -220,6 +220,71 @@ internal static class TestWorld
     public static GameState TwoVsTwoStateWithChest(Container? chest = null) =>
         StateWith([chest ?? Chest()], Rowan(), Elara(health: 6), Vark(), Skrit());
 
+    // ------------------------------------------------------------------------------------------
+    // Objects: the two supply cases (v0.4 hidden-information slice).
+    // ------------------------------------------------------------------------------------------
+
+    public const string MedicineCaseId = "shrine-medicine-case";
+    public const string MillCrateId = "mill-supply-crate";
+    public const string MedicineClue = "The faded shrine mark identifies this as a case intended for medicinal supplies.";
+    public const string MillClue = "The warped trade mark identifies this as an ordinary mill-supply crate.";
+
+    /// <summary>The shrine medicine case: closed by default, an exterior clue, a Small Healing Potion inside.</summary>
+    public static Container MedicineCase(bool open = false, IEnumerable<InventoryItem>? contents = null) => new()
+    {
+        Id = MedicineCaseId,
+        Name = "Faded Shrine Medicine Case",
+        Description = "A squat, dusty wooden case, its markings too worn to read at a glance.",
+        IsOpen = open,
+        ExteriorClue = MedicineClue,
+        Contents = contents is null ? [HealingPotion(5)] : [.. contents]
+    };
+
+    /// <summary>The mill supply crate: closed by default, an exterior clue, an inert bundle of damp rags inside.</summary>
+    public static Container MillCrate(bool open = false, IEnumerable<InventoryItem>? contents = null) => new()
+    {
+        Id = MillCrateId,
+        Name = "Water-Stained Mill Supply Crate",
+        Description = "A squat, water-stained wooden crate, its trade mark blurred past reading at a glance.",
+        IsOpen = open,
+        ExteriorClue = MillClue,
+        Contents = contents is null ? [DampRags()] : [.. contents]
+    };
+
+    public static InventoryItem DampRags() => new("bundle-of-damp-rags", "Bundle of Damp Rags", "A bound bundle of grey, sodden rags.");
+
+    /// <summary>The 2v2 state with both closed supply cases present. Elara starts wounded, as shipped.</summary>
+    public static GameState TwoCasesState(Container? medicine = null, Container? mill = null) =>
+        StateWith([medicine ?? MedicineCase(), mill ?? MillCrate()], Rowan(), Elara(health: 6), Vark(), Skrit());
+
+    /// <summary>
+    /// The 2v2 scenario mirroring the shipped v0.4 one: the two supply cases in the room and Vark holding
+    /// private backstory knowledge of both. Used where the ledger must be seeded from real scenario input.
+    /// </summary>
+    public static ScenarioDefinition TwoCasesScenario()
+    {
+        var scenario = TwoVsTwoScenario();
+        scenario.Characters.First(c => c.Id == ElaraId).Inventory = [];
+        scenario.Characters.First(c => c.Id == ElaraId).Health = 6;
+        scenario.Characters.First(c => c.Id == VarkId).BackstoryKnowledge = [MedicineCaseId, MillCrateId];
+        scenario.Room.Containers =
+        [
+            new ContainerDefinition
+            {
+                Id = MedicineCaseId, Name = "Faded Shrine Medicine Case", Description = "A squat, dusty wooden case.",
+                IsOpen = false, ExteriorClue = MedicineClue,
+                Contents = [new ItemDefinition { Id = "small-healing-potion", Name = "Small Healing Potion", Description = "A vial.", HealingAmount = 5 }]
+            },
+            new ContainerDefinition
+            {
+                Id = MillCrateId, Name = "Water-Stained Mill Supply Crate", Description = "A squat, water-stained crate.",
+                IsOpen = false, ExteriorClue = MillClue,
+                Contents = [new ItemDefinition { Id = "bundle-of-damp-rags", Name = "Bundle of Damp Rags", Description = "Rags." }]
+            }
+        ];
+        return scenario;
+    }
+
     /// <summary>
     /// The 2v2 scenario with the contested chest seeded into the room and the potion moved out of Elara's
     /// inventory and into it, mirroring the shipped v0.3 scenario. Used where a run needs a manifest whose

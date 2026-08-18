@@ -19,28 +19,34 @@ public sealed class ObjectEngineTests
         new(state, rng ?? new ScriptedRng(), CombatRules.NoGlancing);
 
     // ------------------------------------------------------------------------------------------
-    // Seeding: exactly one closed chest with the potion inside (tests #12, #13)
+    // Seeding: the two supply cases, closed, with their authoritative contents (spec test #1)
     // ------------------------------------------------------------------------------------------
 
     [Fact]
-    public void The_shipped_scenario_seeds_exactly_one_closed_chest_with_the_potion_inside_and_in_no_inventory()
+    public void The_shipped_scenario_seeds_the_two_supply_cases_closed_with_the_correct_contents_and_in_no_inventory()
     {
         var scenario = LoadShippedScenario();
         var state = ScenarioFactory.CreateInitialState(scenario);
 
-        // Exactly one container, and it is closed.
-        var chest = Assert.Single(state.Room.Objects.OfType<Container>());
-        Assert.False(chest.IsOpen);
+        // Exactly two containers, both closed, each with its exterior clue.
+        var containers = state.Room.Objects.OfType<Container>().ToList();
+        Assert.Equal(2, containers.Count);
+        Assert.All(containers, c => Assert.False(c.IsOpen));
+        Assert.All(containers, c => Assert.False(string.IsNullOrWhiteSpace(c.ExteriorClue)));
 
-        // The Small Healing Potion begins inside the chest...
-        var potion = Assert.Single(chest.Contents);
+        // The medicine case holds the potion; the mill crate holds the inert rags.
+        var medicine = containers.Single(c => c.Id == "shrine-medicine-case");
+        var potion = Assert.Single(medicine.Contents);
         Assert.Equal("Small Healing Potion", potion.Name);
         Assert.True(potion.IsHealingItem);
 
-        // ...and in no character's inventory.
-        Assert.All(state.Characters, c => Assert.DoesNotContain(c.Inventory, i => i.IsHealingItem));
-        Assert.DoesNotContain(state.Characters, c => c.Inventory.Any(i =>
-            string.Equals(i.Name, "Small Healing Potion", StringComparison.OrdinalIgnoreCase)));
+        var crate = containers.Single(c => c.Id == "mill-supply-crate");
+        var rags = Assert.Single(crate.Contents);
+        Assert.Equal("Bundle of Damp Rags", rags.Name);
+        Assert.False(rags.IsHealingItem);
+
+        // Neither item begins in any character's inventory.
+        Assert.All(state.Characters, c => Assert.Empty(c.Inventory));
     }
 
     [Fact]

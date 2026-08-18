@@ -69,6 +69,7 @@ public static class RunReportWriter
         WriteCommunicationAndObjects(report, events);
         WriteScenario(report, manifest);
         WriteTeams(report, manifest);
+        WriteKnowledge(report, events, manifest, finalState);
         WriteTranscript(report, events);
         if (includeFullTrace)
         {
@@ -406,8 +407,9 @@ public static class RunReportWriter
     {
         var objectEvents = events.Where(e => e.EventType == "ObjectInteraction").ToList();
         var speechEvents = events.Where(e => e.EventType == "CharacterSpeech").ToList();
+        var speechAttempts = events.Where(e => e.EventType == "UnstructuredSpeechAttempt").ToList();
 
-        if (objectEvents.Count == 0 && speechEvents.Count == 0)
+        if (objectEvents.Count == 0 && speechEvents.Count == 0 && speechAttempts.Count == 0)
         {
             return;
         }
@@ -417,6 +419,25 @@ public static class RunReportWriter
 
         report.AppendLine($"Public utterances: **{speechEvents.Count}**.");
         report.AppendLine();
+
+        if (speechAttempts.Count > 0)
+        {
+            // So a reader never concludes a character stayed silent when it in fact tried to speak in prose.
+            report.AppendLine(
+                $"Unstructured speech attempts (written as prose, not via `say`; recorded, not delivered): " +
+                $"**{speechAttempts.Count}**.");
+            report.AppendLine();
+            report.AppendLine("| Character | Attempts |");
+            report.AppendLine("| --- | --- |");
+            foreach (var group in speechAttempts
+                .GroupBy(e => Text(e.Data, "CharacterName") ?? "")
+                .OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal))
+            {
+                report.AppendLine($"| {group.Key} | {group.Count()} |");
+            }
+
+            report.AppendLine();
+        }
 
         if (speechEvents.Count > 0)
         {
@@ -476,6 +497,202 @@ public static class RunReportWriter
 
         report.AppendLine();
     }
+
+    // -------------------------------------------------------------------------------------------
+    // Knowledge (v0.4): objective truth, the discovery timeline, and per-character knowledge
+    // -------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Reconstructs, from the trace and state artefacts alone, the objective container truth and who knew
+    /// what and when — keeping first-hand knowledge separate from hearsay. Skipped when a run had no
+    /// containers and no knowledge activity, so pre-v0.4 runs add no empty sections.
+    /// </summary>
+    private static void WriteKnowledge(StringBuilder report, IReadOnlyList<TraceRow> events, JsonElement? manifest, JsonElement? finalState)
+    {
+        var learned = events.Where(e => e.EventType == "KnowledgeFactLearned").ToList();
+        var hasContainers = TryGet(manifest, out var initState, "InitialState") && Containers(initState).Any();
+
+        if (!hasContainers && learned.Count == 0)
+        {
+            return;
+        }
+
+        WriteObjectiveContainerState(report, manifest, finalState);
+
+        if (learned.Count == 0)
+        {
+            return;
+        }
+
+        WriteKnowledgeTimeline(report, learned);
+        WritePerCharacterKnowledge(report, events, learned, manifest);
+    }
+
+    private static void WriteObjectiveContainerState(StringBuilder report, JsonElement? manifest, JsonElement? finalState)
+    {
+        var initial = new List<(string Id, string Name, string Contents, bool Open)>();
+        if (TryGet(manifest, out var initState, "InitialState"))
+        {
+            foreach (var c in Containers(initState))
+            {
+                initial.Add((Scalar(c, "Id"), Scalar(c, "Name"), NamesOf(c, "Contents"), IsOpenContainer(c)));
+            }
+        }
+
+        if (initial.Count == 0)
+        {
+            return;
+        }
+
+        var final = new Dictionary<string, (string Contents, bool Open)>(StringComparer.OrdinalIgnoreCase);
+        if (TryGet(finalState, out var fs, "State"))
+        {
+            foreach (var c in Containers(fs))
+            {
+                final[Scalar(c, "Id")] = (NamesOf(c, "Contents"), IsOpenContainer(c));
+            }
+        }
+
+        report.AppendLine("## Objective container state");
+        report.AppendLine();
+        report.AppendLine("The authoritative truth, independent of who knew it: each container's initial and final contents.");
+        report.AppendLine();
+        report.AppendLine("| Container | Initial contents | Final state | Final contents |");
+        report.AppendLine("| --- | --- | --- | --- |");
+        foreach (var (id, name, contents, _) in initial)
+        {
+            var f = final.TryGetValue(id, out var v) ? v : (Contents: "unknown", Open: false);
+            report.AppendLine($"| {name} | {contents} | {(f.Open ? "open" : "closed")} | {f.Contents} |");
+        }
+
+        report.AppendLine();
+    }
+
+    private static void WriteKnowledgeTimeline(StringBuilder report, IReadOnlyList<TraceRow> learned)
+    {
+        report.AppendLine("## Knowledge timeline");
+        report.AppendLine();
+        report.AppendLine("When each fact was discovered, by whom, and how — in order. A public event is learned by everyone alive at once.");
+        report.AppendLine();
+
+        // Collapse same-moment learns of the same fact into one line (a public removal is learned by all).
+        var order = new List<(int Round, string FactId, string Source)>();
+        var who = new Dictionary<(int, string, string), List<string>>();
+        var meta = new Dictionary<(int, string, string), (string Description, string Visibility, string Wv)>();
+
+        foreach (var row in learned)
+        {
+            var key = ((int)LongField(row.Data, "Round"), Text(row.Data, "FactId") ?? "", Text(row.Data, "Source") ?? "");
+            if (!who.TryGetValue(key, out var names))
+            {
+                who[key] = names = [];
+                order.Add(key);
+                meta[key] = (Text(row.Data, "Description") ?? "", Text(row.Data, "Visibility") ?? "private",
+                    Text(row.Data, "ObservedWorldVersion") ?? "0");
+            }
+
+            var name = Text(row.Data, "CharacterName") ?? "";
+            if (!names.Contains(name))
+            {
+                names.Add(name);
+            }
+        }
+
+        foreach (var key in order)
+        {
+            var names = string.Join(", ", who[key]);
+            var m = meta[key];
+            var delivered = m.Visibility == "public" ? $"everyone alive ({names})" : $"{names} only";
+            var when = key.Round > 0 ? $"Round {key.Round}" : "Backstory";
+            report.AppendLine($"- **{when}** — {names} learned via `{key.Source}`: {m.Description} *(world version {m.Wv}; delivered to {delivered})*");
+        }
+
+        report.AppendLine();
+    }
+
+    private static void WritePerCharacterKnowledge(StringBuilder report, IReadOnlyList<TraceRow> events, IReadOnlyList<TraceRow> learned, JsonElement? manifest)
+    {
+        var characters = new List<(string Id, string Name)>();
+        if (TryGet(manifest, out var initState, "InitialState"))
+        {
+            foreach (var c in Characters(initState))
+            {
+                characters.Add((Scalar(c, "Id"), Scalar(c, "Name")));
+            }
+        }
+
+        if (characters.Count == 0)
+        {
+            return;
+        }
+
+        report.AppendLine("## Per-character knowledge");
+        report.AppendLine();
+        report.AppendLine("What each character knew — first-hand knowledge kept strictly separate from what they only heard.");
+        report.AppendLine();
+
+        var speech = events.Where(e => e.EventType == "CharacterSpeech").ToList();
+
+        foreach (var (id, name) in characters)
+        {
+            report.AppendLine($"### {name}");
+            report.AppendLine();
+
+            var mine = learned
+                .Where(r => string.Equals(Text(r.Data, "CharacterId"), id, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (mine.Count == 0)
+            {
+                report.AppendLine("*Directly knew nothing beyond what anyone in the room could plainly see.*");
+            }
+            else
+            {
+                report.AppendLine("**Directly knew (first-hand):**");
+                report.AppendLine();
+                report.AppendLine("| Fact | Source | Learned | Observed world version |");
+                report.AppendLine("| --- | --- | --- | --- |");
+                foreach (var r in mine)
+                {
+                    var round = (int)LongField(r.Data, "Round");
+                    var when = round > 0 ? $"round {round}" : "backstory";
+                    report.AppendLine(
+                        $"| {Text(r.Data, "Description")} | {Text(r.Data, "Source")} | {when} | {Text(r.Data, "ObservedWorldVersion")} |");
+                }
+            }
+
+            report.AppendLine();
+
+            var heard = speech.Where(s => RecipientsContain(s.Data, id)).ToList();
+            if (heard.Count > 0)
+            {
+                report.AppendLine("**Only heard others say (hearsay — not verified first-hand):**");
+                report.AppendLine();
+                foreach (var s in heard)
+                {
+                    report.AppendLine($"- {Text(s.Data, "SpeakerName")} said: \"{Text(s.Data, "Message")}\"");
+                }
+
+                report.AppendLine();
+            }
+        }
+    }
+
+    private static IEnumerable<JsonElement> Containers(JsonElement state) =>
+        state.TryGetProperty("Room", out var room)
+        && room.TryGetProperty("Objects", out var objects)
+        && objects.ValueKind == JsonValueKind.Array
+            ? objects.EnumerateArray().Where(o => o.ValueKind == JsonValueKind.Object && o.TryGetProperty("IsOpen", out _))
+            : [];
+
+    private static bool IsOpenContainer(JsonElement container) =>
+        container.TryGetProperty("IsOpen", out var open) && open.ValueKind == JsonValueKind.True;
+
+    private static bool RecipientsContain(JsonElement? data, string id) =>
+        TryGet(data, out var array, "Recipients")
+        && array.ValueKind == JsonValueKind.Array
+        && array.EnumerateArray().Any(x =>
+            x.ValueKind == JsonValueKind.String && string.Equals(x.GetString(), id, StringComparison.OrdinalIgnoreCase));
 
     private static void WriteScenario(StringBuilder report, JsonElement? manifest)
     {
@@ -575,11 +792,15 @@ public static class RunReportWriter
                 // The intent is transcribed where it was spoken, not where it was ruled on, so the
                 // reader sees the character act before the engine and the DM respond to it.
                 "ToolCallDispatched" => TranscribeIntent(row),
-                "Narration" => $"**DM:** {Text(row.Data, "Narration")}",
+                "Narration" => $"**DM (public):** {Text(row.Data, "Narration")}",
                 // Public speech, kept visually distinct from DM narration and from private questions.
-                "CharacterSpeech" => $"**{Text(row.Data, "SpeakerName")} says:** \"{Text(row.Data, "Message")}\"",
+                "CharacterSpeech" => $"**{Text(row.Data, "SpeakerName")} says (public):** \"{Text(row.Data, "Message")}\"",
                 "CharacterQuestion" => $"**{Text(row.Data, "CharacterName")} asks (private):** \"{Text(row.Data, "Question")}\"",
                 "DungeonMasterAnswer" => $"**DM (private to {Text(row.Data, "CharacterName")}):** {Text(row.Data, "Answer")}",
+                // A private observation only the named character receives — an inspection result, or contents seen on opening.
+                "PrivateObservationDelivered" => $"**DM (only {Text(row.Data, "RecipientName")} sees):** {Text(row.Data, "Observation")}",
+                // A publicly observable fact everyone alive learns — a visibly carried-off item.
+                "PublicFactDelivered" => $"*[in plain view of all: {Text(row.Data, "Fact")}]*",
                 "CharacterPassed" => $"**{Text(row.Data, "CharacterName")} holds back:** \"{Text(row.Data, "Reason")}\"",
                 "DmAdjudication" => TranscribeRuling(row),
                 "TargetResolved" => $"*[target — {Text(row.Data, "Note")}]*",
@@ -601,6 +822,9 @@ public static class RunReportWriter
                 "ToolCallRecovered" =>
                     $"*[{Text(row.Data, "AgentName")} wrote its move as text; harness recovered " +
                     $"`{Text(row.Data, "ToolName")}`]*",
+                "UnstructuredSpeechAttempt" =>
+                    $"*[{Text(row.Data, "CharacterName")} tried to speak in prose, not via `say` — " +
+                    $"nudged; attempted: \"{Text(row.Data, "AttemptedText")}\"]*",
                 "TurnEnded" => $"*— {Text(row.Data, "CharacterName")}'s turn ends: {Text(row.Data, "Result")}*",
                 _ => null
             };
@@ -865,6 +1089,15 @@ public static class RunReportWriter
                 yield return Quote($"**Model wrote (as prose):** {Text(d, "OriginalText")}");
                 break;
 
+            case "UnstructuredSpeechAttempt":
+                yield return Bullets(
+                    ("Character", $"{Text(d, "CharacterName")} (`{Text(d, "CharacterId")}`)"),
+                    ("Was truncated", Text(d, "WasTruncated")),
+                    ("Outcome", "recorded, not delivered; character nudged to call say"));
+                yield return "";
+                yield return Quote($"**Attempted (in prose):** {Text(d, "AttemptedText")}");
+                break;
+
             case "DmAdjudication":
                 yield return Bullets(
                     ("Character", Text(d, "CharacterName")),
@@ -1022,6 +1255,64 @@ public static class RunReportWriter
                     ("Rounds played", Text(d, "RoundsPlayed")),
                     ("Survivors", JoinArray(d, "Survivors")),
                     ("Casualties", JoinArray(d, "Casualties")));
+                break;
+
+            case "ObjectInspected":
+                yield return Bullets(
+                    ("Actor", $"{Text(d, "ActorName")} (`{Text(d, "ActorId")}`)"),
+                    ("Object", $"{Text(d, "ObjectName")} (`{Text(d, "ObjectId")}`)"),
+                    ("Was open", Text(d, "WasOpen")),
+                    ("Discovered facts", JoinArray(d, "DiscoveredFactIds")),
+                    ("Learned something new", Text(d, "LearnedSomethingNew")),
+                    ("World version", Text(d, "WorldVersion")));
+                break;
+
+            case "KnowledgeFactCreated":
+                yield return Bullets(
+                    ("Fact", $"`{Text(d, "FactId")}`"),
+                    ("Subject", Text(d, "SubjectId")),
+                    ("Type", Text(d, "FactType")),
+                    ("World version", Text(d, "WorldVersion")),
+                    ("Created by", Text(d, "CreatedBySource")),
+                    ("Related action", Text(d, "RelatedAction")));
+                yield return "";
+                yield return Quote(Text(d, "Description"));
+                break;
+
+            case "KnowledgeFactLearned":
+                yield return Bullets(
+                    ("Fact", $"`{Text(d, "FactId")}`"),
+                    ("Learned by", $"{Text(d, "CharacterName")} (`{Text(d, "CharacterId")}`)"),
+                    ("Source", Text(d, "Source")),
+                    ("Round / turn", $"{Text(d, "Round")} / {Text(d, "Turn")}"),
+                    ("Observed world version", Text(d, "ObservedWorldVersion")),
+                    ("Visibility", Text(d, "Visibility")),
+                    ("Recipients", JoinArray(d, "Recipients")),
+                    ("Related action", Text(d, "RelatedAction")));
+                yield return "";
+                yield return Quote(Text(d, "Description"));
+                break;
+
+            case "PrivateObservationDelivered":
+                yield return Bullets(
+                    ("Recipient", $"{Text(d, "RecipientName")} (`{Text(d, "RecipientId")}`)"),
+                    ("Visibility", Text(d, "Visibility")),
+                    ("Related facts", JoinArray(d, "RelatedFactIds")),
+                    ("World version", Text(d, "WorldVersion")),
+                    ("Source event", Text(d, "SourceEvent")));
+                yield return "";
+                yield return Quote(Text(d, "Observation"));
+                break;
+
+            case "PublicFactDelivered":
+                yield return Bullets(
+                    ("Visibility", Text(d, "Visibility")),
+                    ("Recipients", JoinArray(d, "Recipients")),
+                    ("Related facts", JoinArray(d, "RelatedFactIds")),
+                    ("World version", Text(d, "WorldVersion")),
+                    ("Source event", Text(d, "SourceEvent")));
+                yield return "";
+                yield return Quote(Text(d, "Fact"));
                 break;
 
             default:

@@ -48,6 +48,7 @@ public sealed class GameEngine : IGameEngine
             UseItemAction useItem => ResolveUseItem(useItem),
             OpenContainerAction open => ResolveOpenContainer(open),
             TakeItemAction take => ResolveTakeItem(take),
+            InspectObjectAction inspect => ResolveInspectObject(inspect),
             _ => EngineResult.Reject(action, _state, EngineRejectionReason.UnsupportedAction,
                 $"The engine has no handler for action type '{action.ActionType}'.")
         };
@@ -460,6 +461,71 @@ public sealed class GameEngine : IGameEngine
         };
 
         return EngineResult.Accept(action, state, after, outcome);
+    }
+
+    /// <summary>
+    /// Resolves a close inspection of an object. No randomness and no mutation: the inspection reports what
+    /// could be discovered — an exterior marking, and, for an open container, the current contents — and the
+    /// orchestration layer turns that into private knowledge and a private observation. State before equals
+    /// state after and the version is untouched, so an inspection consumes a turn without changing the world.
+    /// </summary>
+    private EngineResult ResolveInspectObject(InspectObjectAction action)
+    {
+        var state = _state;
+
+        var actor = state.Resolve(action.ActorRef);
+        if (actor is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.UnknownActor,
+                $"There is no character called '{action.ActorRef}' in the room.");
+        }
+
+        if (!actor.IsAlive)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.ActorIsDead,
+                $"{actor.Name} is dead and cannot act.");
+        }
+
+        var resolution = state.ResolveObject(action.ObjectRef);
+        if (resolution.Ambiguous)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.ObjectReferenceAmbiguous,
+                $"'{action.ObjectRef}' could mean more than one thing in the room; it is not clear which is meant.");
+        }
+
+        if (resolution.Object is not { } worldObject)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.UnknownObject,
+                $"There is no object called '{action.ObjectRef}' in the room.");
+        }
+
+        // Something is discoverable only if the object bears an exterior marking, or is an open container
+        // whose current contents can be observed. An object with neither has nothing a closer look reveals.
+        var container = worldObject as Container;
+        var hasSomethingToDiscover = container?.ExteriorClue is not null || container is { IsOpen: true };
+
+        if (!hasSomethingToDiscover)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.NothingToInspect,
+                $"A closer look at the {worldObject.Name} turns up nothing a glance did not already give you.");
+        }
+
+        var outcome = new InspectObjectOutcome
+        {
+            ActorId = actor.Id,
+            ActorName = actor.Name,
+            ObjectId = worldObject.Id,
+            ObjectName = worldObject.Name,
+            IsContainer = container is not null,
+            IsOpen = container is { IsOpen: true },
+            ExteriorClue = container?.ExteriorClue,
+            CurrentContents = container is { IsOpen: true }
+                ? [.. container.Contents.Select(i => i.Name)]
+                : []
+        };
+
+        // No mutation and no version change: inspection is observation, not action-on-the-world.
+        return EngineResult.Accept(action, state, state, outcome);
     }
 
     /// <summary>

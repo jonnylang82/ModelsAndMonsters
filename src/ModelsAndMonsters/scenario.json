@@ -1,13 +1,13 @@
 {
   "Scenario": {
-    "Id": "cellar-ambush-v1",
-    "Name": "The Flooded Cellar",
-    "Summary": "Two adventurers corner two goblins in a cramped, flooded cellar — a wounded cleric and a fighter against a goblin captain and its grunt. An old iron-bound chest the captain calls his own sits against the far wall, and nobody yet knows what waits inside it.",
+    "Id": "cellar-supply-cases-v1",
+    "Name": "The Two Supply Cases",
+    "Summary": "Two adventurers corner two goblins in a cramped, flooded cellar — a wounded cleric and a fighter against a goblin captain and its grunt. Two closed supply cases the captain stashed here stand against the wall within reach of everyone, alike under their grime, and only the captain knows which holds what.",
 
     "Room": {
       "Id": "flooded-cellar",
       "Name": "Flooded Cellar",
-      "Description": "A low, brick-vaulted cellar under the ruined mill. Ankle-deep black water covers the floor and the single lantern throws four long shadows on the dripping walls. All four stand within a few paces of one another, face to face, and an old iron-bound chest with its lid shut stands against the wall right there beside them, close enough for anyone to reach.",
+      "Description": "A low, brick-vaulted cellar under the ruined mill. Ankle-deep black water covers the floor and the single lantern throws four long shadows on the dripping walls. All four stand within a few paces of one another, face to face. Two squat, close-lidded supply cases stand against the wall right there beside them, close enough for anyone to reach — alike under a skin of grime and water-stain, their markings too faded to make out at a glance.",
       "Features": [
         "A guttering lantern hung from an iron hook",
         "Ankle-deep cold water across the whole floor",
@@ -15,16 +15,31 @@
       ],
       "Containers": [
         {
-          "Id": "old-iron-bound-chest",
-          "Name": "Old Iron-Bound Chest",
-          "Description": "A squat, iron-banded chest of dark wood, its lid shut but unlocked. It stands against the cellar wall within easy reach of everyone in the room.",
+          "Id": "shrine-medicine-case",
+          "Name": "Faded Shrine Medicine Case",
+          "Description": "A squat wooden case, its lid shut but unlocked, its surface dusty and its markings too worn to read from where you stand. It rests against the cellar wall within easy reach of everyone in the room.",
           "IsOpen": false,
+          "ExteriorClue": "The faded shrine mark identifies this as a case intended for medicinal supplies.",
           "Contents": [
             {
               "Id": "small-healing-potion",
               "Name": "Small Healing Potion",
               "Description": "A stoppered vial of cloudy red liquid.",
               "HealingAmount": 5
+            }
+          ]
+        },
+        {
+          "Id": "mill-supply-crate",
+          "Name": "Water-Stained Mill Supply Crate",
+          "Description": "A squat wooden crate, its lid shut but unlocked, warped and water-stained, its trade mark blurred past reading from where you stand. It rests against the cellar wall within easy reach of everyone in the room.",
+          "IsOpen": false,
+          "ExteriorClue": "The warped trade mark identifies this as an ordinary mill-supply crate.",
+          "Contents": [
+            {
+              "Id": "bundle-of-damp-rags",
+              "Name": "Bundle of Damp Rags",
+              "Description": "A bound bundle of grey, sodden rags. Ordinary and useless."
             }
           ]
         }
@@ -49,7 +64,7 @@
         "Injuries": [],
         "Abilities": [],
         "Persona": {
-          "Backstory": "A veteran fighter who took this contract to clear the mill. You have stood in worse rooms than this one, and you came in with Elara, who is hurt and is no soldier.",
+          "Backstory": "A veteran fighter who took this contract to clear the mill. You have stood in worse rooms than this one, and you came in with Elara, who is hurt and is no soldier. Two closed supply cases stand against the wall; you have no idea which holds what.",
           "Personality": "Steady, brave and protective. You put yourself between danger and those less able to weather it, and you would rather face the most dangerous enemy yourself than see a companion overwhelmed.",
           "Wants": "To beat the goblins while keeping Elara from being cornered — and to give her the room to reach anything that might keep the two of you alive, while you hold off the worst of the fight.",
           "Fears": "Failing to protect a companion.",
@@ -75,8 +90,8 @@
         ],
         "Abilities": [],
         "Persona": {
-          "Backstory": "A cleric of a quiet roadside shrine, more used to tending the hurt than dealing hurt. You came because Rowan asked, and because someone had to. The goblins' ambush on the stair opened a gash along your ribs, and it aches with every breath.",
-          "Personality": "Compassionate, cautious and resolute. You avoid unnecessary risk but will fight when somebody depends on you, and you have a healer's eye for anything that might mend a wound.",
+          "Backstory": "A cleric of a quiet roadside shrine, more used to tending the hurt than dealing hurt. You came because Rowan asked, and because someone had to. The goblins' ambush on the stair opened a gash along your ribs, and it aches with every breath. Two closed supply cases stand against the wall; from where you stand you cannot tell what either is, though a shrine like yours would know its own kind of case by its marks.",
+          "Personality": "Compassionate, cautious and resolute. You avoid unnecessary risk but will fight when somebody depends on you, and you have a healer's eye for anything that might mend a wound — including a marking that might tell a medicine chest from mere lumber.",
           "Wants": "To keep yourself and Rowan alive, and to get your hands on anything that could help you do it before the wound in your side tells against you.",
           "Needs": "Something to close the gash in your side before it slows you further.",
           "Fears": "Being isolated and surrounded, or being too hurt to help when Rowan needs you.",
@@ -99,12 +114,13 @@
         "Inventory": [],
         "Injuries": [],
         "Abilities": [],
+        "BackstoryKnowledge": ["shrine-medicine-case", "mill-supply-crate"],
         "Persona": {
-          "Backstory": "The captain of this warren's last two survivors. The mill was yours before the humans came sniffing, and the old iron-bound chest against the wall is yours — you stashed it there, and whatever is inside belongs to you by right.",
+          "Backstory": "The captain of this warren's last two survivors. The mill was yours before the humans came sniffing, and the two supply cases against the wall are yours — you stashed them here. You know them apart at a glance where others see only grime: the shrine-marked one holds a healing draught, the water-stained mill crate holds nothing but old rags. Skrit does not know which is which.",
           "Personality": "Cunning, domineering and self-preserving. You expect the grunt to take the risks and to guard what is yours while you strike at whoever looks most vulnerable.",
-          "Wants": "To kill or drive off the intruders, keep your chest and its contents out of their hands, and come through it alive.",
+          "Wants": "To kill or drive off the intruders, keep the healing draught out of their hands, and come through it alive.",
           "Fears": "Losing what is yours, losing authority, or being left to fight alone.",
-          "Goal": "Survive, keep the intruders away from your chest, and defeat or drive off the heroes."
+          "Goal": "Survive, keep the intruders away from the medicine case, and defeat or drive off the heroes."
         }
       },
       {
@@ -124,9 +140,9 @@
         "Injuries": [],
         "Abilities": [],
         "Persona": {
-          "Backstory": "The last grunt of the warren, kept alive so far by staying close to Vark and out of reach of everything else. The captain guards that chest of his jealously and expects you to help keep it safe.",
+          "Backstory": "The last grunt of the warren, kept alive so far by staying close to Vark and out of reach of everything else. The captain stashed two cases here and guards them jealously; you have never been told which one is worth anything, only that they matter to him.",
           "Personality": "Reckless, nervous and eager to impress the captain. You act boldly while Vark appears in control, but fear and the urge to save your own skin take over the moment you feel isolated.",
-          "Wants": "Vark's approval, and a share of whatever the captain is hoarding in that chest.",
+          "Wants": "Vark's approval, and a share of whatever the captain is hoarding — if only you knew which case held it.",
           "Fears": "Being abandoned by the captain, and being left alone to face the humans.",
           "Goal": "Survive, win Vark's favour, and help defeat or drive off the heroes."
         }

@@ -33,12 +33,30 @@ public sealed record UseItemAction(string ActorRef, string ItemRef, string? Targ
     public override string Describe() => $"UseItem(actor={ActorRef}, item={ItemRef}, target={TargetRef ?? "self"})";
 }
 
-/// <summary>Opens a closed container in the actor's room, revealing its contents. Uses no randomness.</summary>
+/// <summary>Opens a closed container in the actor's room. Uses no randomness.</summary>
+/// <remarks>
+/// Opening reveals the contents only to the opener, not to the whole room: the engine reports the contents
+/// on the outcome, and the orchestration layer delivers them privately. The mechanical change is only the
+/// lid.
+/// </remarks>
 public sealed record OpenContainerAction(string ActorRef, string ContainerRef) : GameAction
 {
     public override string ActionType => "open_container";
 
     public override string Describe() => $"OpenContainer(actor={ActorRef}, container={ContainerRef})";
+}
+
+/// <summary>
+/// Examines an object in the room closely, discovering information that cannot be read from the general
+/// room description. Uses no randomness and never mutates the object: it consumes the actor's turn and
+/// yields a private observation to the inspector. A character requests it through natural-language intent
+/// ("I wipe the grime away and study the markings"); only the Dungeon Master ever names this action.
+/// </summary>
+public sealed record InspectObjectAction(string ActorRef, string ObjectRef) : GameAction
+{
+    public override string ActionType => "inspect_object";
+
+    public override string Describe() => $"InspectObject(actor={ActorRef}, object={ObjectRef})";
 }
 
 /// <summary>
