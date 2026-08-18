@@ -8,3 +8,5 @@ runs/
 .idea/
 *.user
 investigate/
+node_modules/
+dist/

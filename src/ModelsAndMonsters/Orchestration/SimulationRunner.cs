@@ -46,19 +46,38 @@ public sealed class SimulationRunner
     private readonly IChatClientFactory _chatClientFactory;
     private readonly PromptLibrary _prompts;
     private readonly IGameConsole _console;
+    private readonly ITraceSink? _additionalSink;
 
+    /// <summary>The dependency-injected constructor used by the CLI. No live sink; the trace goes to file only.</summary>
     public SimulationRunner(
         IOptions<SimulationOptions> options,
         IOptions<ScenarioDefinition> scenario,
         IChatClientFactory chatClientFactory,
         PromptLibrary prompts,
         IGameConsole console)
+        : this(options.Value, scenario.Value, chatClientFactory, prompts, console, additionalSink: null)
     {
-        _options = options.Value;
-        _scenario = scenario.Value;
+    }
+
+    /// <summary>
+    /// Constructs a runner directly, for callers that build one per run — a host serving a live view passes a
+    /// per-run <paramref name="console"/> and an <paramref name="additionalSink"/> that pushes events to that
+    /// view alongside the file trace.
+    /// </summary>
+    public SimulationRunner(
+        SimulationOptions options,
+        ScenarioDefinition scenario,
+        IChatClientFactory chatClientFactory,
+        PromptLibrary prompts,
+        IGameConsole console,
+        ITraceSink? additionalSink)
+    {
+        _options = options;
+        _scenario = scenario;
         _chatClientFactory = chatClientFactory;
         _prompts = prompts;
         _console = console;
+        _additionalSink = additionalSink;
     }
 
     public async Task<SimulationSummary> RunAsync(CancellationToken cancellationToken = default)
@@ -67,7 +86,9 @@ public sealed class SimulationRunner
         var harness = _options.Harness;
         var paths = RunPaths.Create(harness.RunOutputDirectory, startedAt);
 
-        var sink = new JsonlTraceSink(paths.TraceJsonl);
+        // The JSONL file is the authoritative trace; a live view (if attached) receives the same events too.
+        var fileSink = new JsonlTraceSink(paths.TraceJsonl);
+        ITraceSink sink = _additionalSink is null ? fileSink : new CompositeTraceSink(fileSink, _additionalSink);
         var trace = new ExperimentTrace(paths.RunId, sink);
 
         // One master seed governs the whole run. When none is configured, generate a random one and
@@ -96,6 +117,31 @@ public sealed class SimulationRunner
             c => ResolveCharacterProfile(c, defaults, masterSeed),
             StringComparer.OrdinalIgnoreCase);
 
+        // The intent parser reuses the Dungeon Master's model but reads at temperature zero for a stable,
+        // reproducible parse, with reasoning off and a small output budget — it only ever emits a few tool
+        // calls. It is context-free, so the window is ample; a derived seed keeps the whole run replayable.
+        var intentParserProfile = dungeonMasterProfile with
+        {
+            AgentName = "IntentParser",
+            Temperature = 0f,
+            Effort = ReasoningEffort.None,
+            Thinking = false,
+            MaxOutputTokens = 500,
+            Seed = RunSeeds.Derive(masterSeed, "agent:intent-parser")
+        };
+
+        // The history summariser also reuses the DM's model, at a low temperature for a steady recap and a
+        // small output budget. Context-free like the parser; a derived seed keeps the run replayable.
+        var historySummariserProfile = dungeonMasterProfile with
+        {
+            AgentName = "HistorySummariser",
+            Temperature = 0.3f,
+            Effort = ReasoningEffort.None,
+            Thinking = false,
+            MaxOutputTokens = 400,
+            Seed = RunSeeds.Derive(masterSeed, "agent:history-summariser")
+        };
+
         var agentSeeds = new Dictionary<string, long>
         {
             [DungeonMasterAgent.AgentIdentifier] = dungeonMasterProfile.Seed!.Value
@@ -122,6 +168,17 @@ public sealed class SimulationRunner
                 CreateTracingClient(dungeonMasterProfile, trace, clients),
                 _prompts,
                 harness.ProjectDungeonMasterContext);
+
+            // The prose-fallback intent parser gets its own stateless client; null when the flag is off, in
+            // which case the coordinator keeps the older speech-retry / recovery / nudge path.
+            var intentParser = harness.UseIntentParser
+                ? new IntentParser(intentParserProfile, CreateTracingClient(intentParserProfile, trace, clients), _prompts)
+                : null;
+
+            // The history summariser (its own stateless client), when enabled; null keeps histories untrimmed.
+            var historySummariser = harness.SummariseHistory
+                ? new HistorySummariser(historySummariserProfile, CreateTracingClient(historySummariserProfile, trace, clients), _prompts)
+                : null;
 
             var characterPrompts = new CharacterPromptFactory(_prompts);
 
@@ -188,7 +245,8 @@ public sealed class SimulationRunner
             var narrationLog = new NarrationLog();
             var formatter = new WorldStateFormatter(_prompts);
             var coordinator = new TurnCoordinator(
-                engine, dungeonMaster, _prompts, formatter, narrationLog, knowledge, trace, _console, harness);
+                engine, dungeonMaster, _prompts, formatter, narrationLog, knowledge, trace, _console, harness,
+                intentParser, historySummariser);
 
             return await RunLoopAsync(coordinator, engine, trace, paths, turnOrder, cancellationToken)
                 .ConfigureAwait(false);

@@ -38,6 +38,9 @@ public static partial class MachineryLanguage
         // encounter", enumerated permitted-action framings.
         @"|supported action|permitted action|allowed action|resolve the (?:encounter|combat|fight|battle|situation)|list of (?:actions|moves|things you can)" +
         @"|directly knows?|has not been told|have not been told|no one has told|nor has anyone told|has not inspected|have not inspected|has not observed|have not observed" +
+        // Take/container mechanics that leaked through refusals: the one-at-a-time rule, "a separate action",
+        // the open-before-take precondition, and the "you can only act on what you know is there" framing.
+        @"|one item at a time|separate action|without first opening|only act on (?:things|what) you" +
         @"|\*\*",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex MachineryPattern();

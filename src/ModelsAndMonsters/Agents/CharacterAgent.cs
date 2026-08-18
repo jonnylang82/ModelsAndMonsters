@@ -49,4 +49,28 @@ public sealed class CharacterAgent : ModelAgent
     /// </summary>
     public void ReplaceLastReplyWithToolCall(FunctionCallContent call) =>
         Conversation.ReplaceLastMessage(new ChatMessage(ChatRole.Assistant, [call]));
+
+    /// <summary>
+    /// Swaps this character's most recent (prose) reply for one carrying several structured tool calls at
+    /// once — used when the intent parser reads a spoken line AND an action out of a single prose reply, so
+    /// both are dispatched from one turn rather than nudged for one at a time.
+    /// </summary>
+    public void ReplaceLastReplyWithToolCalls(IReadOnlyList<FunctionCallContent> calls) =>
+        Conversation.ReplaceLastMessage(new ChatMessage(ChatRole.Assistant, [.. calls]));
+
+    /// <summary>Records where this character's history stands at turn start, to compact back to when the turn ends.</summary>
+    public int MarkHistory() => Conversation.Count;
+
+    /// <summary>Drops this turn's failed prose replies and nudges once the turn has resolved, keeping the clean calls.</summary>
+    public void CompactTurnHistory(int mark) => Conversation.CompactTurn(mark);
+
+    /// <summary>A rough estimate of the tokens this character's next request would send, for the trim trigger.</summary>
+    public int EstimateHistoryTokens() => ContextTruncation.EstimateSentTokens(Conversation.BuildRequestMessages());
+
+    /// <summary>Plans a summary trim keeping the last <paramref name="keepRecentTurns"/> turns full; false if there is nothing older to fold.</summary>
+    public bool TryPlanHistorySummary(int keepRecentTurns, out int boundary, out string olderHistory) =>
+        Conversation.TryPlanSummaryTrim(keepRecentTurns, out boundary, out olderHistory);
+
+    /// <summary>Folds the older turns into the given running-summary text, keeping the recent turns intact.</summary>
+    public void ApplyHistorySummary(int boundary, string summary) => Conversation.ApplySummary(boundary, summary);
 }

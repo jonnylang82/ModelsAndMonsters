@@ -76,7 +76,7 @@ public sealed class WorldStateFormatter
         }
         if (state.Room.Objects.OfType<Container>().Any())
         {
-            builder.AppendLine("- Opening a container does NOT make its contents public. Only the character who opened it — or who has since inspected it while open, seen an item carried out of it, or been told — knows what is inside. Being in the room is not enough. When you answer or adjudicate for a character, you are told exactly what THAT character knows; never hand them contents they have not discovered, even for an open container.");
+            builder.AppendLine("- A container being open or closed is public: everyone in the room sees which, and you may always say so. Its contents are not. Opening does NOT make them public: only the character who opened it, who knew what it held from before the fight, who has since inspected it while open, who saw an item carried out of it, or who was told, knows what is inside. Being in the room is not enough. When you answer or adjudicate for a character, you are told exactly what THAT character knows; never hand them contents they have not discovered, even for an open container.");
             builder.AppendLine("- An exterior marking on a container is legible only to a character who spends a turn inspecting it closely. Never reveal a marking in an answer or narration; it is discovered only through inspection, and then only by the one inspecting.");
         }
         builder.AppendLine("- ACTIONS THE WORLD CAN RESOLVE: attack_character, use_item, open_container, take_item, inspect_object. Nothing else exists.");

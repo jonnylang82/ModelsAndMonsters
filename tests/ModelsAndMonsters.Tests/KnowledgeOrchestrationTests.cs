@@ -32,6 +32,11 @@ public sealed class KnowledgeOrchestrationTests
     private static bool HasRemovalRecord(KnowledgeLedger ledger, string characterId) =>
         ledger.RecordsFor(characterId).Any(r => ledger.FindFact(r.FactId) is { FactType: FactType.ItemRemoved });
 
+    private static bool HasOpenedRecord(KnowledgeLedger ledger, string characterId, string subjectId) =>
+        ledger.RecordsFor(characterId).Any(r =>
+            ledger.FindFact(r.FactId) is { FactType: FactType.ContainerOpened } f &&
+            string.Equals(f.SubjectId, subjectId, StringComparison.OrdinalIgnoreCase));
+
     private static MultiActorHarness Harness(ScriptedChatClient dm, params (string Name, ScriptedChatClient Client)[] characters) =>
         new(dm, MultiActorHarness.Clients(characters),
             initialState: TestWorld.TwoCasesState(),
@@ -57,6 +62,10 @@ public sealed class KnowledgeOrchestrationTests
         Assert.True(HasContentsRecord(harness.Ledger, TestWorld.ElaraId, TestWorld.MedicineCaseId));
         Assert.False(HasContentsRecord(harness.Ledger, TestWorld.RowanId, TestWorld.MedicineCaseId));
 
+        // But the open STATE is public: every living character — Rowan included — learns the case is open. (#4)
+        Assert.True(HasOpenedRecord(harness.Ledger, TestWorld.RowanId, TestWorld.MedicineCaseId));
+        Assert.True(HasOpenedRecord(harness.Ledger, TestWorld.ElaraId, TestWorld.MedicineCaseId));
+
         // The private observation went to Elara alone and named the potion. (#5, #25)
         var observation = Assert.Single(harness.Sink.Payloads<PrivateObservationDeliveredPayload>(TraceEventType.PrivateObservationDelivered));
         Assert.Equal(TestWorld.ElaraId, observation.RecipientId);
@@ -67,11 +76,15 @@ public sealed class KnowledgeOrchestrationTests
         Assert.Equal("public", narration.Visibility);
         Assert.Equal(4, narration.IntendedRecipients.Count);
 
-        // Opening produced no public fact — the contents did not become public. (#4)
-        Assert.Empty(harness.Sink.OfType(TraceEventType.PublicFactDelivered));
-        Assert.DoesNotContain(
-            harness.Sink.Payloads<KnowledgeFactLearnedPayload>(TraceEventType.KnowledgeFactLearned),
-            p => p.Visibility == "public");
+        // Opening is a public event, but only the open state travels — never the contents. (#4)
+        var openFact = Assert.Single(harness.Sink.Payloads<PublicFactDeliveredPayload>(TraceEventType.PublicFactDelivered));
+        Assert.Equal("open_container", openFact.SourceEvent);
+        Assert.DoesNotContain(Potion, openFact.Fact, StringComparison.Ordinal);
+        // No public knowledge delivery from the opening ever carried the contents.
+        Assert.All(
+            harness.Sink.Payloads<KnowledgeFactLearnedPayload>(TraceEventType.KnowledgeFactLearned)
+                .Where(p => p.Visibility == "public"),
+            p => Assert.DoesNotContain(Potion, p.Description, StringComparison.Ordinal));
     }
 
     [Fact]
@@ -274,8 +287,11 @@ public sealed class KnowledgeOrchestrationTests
         Assert.False(HasContentsRecord(harness.Ledger, TestWorld.ElaraId, TestWorld.MedicineCaseId));
 
         // Step 8–9: Rowan removes the potion, and the visible removal becomes public knowledge for all.
+        // (The opening a turn earlier was a public event too, so single out the removal.)
         await harness.RunTurn("Rowan", 2, 6);
-        Assert.Single(harness.Sink.Payloads<PublicFactDeliveredPayload>(TraceEventType.PublicFactDelivered));
+        Assert.Contains(
+            harness.Sink.Payloads<PublicFactDeliveredPayload>(TraceEventType.PublicFactDelivered),
+            f => f.SourceEvent == "take_item" && f.Fact.Contains(Potion, StringComparison.Ordinal));
         foreach (var id in new[] { TestWorld.RowanId, TestWorld.ElaraId, TestWorld.VarkId, TestWorld.SkritId })
         {
             Assert.True(HasRemovalRecord(harness.Ledger, id), $"{id} should have learned of the public removal.");

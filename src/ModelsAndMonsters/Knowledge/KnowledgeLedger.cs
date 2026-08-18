@@ -141,6 +141,31 @@ public sealed class KnowledgeLedger
     }
 
     /// <summary>
+    /// A public container-opened fact: a container was opened in plain view of the room. Anyone present can
+    /// see the lid is up — unlike the contents, which stay private to whoever looked inside. Keyed by
+    /// container and the world version at which it was opened, so a container yields one such fact.
+    /// </summary>
+    public FactResult GetOrAddOpenedFact(string subjectId, string subjectName, int worldVersion)
+    {
+        var id = $"{subjectId}-opened-wv{worldVersion}";
+        if (_facts.TryGetValue(id, out var existing))
+        {
+            return new FactResult(existing, WasCreated: false);
+        }
+
+        var fact = new KnowledgeFact
+        {
+            Id = id,
+            SubjectId = subjectId,
+            FactType = FactType.ContainerOpened,
+            Description = $"The {subjectName} has been opened.",
+            WorldVersion = worldVersion
+        };
+        _facts[id] = fact;
+        return new FactResult(fact, WasCreated: true);
+    }
+
+    /// <summary>
     /// Records that a character knows a fact. Returns the new record when this is genuinely new knowledge;
     /// null when the character already held it — in which case the caller should tell them they learned
     /// nothing new, and no duplicate record is created and the world version they first observed it at is

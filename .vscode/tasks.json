@@ -1,0 +1,35 @@
+{
+  // Build tasks used as preLaunchTasks by launch.json. Each builds one project (its project reference
+  // pulls in the core ModelsAndMonsters library).
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build-web",
+      "detail": "dotnet build the ASP.NET host (ModelsAndMonsters.Web)",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "build",
+        "${workspaceFolder}/src/ModelsAndMonsters.Web/ModelsAndMonsters.Web.csproj",
+        "/property:GenerateFullPaths=true",
+        "/consoleloggerparameters:NoSummary"
+      ],
+      "problemMatcher": "$msCompile",
+      "group": "build"
+    },
+    {
+      "label": "build-cli",
+      "detail": "dotnet build the console simulation (ModelsAndMonsters)",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "build",
+        "${workspaceFolder}/src/ModelsAndMonsters/ModelsAndMonsters.csproj",
+        "/property:GenerateFullPaths=true",
+        "/consoleloggerparameters:NoSummary"
+      ],
+      "problemMatcher": "$msCompile",
+      "group": "build"
+    }
+  ]
+}

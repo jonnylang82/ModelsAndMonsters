@@ -135,6 +135,12 @@ public sealed class MultiActorRunTests : IDisposable
                 MaxQuestionsPerTurn = 2,
                 MaxActionAttemptsPerTurn = 3,
                 MaxModelCallsPerTurn = 8,
+                // These scripted runs exercise the deterministic core in fixed turn order; the prose-fallback
+                // intent parser and the history summariser play no part (every scripted reply is a clean tool
+                // call, and the runs are short), and switching them off keeps the runner from asking the
+                // scripted factory for parser/summariser clients it has no script for.
+                UseIntentParser = false,
+                SummariseHistory = false,
                 RunOutputDirectory = _directory
             },
             Combat = new CombatOptions { GlancingBlowChance = 0 } // deterministic damage

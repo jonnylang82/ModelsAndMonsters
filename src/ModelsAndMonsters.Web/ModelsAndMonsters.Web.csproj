@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>ModelsAndMonsters.Web</RootNamespace>
+    <!-- Same id as the CLI, so an OpenAI/Anthropic key set via user-secrets is shared. -->
+    <UserSecretsId>models-and-monsters</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ModelsAndMonsters\ModelsAndMonsters.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Reuse the core app's configuration and prompt templates so the web host is self-contained. -->
+    <Content Include="..\ModelsAndMonsters\appsettings.json" Link="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\ModelsAndMonsters\scenario*.json" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\ModelsAndMonsters\Prompts\Templates\*.md" Link="Prompts\Templates\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

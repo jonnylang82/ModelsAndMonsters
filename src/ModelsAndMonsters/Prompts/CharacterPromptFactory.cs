@@ -18,10 +18,10 @@ public sealed class CharacterPromptFactory
     }
 
     /// <summary>
-    /// Builds the system prompt. When the full roster is supplied, the character is told who its allies
-    /// are by name — background knowledge a person plainly has about their own comrades — so a small
-    /// model does not lose track of its own side and strike a friend. Enemies are deliberately not named
-    /// here; a character still learns who opposes it through the Dungeon Master's narration.
+    /// Builds the system prompt. When the full roster is supplied, the character is told who fights at its
+    /// side and who it has come to fight, both by name — background a person plainly has walking in, so a
+    /// weaker model neither strikes a friend nor drifts into treating a named enemy as a companion. Naming
+    /// the enemy side reveals nothing hidden: who opposes whom is in plain sight from the first moment.
     /// </summary>
     public string CreateSystemPrompt(CharacterDefinition definition, IReadOnlyList<CharacterDefinition>? roster = null) =>
         _prompts.Render("character.system", new Dictionary<string, string?>
@@ -48,14 +48,16 @@ public sealed class CharacterPromptFactory
     }
 
     /// <summary>
-    /// Names the character's allies from the roster. This is who a person knows they came in with, not
-    /// something they must perceive, so it belongs in the standing system prompt. It never names enemies
-    /// or reveals anyone's mechanical state.
+    /// Names, from the roster, who fights at the character's side and who it has come to fight. Both are
+    /// background a person plainly has walking in — the enemy stands across the room in plain sight — so
+    /// both belong in the standing system prompt. Naming the enemy side, not only the allies, is what keeps
+    /// a weaker model from drifting into offering an enemy aid or comfort. It still never reveals anyone's
+    /// mechanical state, and the genuinely hidden things (a case's contents) stay hidden.
     /// </summary>
     private static string FormatAllies(CharacterDefinition self, IReadOnlyList<CharacterDefinition>? roster)
     {
         const string alone =
-            "You have no companions in this fight. Everyone else here stands against you.";
+            "You have no companions in this fight. Everyone else here stands against you — offer them no aid.";
 
         if (roster is null || roster.Count == 0)
         {
@@ -63,23 +65,42 @@ public sealed class CharacterPromptFactory
         }
 
         var myTeam = EffectiveTeam(self);
-        var allies = roster
-            .Where(c => !string.Equals(c.Id, self.Id, StringComparison.OrdinalIgnoreCase)
-                        && string.Equals(EffectiveTeam(c), myTeam, StringComparison.OrdinalIgnoreCase))
+        var others = roster
+            .Where(c => !string.Equals(c.Id, self.Id, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var allies = others
+            .Where(c => string.Equals(EffectiveTeam(c), myTeam, StringComparison.OrdinalIgnoreCase))
+            .Select(c => c.Name)
+            .ToList();
+        var enemies = others
+            .Where(c => !string.Equals(EffectiveTeam(c), myTeam, StringComparison.OrdinalIgnoreCase))
             .Select(c => c.Name)
             .ToList();
 
-        if (allies.Count == 0)
+        var builder = new StringBuilder();
+
+        builder.Append(allies.Count > 0
+            ? $"{NaturalJoin(allies)} {(allies.Count == 1 ? "fights" : "fight")} at your side — " +
+              $"{(allies.Count == 1 ? "an ally" : "allies")} sworn to the same cause as you. Never raise a weapon " +
+              "against them, whatever the confusion of the moment."
+            : "You have no companions in this fight.");
+
+        if (enemies.Count > 0)
         {
-            return alone;
+            var single = enemies.Count == 1;
+            builder.Append(' ');
+            builder.Append(
+                $"{NaturalJoin(enemies)} {(single ? "is your enemy" : "are your enemies")} — " +
+                $"{(single ? "the one" : "the ones")} you have come to fight. They are not your " +
+                $"{(single ? "friend" : "friends")}, whatever they may say; offer them no aid, comfort or " +
+                "reassurance, and never mistake an enemy for a companion.");
+        }
+        else
+        {
+            builder.Append(" Everyone else in this room is an enemy you have come to fight — offer them no aid.");
         }
 
-        var single = allies.Count == 1;
-        return
-            $"{NaturalJoin(allies)} {(single ? "fights" : "fight")} at your side — {(single ? "an ally" : "allies")} " +
-            "sworn to the same cause as you. Never raise a weapon against " +
-            $"{(single ? "them" : "them")}, whatever the confusion of the moment. Everyone else in this room is " +
-            "an enemy you have come to fight.";
+        return builder.ToString();
     }
 
     private static string EffectiveTeam(CharacterDefinition definition)

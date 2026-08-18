@@ -36,6 +36,8 @@ public sealed class TurnCoordinator
     private readonly ExperimentTrace _trace;
     private readonly IGameConsole _console;
     private readonly HarnessOptions _limits;
+    private readonly IntentParser? _intentParser;
+    private readonly HistorySummariser? _summariser;
 
     /// <summary>
     /// The acting character's information view for the adjudication currently in flight, so the ruling can
@@ -53,7 +55,9 @@ public sealed class TurnCoordinator
         KnowledgeLedger knowledge,
         ExperimentTrace trace,
         IGameConsole console,
-        HarnessOptions limits)
+        HarnessOptions limits,
+        IntentParser? intentParser = null,
+        HistorySummariser? summariser = null)
     {
         _engine = engine;
         _dungeonMaster = dungeonMaster;
@@ -64,6 +68,8 @@ public sealed class TurnCoordinator
         _trace = trace;
         _console = console;
         _limits = limits;
+        _intentParser = intentParser;
+        _summariser = summariser;
     }
 
     // -----------------------------------------------------------------------------------------
@@ -166,6 +172,11 @@ public sealed class TurnCoordinator
                 : string.Join("\n\n", pendingNarration.Select(n => n.Text))
         }));
 
+        // Where this character's history stands now, with the turn's context injected but before any reply.
+        // When the turn resolves, everything after this mark is compacted back to the clean calls, so the
+        // failed prose replies and nudges a turn accumulates do not pile up and fill the context window later.
+        var historyMark = character.MarkHistory();
+
         _trace.Emit(TraceEventType.TurnStarted, new TurnStartedPayload
         {
             CharacterId = character.CharacterId,
@@ -197,65 +208,29 @@ public sealed class TurnCoordinator
             var calls = ModelAgent.GetToolCalls(response);
             if (calls.Count == 0)
             {
-                // No tool call has two very different causes: the model ignored its protocol, or it
-                // ran out of output budget mid-reply. They need different nudges and, more
-                // importantly, they must not be confused with each other in the trace.
+                // No tool call has two very different causes: the model ignored its protocol, or it ran out
+                // of output budget mid-reply. A truncated reply may be incomplete, so it is never parsed.
                 var truncated = ModelAgent.WasTruncated(response);
 
-                // A character may write a spoken line as prose ("I shout: \"Vark! decide now…\"") instead of
-                // calling say. We never put those inferred words in its mouth and broadcast them; instead we
-                // record the attempt — so a report does not read it as silence — and nudge it to call say
-                // properly. Checked before recovery, so a prose say is never silently delivered.
-                var spokenAttempt = ModelText.TryExtractSpokenAttempt(ModelText.Clean(response));
-                if (spokenAttempt is not null)
+                if (!truncated && _intentParser is not null && _limits.UseIntentParser)
                 {
-                    _trace.Emit(TraceEventType.UnstructuredSpeechAttempt, new UnstructuredSpeechAttemptPayload
-                    {
-                        CharacterId = character.CharacterId,
-                        CharacterName = character.Name,
-                        AttemptedText = spokenAttempt,
-                        WasTruncated = truncated
-                    }, character.Name);
-
-                    _console.Notice($"{character.Name} tried to speak in prose; nudged to call say().");
-                    character.AppendNudge(_prompts.Render("character.speech-retry"));
-                    continue;
+                    // Prose-fallback: read the reply into the say/ask/act calls it implies and dispatch them
+                    // as if the character had made them — one reply can carry a spoken line AND an action, so
+                    // the turn resolves in one pass instead of a nudge loop. Always yields at least one call.
+                    calls = await ParseProseIntoCallsAsync(character, response, cancellationToken).ConfigureAwait(false);
                 }
-
-                // A model may understand the protocol but write the call as prose rather than calling
-                // it. When recovery is enabled, salvage that call and dispatch it as if it had been made,
-                // rather than nudging. Truncated replies are never recovered — they may be incomplete.
-                var recovered = !truncated && _limits.RecoverTextToolCalls
-                    ? TryRecoverCharacterToolCall(character, response)
-                    : null;
-
-                if (recovered is null)
+                else
                 {
-                    _trace.Emit(TraceEventType.ToolCallError, new ToolCallErrorPayload
+                    // Parser off, or a truncated reply: record a prose speech attempt and nudge, recover a
+                    // prose tool call, or nudge for a clean one. Null means the character was nudged — ask again.
+                    var recovered = TryRecoverOrNudge(character, response, truncated);
+                    if (recovered is null)
                     {
-                        AgentName = character.Name,
-                        ToolName = "(none)",
-                        Error = truncated
-                            ? "Character's reply was truncated at the output-token limit before any tool call was produced."
-                            // Naming the finish reason covers the other ways a reply can end early, such as
-                            // a provider content filter, without needing a case for each.
-                            : $"Character responded without calling ask_dm, take_action or end_turn " +
-                              $"(finish reason: {response.FinishReason?.Value ?? "none reported"})."
-                    });
-
-                    if (truncated)
-                    {
-                        _console.Notice(
-                            $"{character.Name}'s reply hit the output-token limit. " +
-                            "Consider raising MaxOutputTokens for that agent.");
+                        continue;
                     }
 
-                    character.AppendNudge(_prompts.Render(truncated ? "character.truncated" : "character.nudge"));
-                    continue;
+                    calls = [recovered];
                 }
-
-                // Fall through with the recovered call in hand, dispatched exactly like a real one.
-                calls = [recovered];
             }
 
             var turnEnded = false;
@@ -372,6 +347,17 @@ public sealed class TurnCoordinator
             {
                 break;
             }
+        }
+
+        // The turn is over: shed the failed prose replies and nudges it took to get here, keeping the clean
+        // tool calls and their results. The full exchange, including every discarded attempt, stays in the trace.
+        character.CompactTurnHistory(historyMark);
+
+        // Then, if the character's history has grown past budget, fold its older turns into a running summary
+        // so a long fight does not fill the context window with legitimate history the prune cannot touch.
+        if (_summariser is not null && _limits.SummariseHistory)
+        {
+            await MaybeSummariseHistoryAsync(character, cancellationToken).ConfigureAwait(false);
         }
 
         var result = new TurnResult
@@ -992,9 +978,10 @@ public sealed class TurnCoordinator
     }
 
     /// <summary>
-    /// Opening a container. The room is told only that it was opened; the opener alone directly observes
-    /// its current contents, recorded as private <c>OpenedContainer</c> knowledge and delivered as a
-    /// private observation. Being open does not make the contents public.
+    /// Opening a container. The act is public — everyone present sees the lid go up, so every living
+    /// character learns the container is open as a public fact. Its contents are a separate matter: the
+    /// opener alone directly observes them, recorded as private <c>OpenedContainer</c> knowledge and
+    /// delivered as a private observation. Being open does not make the contents public.
     /// </summary>
     private async Task<string> DeliverContainerOpenedAsync(CharacterAgent character, OpenContainerOutcome outcome, CancellationToken cancellationToken)
     {
@@ -1004,8 +991,29 @@ public sealed class TurnCoordinator
         RecordPublicNarration("container-opened", stateAfterText, outcome.Summary, publicNarration, character);
         _console.DungeonMaster(publicNarration);
 
-        // The opener directly observes the current contents, at the post-open world version.
         var worldVersion = _engine.State.Version;
+
+        // Opening is a public act: everyone present can see the lid is up, so every living character learns
+        // the container is open. The contents are not part of this fact — only the opener observes those.
+        var openedFact = _knowledge.GetOrAddOpenedFact(outcome.ContainerId, outcome.ContainerName, worldVersion);
+        TraceFactCreatedIfNew(openedFact, KnowledgeSource.PublicEvent, "open_container", character.Name);
+        var openRecipients = LivingRecipients();
+        foreach (var recipientId in openRecipients)
+        {
+            var name = _engine.State.FindById(recipientId)?.Name ?? recipientId;
+            LearnAndTrace(recipientId, name, openedFact.Fact, KnowledgeSource.PublicEvent, worldVersion,
+                "public", openRecipients, "open_container");
+        }
+        _trace.Emit(TraceEventType.PublicFactDelivered, new PublicFactDeliveredPayload
+        {
+            Fact = openedFact.Fact.Description,
+            Recipients = openRecipients,
+            RelatedFactIds = [openedFact.Fact.Id],
+            WorldVersion = worldVersion,
+            SourceEvent = "open_container"
+        });
+
+        // The opener directly observes the current contents, at the post-open world version.
         var container = FindContainer(outcome.ContainerId);
         var contents = container is null ? [] : container.Contents;
         var fact = _knowledge.GetOrAddContentsFact(outcome.ContainerId, outcome.ContainerName, contents, worldVersion);
@@ -1525,6 +1533,152 @@ public sealed class TurnCoordinator
             ToolName = call.Name,
             Result = result
         });
+    }
+
+    /// <summary>
+    /// The fallback for a reply that carried no tool call, used when the intent parser is off or the reply
+    /// was truncated: record a prose speech attempt and nudge for say, recover a tool call written as prose
+    /// when that is enabled, or nudge for a clean call (distinguishing a truncated reply). Returns the call
+    /// to dispatch, or null when the character was nudged and the turn loop should ask it again.
+    /// </summary>
+    private FunctionCallContent? TryRecoverOrNudge(CharacterAgent character, ChatResponse response, bool truncated)
+    {
+        // A character may write a spoken line as prose ("I shout: \"Vark! decide now…\"") instead of calling
+        // say. We never put those inferred words in its mouth and broadcast them; instead we record the
+        // attempt — so a report does not read it as silence — and nudge it to call say properly.
+        var spokenAttempt = ModelText.TryExtractSpokenAttempt(ModelText.Clean(response));
+        if (spokenAttempt is not null)
+        {
+            _trace.Emit(TraceEventType.UnstructuredSpeechAttempt, new UnstructuredSpeechAttemptPayload
+            {
+                CharacterId = character.CharacterId,
+                CharacterName = character.Name,
+                AttemptedText = spokenAttempt,
+                WasTruncated = truncated
+            }, character.Name);
+
+            _console.Notice($"{character.Name} tried to speak in prose; nudged to call say().");
+            character.AppendNudge(_prompts.Render("character.speech-retry"));
+            return null;
+        }
+
+        // A model may understand the protocol but write the call as prose. When recovery is enabled, salvage
+        // that call rather than nudging. Truncated replies are never recovered — they may be incomplete.
+        var recovered = !truncated && _limits.RecoverTextToolCalls
+            ? TryRecoverCharacterToolCall(character, response)
+            : null;
+
+        if (recovered is null)
+        {
+            _trace.Emit(TraceEventType.ToolCallError, new ToolCallErrorPayload
+            {
+                AgentName = character.Name,
+                ToolName = "(none)",
+                Error = truncated
+                    ? "Character's reply was truncated at the output-token limit before any tool call was produced."
+                    // Naming the finish reason covers the other ways a reply can end early, such as a
+                    // provider content filter, without needing a case for each.
+                    : $"Character responded without calling ask_dm, take_action or end_turn " +
+                      $"(finish reason: {response.FinishReason?.Value ?? "none reported"})."
+            });
+
+            if (truncated)
+            {
+                _console.Notice(
+                    $"{character.Name}'s reply hit the output-token limit. " +
+                    "Consider raising MaxOutputTokens for that agent.");
+            }
+
+            character.AppendNudge(_prompts.Render(truncated ? "character.truncated" : "character.nudge"));
+            return null;
+        }
+
+        return recovered;
+    }
+
+    /// <summary>
+    /// Reads a prose reply through the intent parser into the say/ask/take_action calls it implies, orders
+    /// speech and questions before the turn-ending action, and swaps the character's prose reply for those
+    /// calls so the history carries structure rather than the discarded prose. When the parser finds nothing
+    /// callable, the whole reply is treated as a single take_action so the turn still progresses. Always
+    /// returns at least one call.
+    /// </summary>
+    private async Task<IReadOnlyList<FunctionCallContent>> ParseProseIntoCallsAsync(
+        CharacterAgent character, ChatResponse response, CancellationToken cancellationToken)
+    {
+        var prose = ModelText.Clean(response);
+        var parsed = await _intentParser!.ParseAsync(prose, cancellationToken).ConfigureAwait(false);
+
+        // Speak and ask before the action that ends the turn, whatever order the parser emitted them in.
+        var ordered = parsed
+            .OrderBy(call => call.Name is CharacterTools.TakeActionName or CharacterTools.EndTurnName ? 1 : 0)
+            .ToList();
+
+        if (ordered.Count == 0)
+        {
+            // Nothing callable was found — treat the words as a single action so the turn resolves rather
+            // than looping. The reply was non-empty prose, so there is something to attempt.
+            ordered =
+            [
+                new FunctionCallContent(
+                    Guid.NewGuid().ToString("N"),
+                    CharacterTools.TakeActionName,
+                    new Dictionary<string, object?> { [CharacterTools.IntentParameter] = prose })
+            ];
+        }
+
+        _trace.Emit(TraceEventType.IntentParsed, new IntentParsedPayload
+        {
+            CharacterId = character.CharacterId,
+            CharacterName = character.Name,
+            Prose = prose,
+            ExtractedCalls = [.. ordered.Select(call => call.Name)]
+        });
+
+        // Swap the prose reply for the structured calls, so the tool results that follow have matching calls
+        // in the history and the resolved turn carries no discarded prose. The original prose stays in the trace.
+        character.ReplaceLastReplyWithToolCalls(ordered);
+        return ordered;
+    }
+
+    /// <summary>
+    /// Folds a character's older turns into a running summary once its estimated history exceeds the budget,
+    /// keeping the most recent turns verbatim. A no-op when the history is small enough or there is nothing
+    /// older to fold; an empty recap leaves the history untouched rather than dropping it.
+    /// </summary>
+    private async Task MaybeSummariseHistoryAsync(CharacterAgent character, CancellationToken cancellationToken)
+    {
+        var before = character.EstimateHistoryTokens();
+        if (before <= _limits.HistoryTokenBudget)
+        {
+            return;
+        }
+
+        if (!character.TryPlanHistorySummary(_limits.RecentTurnsKeptFull, out var boundary, out var olderHistory))
+        {
+            return;
+        }
+
+        var recap = await _summariser!.SummariseAsync(olderHistory, cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(recap))
+        {
+            // A blank recap would lose the older history for nothing — leave it in place and try again later.
+            return;
+        }
+
+        character.ApplyHistorySummary(boundary, $"Earlier in this fight, what you remember: {recap}");
+
+        var after = character.EstimateHistoryTokens();
+        _trace.Emit(TraceEventType.HistorySummarised, new HistorySummarisedPayload
+        {
+            CharacterId = character.CharacterId,
+            CharacterName = character.Name,
+            EstimatedTokensBefore = before,
+            EstimatedTokensAfter = after,
+            Summary = recap
+        });
+
+        _console.Notice($"{character.Name}'s older memories were summarised (~{before} → ~{after} tokens).");
     }
 
     private void RecordDungeonMasterToolResult(FunctionCallContent call, object? result)

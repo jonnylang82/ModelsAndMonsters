@@ -770,25 +770,30 @@ public sealed class ModelConfigurationTests
     }
 
     [Fact]
-    public void A_character_system_prompt_names_its_allies_and_warns_against_striking_them()
+    public void A_character_system_prompt_names_both_its_allies_and_its_enemies()
     {
         var library = PromptLibrary.LoadFromDirectory(Path.Combine(AppContext.BaseDirectory, "Prompts", "Templates"));
         var factory = new CharacterPromptFactory(library);
         var roster = TestWorld.TwoVsTwoScenario().Characters; // minimal personas that never name other characters
 
         var skrit = factory.CreateSystemPrompt(roster.First(c => c.Name == "Skrit"), roster);
-        // Skrit's one ally is the captain, Vark — named, with an explicit warning not to strike him.
+        // Skrit's ally Vark is named, with an explicit warning not to strike him...
         Assert.Contains("Vark", skrit, StringComparison.Ordinal);
         Assert.Contains("fights at your side", skrit, StringComparison.Ordinal);
         Assert.Contains("Never raise a weapon against", skrit, StringComparison.Ordinal);
-        // Enemies are not named as allies (and are not pre-named in the prompt at all here).
-        Assert.DoesNotContain("Rowan", skrit, StringComparison.Ordinal);
-        Assert.DoesNotContain("Elara", skrit, StringComparison.Ordinal);
+        // ...and his enemies Rowan and Elara are named too, with a warning not to give them aid — so a
+        // weaker model does not drift into treating an enemy as a companion.
+        Assert.Contains("Rowan", skrit, StringComparison.Ordinal);
+        Assert.Contains("Elara", skrit, StringComparison.Ordinal);
+        Assert.Contains("are your enemies", skrit, StringComparison.Ordinal);
+        Assert.Contains("offer them no aid", skrit, StringComparison.Ordinal);
 
+        // Rowan sees the mirror image: Elara at his side, Vark and Skrit named as his enemies.
         var rowan = factory.CreateSystemPrompt(roster.First(c => c.Name == "Rowan"), roster);
-        Assert.Contains("Elara", rowan, StringComparison.Ordinal); // Rowan's ally
-        Assert.DoesNotContain("Vark", rowan, StringComparison.Ordinal);
-        Assert.DoesNotContain("Skrit", rowan, StringComparison.Ordinal);
+        Assert.Contains("Elara", rowan, StringComparison.Ordinal);
+        Assert.Contains("Vark", rowan, StringComparison.Ordinal);
+        Assert.Contains("Skrit", rowan, StringComparison.Ordinal);
+        Assert.Contains("are your enemies", rowan, StringComparison.Ordinal);
 
         // With no roster (the v0.1 path), a character is simply told it stands alone.
         var solo = factory.CreateSystemPrompt(roster[0]);

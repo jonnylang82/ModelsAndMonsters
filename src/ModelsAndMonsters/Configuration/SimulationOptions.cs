@@ -248,5 +248,33 @@ public sealed class HarnessOptions
     /// </summary>
     public bool RecoverTextToolCalls { get; set; }
 
+    /// <summary>
+    /// When true, a non-truncated character reply that carries no structured tool call is handed to a
+    /// stateless, zero-temperature intent parser that reads the prose into the say / ask_dm / take_action
+    /// calls it implies — one reply can yield several (a spoken line AND an action), so the turn resolves in
+    /// one pass instead of nudging the character to reformat one call at a time. Supersedes the
+    /// <see cref="RecoverTextToolCalls"/> recovery and the speech-retry nudge for those replies; a truncated
+    /// reply is still nudged, never parsed. Every parse is traced.
+    /// </summary>
+    public bool UseIntentParser { get; set; } = true;
+
+    /// <summary>
+    /// When true, a character whose estimated history exceeds <see cref="HistoryTokenBudget"/> has its older
+    /// turns folded into a running summary, keeping only the last <see cref="RecentTurnsKeptFull"/> turns in
+    /// full. Stops a long fight filling the context window with legitimate (non-cruft) history that the
+    /// per-turn prune cannot touch; the recent turns stay verbatim so immediate continuity is intact. Every
+    /// summarisation is traced.
+    /// </summary>
+    public bool SummariseHistory { get; set; } = true;
+
+    /// <summary>
+    /// The estimated request-token size, per character, past which older turns are summarised. Set well below
+    /// the context window so a trim happens before the provider starts silently discarding history.
+    /// </summary>
+    public int HistoryTokenBudget { get; set; } = 5500;
+
+    /// <summary>How many of a character's most recent turns are kept verbatim when older ones are summarised.</summary>
+    public int RecentTurnsKeptFull { get; set; } = 2;
+
     public string RunOutputDirectory { get; set; } = "runs";
 }

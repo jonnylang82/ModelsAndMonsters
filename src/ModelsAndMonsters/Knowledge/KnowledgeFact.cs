@@ -1,8 +1,8 @@
 namespace ModelsAndMonsters.Knowledge;
 
 /// <summary>
-/// What a knowledge fact is about. Deliberately tiny — v0.4 has exactly three kinds of discoverable
-/// fact and no general ontology, inference engine or confidence scoring.
+/// What a knowledge fact is about. Deliberately tiny — a handful of discoverable kinds, with no general
+/// ontology, inference engine or confidence scoring.
 /// </summary>
 public enum FactType
 {
@@ -11,6 +11,12 @@ public enum FactType
 
     /// <summary>What a container held at a particular world version. A historical observation, not a live view.</summary>
     ContainerContents,
+
+    /// <summary>
+    /// A container was opened in plain view. Its open state is public — known to the whole room — even though
+    /// what it holds stays private to whoever actually looked inside.
+    /// </summary>
+    ContainerOpened,
 
     /// <summary>A publicly observable transfer: a named, identifiable item was removed and is now carried.</summary>
     ItemRemoved

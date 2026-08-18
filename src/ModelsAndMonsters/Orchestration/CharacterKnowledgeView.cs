@@ -117,6 +117,7 @@ public static class CharacterKnowledgeView
             KnowledgeSource.OpenedContainer => $"{fact.Description} You saw this yourself when you opened it — though that was a moment ago, and it may have changed since.",
             _ => $"{fact.Description} You saw this when you looked inside — it may have changed since."
         },
+        FactType.ContainerOpened => $"{fact.Description} You saw it happen — though what is inside it you know only if you looked.",
         FactType.ItemRemoved => $"{fact.Description} You saw it happen.",
         _ => fact.Description
     };

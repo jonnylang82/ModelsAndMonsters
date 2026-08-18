@@ -1,0 +1,56 @@
+{
+  // Debug configurations for Models & Monsters.
+  //   • "API + UI"      — runs the ASP.NET host (:5170) and the Vite dev server (:5173) together.
+  //   • "CLI (console)" — runs the console simulation in the integrated terminal.
+  // Needs the C# / C# Dev Kit extension (for "coreclr") and VS Code's built-in JS debugger (for "node-terminal").
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "API",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build-web",
+      "program": "${workspaceFolder}/src/ModelsAndMonsters.Web/bin/Debug/net10.0/ModelsAndMonsters.Web.dll",
+      "args": [],
+      // Content root is AppContext.BaseDirectory, so cwd only decides where the runs/ folder lands —
+      // keep it at the web project so runs sit next to the ones the CLI/dotnet-run produce.
+      "cwd": "${workspaceFolder}/src/ModelsAndMonsters.Web",
+      "stopAtEntry": false,
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "DOTNET_ENVIRONMENT": "Development"
+      }
+    },
+    {
+      "name": "UI (Vite)",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "npm run dev",
+      "cwd": "${workspaceFolder}/src/ModelsAndMonsters.Web/client",
+      // Opens the browser on the UI once Vite reports it is listening. Delete this block to launch without it.
+      "serverReadyAction": {
+        "action": "openExternally",
+        "pattern": "Local:\\s+(https?://\\S+)"
+      }
+    },
+    {
+      "name": "CLI (console)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build-cli",
+      "program": "${workspaceFolder}/src/ModelsAndMonsters/bin/Debug/net10.0/ModelsAndMonsters.dll",
+      // Pass scenario/model overrides here if you want, e.g. ["--scenario", "scenario.json"].
+      "args": [],
+      "cwd": "${workspaceFolder}/src/ModelsAndMonsters",
+      "console": "integratedTerminal",
+      "stopAtEntry": false
+    }
+  ],
+  "compounds": [
+    {
+      "name": "API + UI",
+      "configurations": ["API", "UI (Vite)"],
+      "stopAll": true
+    }
+  ]
+}

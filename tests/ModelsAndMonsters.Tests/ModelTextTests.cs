@@ -78,6 +78,11 @@ public sealed class ModelTextTests
     [InlineData("say \"Elara, get behind me now\"", "Elara, get behind me now")]
     [InlineData("Skrit yells, \"We must seize the moment before Rowan moves\"", "We must seize the moment before Rowan moves")]
     [InlineData("I whisper to her: “Stay close and watch the captain”", "Stay close and watch the captain")]
+    // Real qwen shapes from live runs: the speech verb sits a clause before the quote (or after it) rather
+    // than immediately against it, and a bare vocative carries no speech verb at all — both were dropped
+    // silently before the detector was broadened.
+    [InlineData("I shout to rally my companions, then move in with my spear. \"Vark is hurt badly, but he can still fight!\" I shout.", "Vark is hurt badly, but he can still fight!")]
+    [InlineData("I am in pain and can't move much. \"Rowan, keep Vark busy! Skrit, I'm coming for you!\"", "Rowan, keep Vark busy! Skrit, I'm coming for you!")]
     public void An_attempted_spoken_line_in_prose_is_extracted(string text, string expected) =>
         Assert.Equal(expected, ModelText.TryExtractSpokenAttempt(text));
 
@@ -88,6 +93,9 @@ public sealed class ModelTextTests
     [InlineData("take_action(\"I bring my sword down on the goblin\")")]
     [InlineData("ask_dm(\"Is the goblin wounded?\")")]
     [InlineData("I swing my axe and yell \"Die!\"")]
+    // A first-person action written in quotes, with no speech verb and no one addressed by name, is an
+    // action attempt (or a prose intent), not speech — the leading-vocative rule must not catch it.
+    [InlineData("\"I bring my sword down on the goblin's shoulder\"")]
     [InlineData("")]
     [InlineData(null)]
     public void Non_speech_prose_is_not_mistaken_for_a_spoken_line(string? text) =>

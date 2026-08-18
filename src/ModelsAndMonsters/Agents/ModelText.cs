@@ -209,6 +209,10 @@ public static partial class ModelText
             return null;
         }
 
+        // A speech verb anywhere in the reply is a strong sign the character was talking, wherever it sits
+        // relative to the quote — models write both "I shout … 'line'" and "'line' … I shout".
+        var hasSpeechVerb = SpeechVerb().IsMatch(cleaned);
+
         foreach (Match match in QuotedSpan().Matches(cleaned))
         {
             var utterance = match.Groups[1].Value.Trim();
@@ -218,9 +222,18 @@ public static partial class ModelText
                 continue;
             }
 
+            // A tool call written as prose — take_action("…"), ask_dm("…") — has its own recovery path and
+            // is not loose speech; leave those to TryRecoverCharacterToolCall rather than nudging to say.
             var before = cleaned[..match.Index];
             var tail = before.Length <= 40 ? before : before[^40..];
-            if (SpeechVerb().IsMatch(tail))
+            if (ToolCallLead().IsMatch(tail))
+            {
+                continue;
+            }
+
+            // Speech when the reply uses a speech verb, or the quoted line opens by naming who it is aimed
+            // at ("Rowan, keep Vark busy") — a bare vocative a character would only ever say aloud.
+            if (hasSpeechVerb || LeadingVocative().IsMatch(utterance))
             {
                 return utterance;
             }
@@ -233,12 +246,22 @@ public static partial class ModelText
     [GeneratedRegex("[\"“”]([^\"“”]{3,})[\"“”]")]
     private static partial Regex QuotedSpan();
 
-    // A speech verb close to (immediately before) an opening quote — the strong signal that a quote is an
-    // utterance the character meant to say, not incidental quoted text.
+    // A speech verb anywhere in the reply — the signal that a quoted span is an utterance meant to be said,
+    // not incidental quoted text. Deliberately not anchored to the quote: the verb often sits a clause away.
     [GeneratedRegex(
-        @"\b(say|says|said|shout|shouts|shouted|yell|yells|yelled|call|calls|called|cry|cries|cried|tell|tells|told|whisper|whispers|whispered|hiss|hisses|hissed|snarl|snarls|snarled|growl|growls|growled|bark|barks|barked|roar|roars|roared|declare|declares|announce|announces)\b[^“”""]{0,25}$",
+        @"\b(say|says|said|shout|shouts|shouted|yell|yells|yelled|call|calls|called|cry|cries|cried|tell|tells|told|whisper|whispers|whispered|hiss|hisses|hissed|snarl|snarls|snarled|growl|growls|growled|bark|barks|barked|roar|roars|roared|declare|declares|announce|announces)\b",
         RegexOptions.IgnoreCase)]
     private static partial Regex SpeechVerb();
+
+    // A tool call written as prose right before a quote — its quoted argument is an intent, not speech.
+    [GeneratedRegex(
+        @"\b(take_action|ask_dm|use_item|inspect_object|open_container|take_item|end_turn)\b\W{0,4}$",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex ToolCallLead();
+
+    // A quoted line that opens by addressing someone by name — "Rowan, …" — which a character only says aloud.
+    [GeneratedRegex(@"^[A-Z][a-zA-Z]+,")]
+    private static partial Regex LeadingVocative();
 
     /// <summary>
     /// Returns the assistant's prose. Reasoning models that emit literal think blocks in their text

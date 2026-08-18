@@ -261,4 +261,25 @@ public sealed class KnowledgeModelTests
         Assert.Contains("healing potion", rowanView, StringComparison.OrdinalIgnoreCase);
         Assert.Empty(ledger.RecordsFor(TestWorld.RowanId));
     }
+
+    [Fact]
+    public void A_public_open_fact_is_known_to_a_non_opener_but_its_contents_are_not()
+    {
+        var ledger = new KnowledgeLedger();
+        var state = TestWorld.TwoCasesState();
+
+        // Elara opened the case: the open state is a public event Rowan sees; the contents are hers alone.
+        var opened = ledger.GetOrAddOpenedFact(TestWorld.MedicineCaseId, "Faded Shrine Medicine Case", worldVersion: 3);
+        ledger.Learn(TestWorld.RowanId, opened.Fact.Id, KnowledgeSource.PublicEvent, 2, 5, 3);
+        var contents = ledger.GetOrAddContentsFact(TestWorld.MedicineCaseId, "Faded Shrine Medicine Case", [TestWorld.HealingPotion()], worldVersion: 3);
+        ledger.Learn(TestWorld.ElaraId, contents.Fact.Id, KnowledgeSource.OpenedContainer, 2, 5, 3);
+
+        var rowanView = CharacterKnowledgeView.RenderForDungeonMaster(
+            TestWorld.RowanId, "Rowan", ledger, new NarrationLog(), state);
+
+        // Rowan, who did not open it, still knows the case stands open — but never what is inside. This is
+        // what stops the DM answering "the lid is shut" to someone who watched it thrown open.
+        Assert.Contains("has been opened", rowanView, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Small Healing Potion", rowanView, StringComparison.Ordinal);
+    }
 }

@@ -317,6 +317,41 @@ public sealed record UnstructuredSpeechAttemptPayload
     public required bool WasTruncated { get; init; }
 }
 
+/// <summary>
+/// The intent parser's reading of a prose reply: the character's raw words and the tool calls extracted from
+/// them, so the parse can be audited against what the character actually wrote.
+/// </summary>
+public sealed record IntentParsedPayload
+{
+    public required string CharacterId { get; init; }
+
+    public required string CharacterName { get; init; }
+
+    /// <summary>The character's raw prose, exactly as the parser received it.</summary>
+    public required string Prose { get; init; }
+
+    /// <summary>The tool calls the parser produced, in dispatch order (say/ask before the turn-ending action).</summary>
+    public required IReadOnlyList<string> ExtractedCalls { get; init; }
+}
+
+/// <summary>
+/// A character's older history was compressed into a running summary. Carries the estimated token size before
+/// and after and the summary text, so the compression and its effect on context size can be audited.
+/// </summary>
+public sealed record HistorySummarisedPayload
+{
+    public required string CharacterId { get; init; }
+
+    public required string CharacterName { get; init; }
+
+    public required int EstimatedTokensBefore { get; init; }
+
+    public required int EstimatedTokensAfter { get; init; }
+
+    /// <summary>The recap that replaced the older turns.</summary>
+    public required string Summary { get; init; }
+}
+
 public sealed record ToolCallErrorPayload
 {
     public required string AgentName { get; init; }

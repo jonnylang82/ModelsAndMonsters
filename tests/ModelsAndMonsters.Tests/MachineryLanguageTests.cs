@@ -23,6 +23,11 @@ public sealed class MachineryLanguageTests
     [InlineData("That is not a supported action in this world.")]
     [InlineData("You must land a direct hit to resolve the encounter.")]
     [InlineData("Shoving is not a permitted action here.")]
+    // Take/container mechanics leaked in a live run's refusals: the one-at-a-time rule, "a separate action",
+    // the open-before-take precondition, and "you can only act on what you know is there".
+    [InlineData("You cannot snatch a specific item from a container without first opening it, and even then you must take one item at a time.")]
+    [InlineData("That is a separate action from opening or securing the container.")]
+    [InlineData("You can only act on things you know are there, and the potion remains hidden from your sight.")]
     public void Machinery_language_is_detected(string text) =>
         Assert.True(MachineryLanguage.IsLeak(text));
 

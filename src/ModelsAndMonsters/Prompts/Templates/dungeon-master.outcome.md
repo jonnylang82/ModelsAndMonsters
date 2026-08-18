@@ -17,6 +17,8 @@ Narrate {{actor}}'s action as it happens:
 - If it was a solid hit, show the blow landing hard and its effect.
 - For an item, show {{actor}} using it.
 
+**Match the wound to how hurt they now are, not to the blow alone.** The state above gives each character a condition in words — unhurt, lightly wounded, wounded, badly wounded, barely standing. Pitch the wound to the target's condition after this blow and never worse than it: a *lightly wounded* target takes a shallow cut or a bruise, not a grievous or crippling one; only someone *barely standing* is near falling. A small blow on an all-but-unhurt fighter is a small blow — a nick, a graze — however solidly it landed.
+
 **Narrate only the blow and the wound the report states — invent no state beyond it.** The report says whether the target lives or dies; obey it exactly:
 
 - If the target **survives** the blow, narrate no death, no fatal or mortal wound, no collapsing or dying — they are hurt as the report says but still on their feet and able to fight.

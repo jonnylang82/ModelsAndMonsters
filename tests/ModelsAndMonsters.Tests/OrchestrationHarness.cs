@@ -68,7 +68,8 @@ internal sealed class OrchestrationHarness
         ScriptedChatClient heroClient,
         ScriptedChatClient monsterClient,
         HarnessOptions? limits = null,
-        GameState? initialState = null)
+        GameState? initialState = null,
+        ScriptedChatClient? intentParserClient = null)
     {
         DungeonMasterClient = dungeonMasterClient;
         HeroClient = heroClient;
@@ -105,9 +106,16 @@ internal sealed class OrchestrationHarness
             new TracingChatClient(monsterClient, Profile(monsterDefinition.Name), Trace),
             characterPrompts.CreateSystemPrompt(monsterDefinition, scenario.Characters));
 
+        var intentParser = intentParserClient is null
+            ? null
+            : new IntentParser(
+                Profile("IntentParser"),
+                new TracingChatClient(intentParserClient, Profile("IntentParser"), Trace),
+                SharedPrompts);
+
         Coordinator = new TurnCoordinator(
             Engine, DungeonMaster, SharedPrompts, new WorldStateFormatter(SharedPrompts),
-            NarrationLog, Knowledge, Trace, Console, Limits);
+            NarrationLog, Knowledge, Trace, Console, Limits, intentParser);
     }
 
     public RecordingTraceSink Sink { get; } = new();

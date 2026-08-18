@@ -54,6 +54,20 @@ public enum TraceEventType
     /// </summary>
     UnstructuredSpeechAttempt,
 
+    /// <summary>
+    /// A prose reply that carried no tool call was read by the stateless intent parser into the say / ask /
+    /// take_action calls it implied. Recorded with the raw prose so the parser's reading stays auditable
+    /// against what the character actually wrote.
+    /// </summary>
+    IntentParsed,
+
+    /// <summary>
+    /// A character's older turns were folded into a running summary to keep their history within budget.
+    /// Recorded with the token estimate before and after and the summary text, so the compression is
+    /// auditable and its effect on context size is visible.
+    /// </summary>
+    HistorySummarised,
+
     CharacterQuestion,
     DungeonMasterAnswer,
 
