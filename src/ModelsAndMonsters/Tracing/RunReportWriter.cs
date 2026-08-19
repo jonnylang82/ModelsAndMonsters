@@ -69,6 +69,10 @@ public static class RunReportWriter
         WritePerAgentActivity(report, events);
         WriteCommunicationAndObjects(report, events);
         WriteNonCombatOutcomes(report, events);
+        WriteAlliedAttacks(report, events);
+        WriteInventoryActivity(report, events, finalState);
+        WriteRulebookConsultations(report, events);
+        WriteContextHealth(report, events, manifest);
         WriteScenario(report, manifest);
         WriteTeams(report, manifest);
         WriteKnowledge(report, events, manifest, finalState);
@@ -612,6 +616,363 @@ public static class RunReportWriter
         public int ExitOpenAttempts;
         public int ExitOpenings;
     }
+
+    /// <summary>
+    /// Allied attacks — a character aiming a blow at its own side. Friendly fire is deliberately permitted (the
+    /// world resolves the strike a character actually described and does not second-guess a confused actor), so
+    /// this is a coherence metric for the experiment, not a rule breach. Each row carries the stated intent so
+    /// the motivation — incoherent ally-target slip, or deliberate betrayal — can be inspected. A no-op when
+    /// none occurred.
+    /// </summary>
+    private static void WriteAlliedAttacks(StringBuilder report, IReadOnlyList<TraceRow> events)
+    {
+        var allied = events
+            .Where(e => e.EventType == "TargetResolved" && IsTrue(e.Data, "TargetIsAlly"))
+            .ToList();
+        if (allied.Count == 0)
+        {
+            return;
+        }
+
+        // The stated motivation for each attack, keyed by (attacker, target) from the adjudication.
+        var intents = new Dictionary<(string Attacker, string Target), string>();
+        foreach (var row in events.Where(e => e.EventType == "DmAdjudication"))
+        {
+            if (!string.Equals(Text(row.Data, "TranslatedAction", "ActionType"), "attack_character", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var attacker = Text(row.Data, "CharacterName") ?? "";
+            var target = Text(row.Data, "TranslatedAction", "TargetRef") ?? "";
+            intents[(attacker, target)] = Text(row.Data, "Intent") ?? "";
+        }
+
+        report.AppendLine("## Allied attacks");
+        report.AppendLine();
+        report.AppendLine(
+            "Blows a character aimed at its own side. Friendly fire is deliberately permitted — the world resolves the " +
+            "strike a character described and never redirects it — so this is a coherence metric, not a rule breach. " +
+            "Inspect the stated intent to tell an incoherent ally-target slip from a deliberate betrayal.");
+        report.AppendLine();
+        report.AppendLine("| Attacker | Ally targeted | Stated intent |");
+        report.AppendLine("| --- | --- | --- |");
+        foreach (var row in allied)
+        {
+            var attacker = Text(row.Data, "AttackerName") ?? "(unknown)";
+            var target = Text(row.Data, "ResolvedTargetName") ?? "(unknown)";
+            var intent = intents.TryGetValue((attacker, target), out var i) ? i : "";
+            report.AppendLine($"| {attacker} | {target} | {CellText(intent)} |");
+        }
+
+        report.AppendLine();
+        report.AppendLine($"**Total allied attacks: {allied.Count}.**");
+        report.AppendLine();
+    }
+
+    /// <summary>Sanitises free text for a Markdown table cell: single line, escaped pipes, bounded length.</summary>
+    private static string CellText(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return "";
+        }
+
+        var single = text.Replace("\r", " ").Replace("\n", " ").Replace("|", "\\|").Trim();
+        return single.Length <= 140 ? single : single[..137] + "…";
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // Inventory activity (v0.6): gives, drops and thefts, the final ownership, and the item journeys
+    // -------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// The v0.6 inventory transfers: give/drop/steal counts, theft success and failure, the final ownership
+    /// and location of every item, and each item's provenance timeline reconstructed from the movement events.
+    /// Skipped when a run had no inventory activity, so pre-v0.6 runs add no empty section.
+    /// </summary>
+    private static void WriteInventoryActivity(StringBuilder report, IReadOnlyList<TraceRow> events, JsonElement? finalState)
+    {
+        var interactions = events.Where(e => e.EventType == "InventoryInteraction").ToList();
+        var provenance = events.Where(e => e.EventType == "ItemProvenance").ToList();
+        if (interactions.Count == 0 && provenance.Count == 0)
+        {
+            return;
+        }
+
+        report.AppendLine("## Inventory activity");
+        report.AppendLine();
+
+        int gives = 0, giveOk = 0, drops = 0, dropOk = 0, thefts = 0, theftOk = 0, theftFail = 0;
+        foreach (var row in interactions)
+        {
+            var accepted = string.Equals(Text(row.Data, "ValidationResult"), "accepted", StringComparison.Ordinal);
+            switch (Text(row.Data, "ActionType"))
+            {
+                case "give_item": gives++; if (accepted) giveOk++; break;
+                case "drop_item": drops++; if (accepted) dropOk++; break;
+                case "steal_item":
+                    thefts++;
+                    if (IsTrue(row.Data, "TheftSucceeded")) theftOk++;
+                    else if (accepted) theftFail++;
+                    break;
+            }
+        }
+
+        report.AppendLine("| Action | Attempts | Succeeded | Failed/refused |");
+        report.AppendLine("| --- | --- | --- | --- |");
+        report.AppendLine($"| Gives | {gives} | {giveOk} | {gives - giveOk} |");
+        report.AppendLine($"| Drops | {drops} | {dropOk} | {drops - dropOk} |");
+        report.AppendLine($"| Theft attempts | {thefts} | {theftOk} | {thefts - theftOk} |");
+        report.AppendLine();
+        report.AppendLine($"Of {thefts} theft attempt(s), {theftOk} succeeded and {theftFail} were noticed but failed on the roll; the rest were refused before any roll.");
+        report.AppendLine();
+
+        WriteFinalItemOwnership(report, finalState);
+        WriteItemProvenanceTimeline(report, provenance);
+    }
+
+    /// <summary>The final resting place of every item: in an inventory, in a container, or on the floor.</summary>
+    private static void WriteFinalItemOwnership(StringBuilder report, JsonElement? finalState)
+    {
+        if (!TryGet(finalState, out var state, "State"))
+        {
+            return;
+        }
+
+        var lines = new List<string>();
+
+        if (TryGet(state, out var characters, "Characters") && characters.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var character in characters.EnumerateArray())
+            {
+                if (Property(character, "Inventory") is { ValueKind: JsonValueKind.Array } inv)
+                {
+                    foreach (var item in inv.EnumerateArray())
+                    {
+                        lines.Add($"| {Scalar(item, "Name")} | carried by {Scalar(character, "Name")} |");
+                    }
+                }
+            }
+        }
+
+        if (TryGet(state, out var room, "Room") && Property(room, "Objects") is { ValueKind: JsonValueKind.Array } objects)
+        {
+            foreach (var obj in objects.EnumerateArray())
+            {
+                var where = IsTrue(obj, "IsGround") ? "on the floor" : $"in {Scalar(obj, "Name")}";
+                if (Property(obj, "Contents") is { ValueKind: JsonValueKind.Array } contents)
+                {
+                    foreach (var item in contents.EnumerateArray())
+                    {
+                        lines.Add($"| {Scalar(item, "Name")} | {where} |");
+                    }
+                }
+            }
+        }
+
+        if (lines.Count == 0)
+        {
+            return;
+        }
+
+        report.AppendLine("**Final item ownership and location**");
+        report.AppendLine();
+        report.AppendLine("| Item | Location |");
+        report.AppendLine("| --- | --- |");
+        foreach (var line in lines)
+        {
+            report.AppendLine(line);
+        }
+
+        report.AppendLine();
+    }
+
+    /// <summary>Each item's journey, in order: the movements recorded as provenance events.</summary>
+    private static void WriteItemProvenanceTimeline(StringBuilder report, IReadOnlyList<TraceRow> provenance)
+    {
+        if (provenance.Count == 0)
+        {
+            return;
+        }
+
+        report.AppendLine("**Item provenance timeline**");
+        report.AppendLine();
+        report.AppendLine("| Round.Turn | Item | Movement | From | To | RNG |");
+        report.AppendLine("| --- | --- | --- | --- | --- | --- |");
+        foreach (var row in provenance.OrderBy(r => r.Sequence))
+        {
+            var rng = IsTrue(row.Data, "RngInvolved") ? "yes" : "no";
+            report.AppendLine(
+                $"| {row.Round}.{row.Turn} | {Text(row.Data, "ItemName")} | {Text(row.Data, "ActionType")} | " +
+                $"{Text(row.Data, "PreviousOwnerOrLocation")} | {Text(row.Data, "NewOwnerOrLocation")} | {rng} |");
+        }
+
+        report.AppendLine();
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // Rulebook consultations (v0.6): the bounded resolver stage
+    // -------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// The rulebook-resolution stage: consultation and cache counts, cards retrieved and cited, supported vs
+    /// unsupported intents, failures by stage, resolver tokens and latency, and how often the DM or engine
+    /// still rejected an intent the rulebook supported. Skipped when the run consulted no rulebook.
+    /// </summary>
+    private static void WriteRulebookConsultations(StringBuilder report, IReadOnlyList<TraceRow> events)
+    {
+        var consultations = events.Where(e => e.EventType == "RulebookConsultation").ToList();
+        if (consultations.Count == 0)
+        {
+            return;
+        }
+
+        int supported = 0, unsupported = 0, resolverFail = 0, malformed = 0, retrievalFail = 0, cacheHits = 0;
+        long inTokens = 0, outTokens = 0, cardsSum = 0, citedSum = 0;
+        double latencySum = 0;
+        foreach (var row in consultations)
+        {
+            switch (Text(row.Data, "Outcome"))
+            {
+                case "Supported": supported++; break;
+                case "Unsupported": unsupported++; break;
+                case "ResolverFailure": resolverFail++; break;
+                case "MalformedGuidance": malformed++; break;
+                case "RetrievalFailure": retrievalFail++; break;
+            }
+
+            if (IsTrue(row.Data, "CacheHit")) cacheHits++;
+            inTokens += LongField(row.Data, "InputTokens");
+            outTokens += LongField(row.Data, "OutputTokens");
+            cardsSum += LongField(row.Data, "CardCount");
+            latencySum += DoubleField(row.Data, "LatencyMs");
+            if (Property(row.Data, "CitedRules") is { ValueKind: JsonValueKind.Array } cited)
+            {
+                citedSum += cited.GetArrayLength();
+            }
+        }
+
+        // DM-to-engine rejection rate after supported guidance: join by consultation id to the adjudication.
+        var adjudicationByConsultation = events
+            .Where(e => e.EventType == "DmAdjudication")
+            .Select(e => (Id: Text(e.Data, "ConsultationId"), Category: Text(e.Data, "Category")))
+            .Where(x => !string.IsNullOrEmpty(x.Id))
+            .GroupBy(x => x.Id!, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.Last().Category, StringComparer.Ordinal);
+
+        var supportedIds = consultations
+            .Where(r => string.Equals(Text(r.Data, "Outcome"), "Supported", StringComparison.Ordinal))
+            .Select(r => Text(r.Data, "ConsultationId"))
+            .Where(id => !string.IsNullOrEmpty(id))
+            .ToList();
+        var rejectedAfterSupport = supportedIds.Count(id =>
+            adjudicationByConsultation.TryGetValue(id!, out var cat) &&
+            cat is "EngineRejected" or "DmUnsupported" or "DmImpossible");
+
+        var count = consultations.Count;
+        report.AppendLine("## Rulebook consultations");
+        report.AppendLine();
+        report.AppendLine($"- Consultations: **{count}** (one per adjudicated intent).");
+        report.AppendLine($"- Cache: {cacheHits} hit(s), {count - cacheHits} miss(es).");
+        report.AppendLine($"- Outcomes: {supported} supported, {unsupported} unsupported.");
+        report.AppendLine($"- Failures by stage: {retrievalFail} retrieval, {resolverFail} resolver-model, {malformed} malformed-guidance.");
+        report.AppendLine($"- Cards: {Average(cardsSum, count)} sent per consultation on average; {Average(citedSum, count)} cited.");
+        report.AppendLine($"- Resolver tokens: {inTokens} in / {outTokens} out (total). Average latency: {(count == 0 ? 0 : latencySum / count):F0} ms.");
+        report.AppendLine($"- After the rulebook supported an intent, the DM or engine still refused it {rejectedAfterSupport} of {supportedIds.Count} time(s) — the engine remaining authoritative over the guidance.");
+        report.AppendLine();
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // Context health (v0.6): request sizes against the configured limits
+    // -------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Request-size health: the maximum Dungeon Master and Rulebook Resolver request sizes against their
+    /// configured limits, and evidence that the resolver request stays bounded and does not grow with the
+    /// encounter. Skipped when neither a DM adjudication nor a rulebook consultation was recorded.
+    /// </summary>
+    private static void WriteContextHealth(StringBuilder report, IReadOnlyList<TraceRow> events, JsonElement? manifest)
+    {
+        var consultations = events.Where(e => e.EventType == "RulebookConsultation").ToList();
+        var dmRequests = events
+            .Where(e => e.EventType == "ModelRequest"
+                        && string.Equals(Text(e.Data, "AgentName"), "DungeonMaster", StringComparison.Ordinal)
+                        && (Text(e.Data, "Purpose") ?? "").StartsWith("dm.adjudicate", StringComparison.Ordinal))
+            .ToList();
+
+        if (consultations.Count == 0 && dmRequests.Count == 0)
+        {
+            return;
+        }
+
+        report.AppendLine("## Context health");
+        report.AppendLine();
+
+        var contextWindow = LongField(manifest, "AgentProfiles", "DungeonMaster", "ContextWindow");
+        if (dmRequests.Count > 0)
+        {
+            var maxDm = dmRequests.Max(r => RequestChars(r.Data));
+            report.AppendLine($"- Maximum DM adjudication request: **~{maxDm} chars**" +
+                (contextWindow > 0 ? $" (against a ~{contextWindow}-token context window)." : "."));
+        }
+
+        if (consultations.Count > 0)
+        {
+            var maxResolver = consultations.Max(r => LongField(r.Data, "TotalRequestChars"));
+            var limit = consultations.Max(r => LongField(r.Data, "MaxInputCharsConfigured"));
+            var anyTrimmed = consultations.Any(r => IsTrue(r.Data, "Trimmed"));
+            report.AppendLine($"- Maximum Rulebook Resolver request: **~{maxResolver} chars** (card budget {limit} chars). Cards trimmed to fit on {consultations.Count(r => IsTrue(r.Data, "Trimmed"))} consultation(s).");
+            report.AppendLine($"- Any request approached or exceeded its configured limit: {(anyTrimmed ? "yes — see the trimmed consultations above" : "no")}.");
+
+            // Independence from encounter length: resolver request size by round should stay flat.
+            var byRound = consultations
+                .GroupBy(r => r.Round)
+                .OrderBy(g => g.Key)
+                .Select(g => (Round: g.Key, Max: g.Max(r => LongField(r.Data, "TotalRequestChars"))))
+                .ToList();
+            if (byRound.Count > 1)
+            {
+                report.AppendLine();
+                report.AppendLine("Resolver request size by round (evidence it does not grow with the encounter):");
+                report.AppendLine();
+                report.AppendLine("| Round | Max resolver request (chars) |");
+                report.AppendLine("| --- | --- |");
+                foreach (var (round, max) in byRound)
+                {
+                    report.AppendLine($"| {round} | ~{max} |");
+                }
+            }
+        }
+
+        report.AppendLine();
+    }
+
+    /// <summary>A rough character size of a model request: the text of every message and its contents.</summary>
+    private static long RequestChars(JsonElement? data)
+    {
+        if (!TryGet(data, out var messages, "Messages") || messages.ValueKind != JsonValueKind.Array)
+        {
+            return 0;
+        }
+
+        long total = 0;
+        foreach (var message in messages.EnumerateArray())
+        {
+            total += (Scalar(message, "Text")).Length;
+            if (Property(message, "Contents") is { ValueKind: JsonValueKind.Array } contents)
+            {
+                foreach (var content in contents.EnumerateArray())
+                {
+                    total += (Scalar(content, "Text")).Length;
+                }
+            }
+        }
+
+        return total;
+    }
+
+    private static string Average(long sum, int count) => count == 0 ? "0" : (sum / (double)count).ToString("F1", CultureInfo.InvariantCulture);
 
     /// <summary>Team membership, taken from the recorded initial state so it is always present.</summary>
     private static void WriteTeams(StringBuilder report, JsonElement? manifest)

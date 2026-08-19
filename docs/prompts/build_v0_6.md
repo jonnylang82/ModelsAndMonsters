@@ -1,4 +1,4 @@
-# Models & Monsters v0.6 — Inventory Transfers, Rulebook Resolver and Comparison Harness
+# Models & Monsters v0.6 — Inventory Transfers, Rulebook Resolver
 
 Extend the existing **Models & Monsters** implementation to v0.6.
 
@@ -12,7 +12,6 @@ The purpose of v0.6 is to:
    - stealing an item.
 2. Reduce the Dungeon Master’s growing rules context by introducing a separate, bounded rulebook-resolution call.
 3. Strengthen item ownership and provenance tracing.
-4. Add a minimal repeatable model and parameter comparison harness.
 
 Do not use this release to introduce another large gameplay system.
 
@@ -565,127 +564,6 @@ It must not grow with the number of rounds already played.
 
 ---
 
-# Part Three — Repeatable Comparison Harness
-
-Add a minimal harness for comparing models and model parameters across repeated runs.
-
-This is an experiment runner, not a statistical-analysis product.
-
-It should be possible to define:
-
-- a fixed scenario;
-- number of repetitions;
-- a deterministic seed schedule;
-- character model profiles;
-- DM model profile;
-- Rulebook Resolver model profile;
-- relevant generation parameters;
-- output location.
-
-The same experiment configuration should be serializable and reusable.
-
-Every individual run must retain its ordinary run folder and detailed trace.
-
-The experiment should also generate an aggregate machine-readable result and a concise Markdown summary.
-
----
-
-# Experiment Manifest
-
-Record enough information to reproduce a comparison:
-
-- application version;
-- scenario ID and version;
-- rulebook version or content hash;
-- prompt versions or hashes;
-- experiment configuration;
-- repetition number;
-- encounter RNG seed;
-- requested model provider and model ID for every character;
-- DM model profile;
-- Rulebook Resolver model profile;
-- all requested generation parameters;
-- configuration values affecting gameplay;
-- start and completion timestamps;
-- run result and termination reason.
-
-Clearly distinguish requested model parameters from parameters confirmed or supported by a provider.
-
-Do not assume every provider implements every `ChatOptions` setting.
-
----
-
-# Seed Schedule
-
-Support a deterministic seed schedule so equivalent experiment configurations use the same sequence of encounter seeds.
-
-The experiment runner must record the resolved seed for every run.
-
-Model randomness and engine randomness must remain conceptually distinct.
-
-If a provider does not support model seeding, record that limitation instead of implying complete model-output reproducibility.
-
-The engine RNG trace must still make authoritative game outcomes reproducible from the same accepted actions.
-
----
-
-# Aggregate Comparison Report
-
-At minimum, aggregate:
-
-- number of attempted, completed and failed runs;
-- encounter outcome and outcome type;
-- winning or remaining team;
-- rounds and turns;
-- termination reason;
-- damage and combat-action counts;
-- surrender and escape attempts;
-- speech count;
-- inventory give/drop/steal attempts;
-- theft successes and failures;
-- invalid or rejected actions;
-- repeated-action or harness-limit terminations;
-- rulebook consultation count;
-- rulebook cache hits and misses;
-- cited rule-card frequency;
-- malformed or failed rulebook responses;
-- DM binding failures;
-- engine validation rejections after rulebook guidance;
-- prompt and completion tokens by role where available;
-- latency by character, DM and Rulebook Resolver;
-- total model calls by role.
-
-Keep raw values per run as well as useful totals, averages or rates.
-
-Do not claim statistical significance.
-
-A comparison with only a few runs should be labelled descriptive.
-
----
-
-# Comparison Scope
-
-Support independently selecting profiles for:
-
-- each character;
-- the Dungeon Master;
-- the Rulebook Resolver.
-
-A small configuration matrix is acceptable if it fits the existing configuration architecture.
-
-Avoid building:
-
-- a large experiment-design language;
-- parameter sweeps across every possible combination;
-- charts requiring a new frontend framework;
-- automatic conclusions about which model is “best”;
-- cloud scheduling;
-- distributed execution.
-
-Sequential execution is acceptable. Preserve deterministic run ordering.
-
----
-
 # Observer UI
 
 Update the existing observer UI only as needed to reflect the new state and actions.
@@ -847,21 +725,6 @@ Test at least:
 
 Use a fake or scripted `IChatClient` for deterministic tests. Unit tests must not require a live Ollama or OpenAI service.
 
-## Comparison Harness Tests
-
-Test at least:
-
-- deterministic seed schedule generation;
-- experiment manifest serialization;
-- independent character, DM and resolver profiles;
-- correct aggregation across several scripted runs;
-- failed runs do not prevent later configured runs unless explicitly requested;
-- requested and provider-supported parameters remain distinguishable;
-- constituent run artifacts are retained;
-- aggregate counts agree with the individual run results.
-
-Retain and run the existing test suite.
-
 ---
 
 # Demonstration Scenario
@@ -930,10 +793,8 @@ v0.6 is complete when:
 9. The engine can reject incorrect resolver or DM decisions safely.
 10. Rulebook request size remains bounded and does not grow with encounter history.
 11. The tracing artifacts show exactly what every model received and returned.
-12. A repeatable experiment can run the same scenario with a deterministic seed schedule and independently configured character, DM and resolver profiles.
-13. The aggregate report accurately summarizes its constituent runs.
-14. Existing behaviour and tests continue to work.
-15. The observer UI correctly displays inventory changes and public item-transfer events.
-16. The application and artifact metadata identify the release as v0.6.
+12. Existing behaviour and tests continue to work.
+13. The observer UI correctly displays inventory changes and public item-transfer events.
+14. The application and artifact metadata identify the release as v0.6.
 
 Stop once this vertical slice is working, tested and traceable. Do not use spare time to begin v0.7 gameplay features.

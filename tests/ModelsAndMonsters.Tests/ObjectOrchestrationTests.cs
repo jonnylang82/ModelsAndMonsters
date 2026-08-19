@@ -52,6 +52,7 @@ public sealed class ObjectOrchestrationTests
     [Fact]
     public async Task Taking_the_potion_moves_it_into_the_actor_inventory_and_traces_both_halves()
     {
+        var chest = TestWorld.Chest(open: true);
         var harness = new MultiActorHarness(
             new ScriptedChatClient(
                 ScriptedChatClient.Call("dm-1", DungeonMasterTools.TakeItemName,
@@ -60,7 +61,10 @@ public sealed class ObjectOrchestrationTests
             MultiActorHarness.Clients(
                 ("Elara", new ScriptedChatClient(ScriptedChatClient.Call("e-1", CharacterTools.TakeActionName,
                     ("intent", "I grab the potion from the open chest."))))),
-            initialState: TestWorld.TwoVsTwoStateWithChest(TestWorld.Chest(open: true)));
+            initialState: TestWorld.TwoVsTwoStateWithChest(chest));
+
+        // Elara has looked inside, so she has a legitimate basis to reach for the potion (v0.6 take_item gate).
+        harness.SeedContentsKnowledge(TestWorld.ElaraId, chest);
 
         await harness.RunTurn("Elara");
 

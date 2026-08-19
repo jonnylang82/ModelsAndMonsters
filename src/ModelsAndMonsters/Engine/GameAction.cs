@@ -103,3 +103,39 @@ public sealed record SurrenderAction(string ActorRef) : GameAction
 
     public override string Describe() => $"Surrender(actor={ActorRef})";
 }
+
+/// <summary>
+/// The current actor handing one of its ordinary inventory items to another character present in the room.
+/// Uses no randomness. The item moves atomically from giver to recipient; recipient consent is not modelled.
+/// The giver is always the current actor — the engine never moves an item on behalf of a different giver.
+/// </summary>
+public sealed record GiveItemAction(string GiverRef, string RecipientRef, string ItemRef) : GameAction
+{
+    public override string ActionType => "give_item";
+
+    public override string Describe() => $"GiveItem(giver={GiverRef}, recipient={RecipientRef}, item={ItemRef})";
+}
+
+/// <summary>
+/// The current actor dropping one of its ordinary inventory items onto the room's ground-loot location.
+/// Uses no randomness. The item keeps its stable id and can subsequently be taken through <c>take_item</c>.
+/// </summary>
+public sealed record DropItemAction(string ActorRef, string ItemRef) : GameAction
+{
+    public override string ActionType => "drop_item";
+
+    public override string Describe() => $"DropItem(actor={ActorRef}, item={ItemRef})";
+}
+
+/// <summary>
+/// The current actor attempting to steal one ordinary inventory item from another character. This is the one
+/// inventory transfer that consults randomness: exactly one seeded draw against a base theft chance decides
+/// success. The attempt is always publicly noticed whether it succeeds or fails, and it consumes the turn
+/// either way. Equipped weapons cannot be stolen.
+/// </summary>
+public sealed record StealItemAction(string ThiefRef, string TargetRef, string ItemRef) : GameAction
+{
+    public override string ActionType => "steal_item";
+
+    public override string Describe() => $"StealItem(thief={ThiefRef}, target={TargetRef}, item={ItemRef})";
+}

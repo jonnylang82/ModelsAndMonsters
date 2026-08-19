@@ -215,6 +215,85 @@ public sealed record SurrenderOutcome : ActionOutcome
         $"{ActorName} keeps their weapon and belongings; nothing was taken from them.";
 }
 
+/// <summary>
+/// The result of one character giving an ordinary inventory item to another. Public: everyone present sees
+/// the item change hands, so the <see cref="Summary"/> may be narrated to the whole room and names the item.
+/// </summary>
+public sealed record GiveItemOutcome : ActionOutcome
+{
+    public required string GiverId { get; init; }
+    public required string GiverName { get; init; }
+    public required string RecipientId { get; init; }
+    public required string RecipientName { get; init; }
+    public required string ItemId { get; init; }
+    public required string ItemName { get; init; }
+
+    public override string OutcomeType => "give_item";
+
+    public override string Summary =>
+        $"{GiverName} handed the {ItemName} to {RecipientName}, who now carries it. " +
+        $"{GiverName} no longer has it.";
+}
+
+/// <summary>
+/// The result of a character dropping an ordinary inventory item onto the floor. Public: everyone present
+/// sees it fall, so the <see cref="Summary"/> may be narrated to the whole room. The item keeps its stable
+/// id and can afterwards be taken from the floor through the ordinary item-taking interaction.
+/// </summary>
+public sealed record DropItemOutcome : ActionOutcome
+{
+    public required string ActorId { get; init; }
+    public required string ActorName { get; init; }
+    public required string ItemId { get; init; }
+    public required string ItemName { get; init; }
+    public required string GroundContainerName { get; init; }
+
+    public override string OutcomeType => "drop_item";
+
+    public override string Summary =>
+        $"{ActorName} dropped the {ItemName} on {GroundContainerName}, where it now lies in plain sight and " +
+        "can be picked up by anyone within reach.";
+}
+
+/// <summary>
+/// The result of an attempted theft. Public: every theft attempt is noticed in v0.6, so the
+/// <see cref="Summary"/> may be narrated to the whole room whether it succeeded or failed. It carries the
+/// full randomness record — base chance, any modifiers, effective chance, raw roll — so the outcome is fully
+/// reconstructable, and on success the item has moved from the target to the thief.
+/// </summary>
+public sealed record StealItemOutcome : ActionOutcome
+{
+    public required string ThiefId { get; init; }
+    public required string ThiefName { get; init; }
+    public required string TargetId { get; init; }
+    public required string TargetName { get; init; }
+    public required string ItemId { get; init; }
+    public required string ItemName { get; init; }
+
+    /// <summary>The base theft chance out of 100 before any modifier.</summary>
+    public required int BaseChance { get; init; }
+
+    /// <summary>The modifiers applied to the base chance, each as a short human-readable note. Empty in v0.6.</summary>
+    public required IReadOnlyList<string> Modifiers { get; init; }
+
+    /// <summary>The effective chance out of 100 the raw roll was compared against, after any modifiers.</summary>
+    public required int EffectiveChance { get; init; }
+
+    /// <summary>The raw d100 roll.</summary>
+    public required int Roll { get; init; }
+
+    public required bool Succeeded { get; init; }
+
+    public override string OutcomeType => "steal_item";
+
+    public override string Summary =>
+        Succeeded
+            ? $"{ThiefName} snatched the {ItemName} from {TargetName} and now carries it. " +
+              $"{TargetName} no longer has it. Everyone present saw the theft."
+            : $"{ThiefName} lunged for the {ItemName} but {TargetName} kept hold of it — the theft failed. " +
+              "Nothing changed hands, and everyone present saw the attempt.";
+}
+
 public sealed record TakeItemOutcome : ActionOutcome
 {
     public required string ActorId { get; init; }

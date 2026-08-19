@@ -33,6 +33,12 @@ public sealed record UiEvent(string Type, object? Payload)
     public static UiEvent Escaped(string character, string exit) => new("escaped", new { character, exit });
     public static UiEvent ExitOpened(string character, string exit) => new("exitOpened", new { character, exit });
 
+    // Inventory transfers (v0.6), so the transcript can read each distinctly and the item movement is visible.
+    public static UiEvent Gave(string character, string recipient, string item) => new("gave", new { character, recipient, item });
+    public static UiEvent Dropped(string character, string item) => new("dropped", new { character, item });
+    public static UiEvent StoleAttempt(string character, string target, string item, bool succeeded) =>
+        new("stole", new { character, target, item, succeeded });
+
     public static UiEvent Completed(
         string terminalCondition, string? outcome, IReadOnlyList<string> winningTeams, IReadOnlyList<string> survivors) =>
         new("completed", new { terminalCondition, outcome, winningTeams, survivors });
@@ -63,9 +69,17 @@ public sealed record ObjectDto(string Id, string Name, bool IsContainer, bool Is
 /// <summary>An exit as the room-state panel renders it: its name and whether it stands open — both public.</summary>
 public sealed record ExitDto(string Id, string Name, bool IsOpen);
 
-/// <summary>A snapshot of every character, room object and exit, sent whenever the authoritative state advances.</summary>
+/// <summary>
+/// A snapshot of every character, room object, exit and ground item, sent whenever the authoritative state
+/// advances. Ground items (things dropped on the floor) are surfaced separately from ordinary containers,
+/// because — unlike a container's private contents — they lie in plain sight of everyone in the room.
+/// </summary>
 public sealed record StateDto(
-    int Version, IReadOnlyList<CharacterDto> Characters, IReadOnlyList<ObjectDto> Objects, IReadOnlyList<ExitDto> Exits)
+    int Version,
+    IReadOnlyList<CharacterDto> Characters,
+    IReadOnlyList<ObjectDto> Objects,
+    IReadOnlyList<ExitDto> Exits,
+    IReadOnlyList<string> Ground)
 {
     public static StateDto From(GameState state) => new(
         state.Version,
@@ -76,9 +90,11 @@ public sealed record StateDto(
             [.. c.Injuries.Select(i => i.Description)],
             c.IsAlive,
             c.Disposition.ToString()))],
-        [.. state.Room.Objects.Select(o => new ObjectDto(
+        // The floor is surfaced separately as Ground, so exclude it from the ordinary object list.
+        [.. state.Room.Objects.Where(o => o is not Container { IsGround: true }).Select(o => new ObjectDto(
             o.Id, o.Name, o is Container, o is Container { IsOpen: true }))],
-        [.. state.Room.Exits.Select(e => new ExitDto(e.Id, e.Name, e.IsOpen))]);
+        [.. state.Room.Exits.Select(e => new ExitDto(e.Id, e.Name, e.IsOpen))],
+        [.. state.Room.Objects.OfType<Container>().Where(c => c.IsGround).SelectMany(c => c.Contents).Select(i => i.Name)]);
 }
 
 /// <summary>One resolved attack, for the combat ticker and card damage flashes.</summary>

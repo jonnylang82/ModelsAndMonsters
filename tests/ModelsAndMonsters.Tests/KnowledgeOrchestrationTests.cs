@@ -174,14 +174,18 @@ public sealed class KnowledgeOrchestrationTests
     [Fact]
     public async Task Taking_the_potion_is_a_public_event_that_every_living_character_learns()
     {
+        var medicineCase = TestWorld.MedicineCase(open: true);
         var harness = new MultiActorHarness(
             new ScriptedChatClient(
                 ScriptedChatClient.Call("dm-1", DungeonMasterTools.TakeItemName, ("actor", "Elara"), ("container", MedicineCase), ("item", Potion)),
                 ScriptedChatClient.Text("Elara lifts the vial from the open case and holds it up.")),
             MultiActorHarness.Clients(("Elara", new ScriptedChatClient(
                 ScriptedChatClient.Call("e-1", CharacterTools.TakeActionName, ("intent", "I take the potion from the open case."))))),
-            initialState: TestWorld.TwoCasesState(medicine: TestWorld.MedicineCase(open: true)),
+            initialState: TestWorld.TwoCasesState(medicine: medicineCase),
             scenario: TestWorld.TwoCasesScenario());
+
+        // Elara has looked inside, so she legitimately knows the potion is there (v0.6 take_item gate).
+        harness.SeedContentsKnowledge(TestWorld.ElaraId, medicineCase);
 
         await harness.RunTurn("Elara");
 
@@ -225,6 +229,42 @@ public sealed class KnowledgeOrchestrationTests
             .Single(a => a.Category == ActionResolutionCategory.EngineRejected.ToString());
         Assert.DoesNotContain("ItemNotInContainer", adjudication.Reason ?? "", StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("engine", adjudication.Reason ?? "", StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Taking_an_item_the_character_has_no_basis_to_identify_is_refused_before_the_engine_even_when_the_case_is_open()
+    {
+        // The reviewer's case: the medicine case stands OPEN and truly holds the potion, but Elara never
+        // opened, inspected or was told of its contents — only Vark (via backstory) knows what is inside. Even
+        // though the Dungeon Master (mimicking a leak) names the exact item in a take_item call, the take must
+        // be refused before the engine, with NO state change — a DM slip must not become a valid mutation.
+        var harness = new MultiActorHarness(
+            new ScriptedChatClient(
+                ScriptedChatClient.Call("dm-1", DungeonMasterTools.TakeItemName, ("actor", "Elara"), ("container", MedicineCase), ("item", Potion)),
+                // The take is refused before the engine, so the next DM call is narrating Elara's end_turn pass.
+                ScriptedChatClient.Text("Elara lowers her hand and lets the moment pass.")),
+            MultiActorHarness.Clients(("Elara", new ScriptedChatClient(
+                ScriptedChatClient.Call("e-1", CharacterTools.TakeActionName, ("intent", "I take the healing potion from the open case.")),
+                ScriptedChatClient.Call("e-2", CharacterTools.EndTurnName, ("reason", "I cannot make it out."))))),
+            initialState: TestWorld.TwoCasesState(medicine: TestWorld.MedicineCase(open: true)),
+            scenario: TestWorld.TwoCasesScenario());
+
+        var versionBefore = harness.Engine.State.Version;
+        await harness.RunTurn("Elara");
+
+        // Authoritative state is untouched: the potion is still in the case, Elara's hands are empty, no draw.
+        Assert.Equal(versionBefore, harness.Engine.State.Version);
+        var medicine = harness.Engine.State.Room.Objects.OfType<Container>().Single(c => c.Id == TestWorld.MedicineCaseId);
+        Assert.Contains(medicine.Contents, i => i.Name == Potion);
+        Assert.Empty(harness.Engine.State.RequireById(TestWorld.ElaraId).Inventory);
+
+        // It was refused as unsupported (no legitimate basis), not accepted, and never reached the engine —
+        // there is no EngineAction row for the take.
+        Assert.DoesNotContain(harness.Sink.Payloads<EngineActionPayload>(TraceEventType.EngineAction),
+            e => e.ActionType == "take_item");
+        var adjudication = harness.Sink.Payloads<DmAdjudicationPayload>(TraceEventType.DmAdjudication)
+            .Single(a => a.CharacterName == "Elara");
+        Assert.Equal(ActionResolutionCategory.DmUnsupported.ToString(), adjudication.Category);
     }
 
     // ------------------------------------------------------------------------------------------

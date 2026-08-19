@@ -348,6 +348,16 @@ public sealed record HistorySummarisedPayload
 
     public required int EstimatedTokensAfter { get; init; }
 
+    /// <summary>
+    /// The effective budget that triggered this trim — derived from the agent's context window, output budget
+    /// and measured prompt overhead, so the full request stays inside the window. Defaults to 0 for callers
+    /// that do not compute one.
+    /// </summary>
+    public int EffectiveBudget { get; init; }
+
+    /// <summary>The measured non-message prompt overhead (tool schemas + chat template) folded into the budget.</summary>
+    public int MeasuredPromptOverhead { get; init; }
+
     /// <summary>The recap that replaced the older turns.</summary>
     public required string Summary { get; init; }
 }
@@ -661,6 +671,12 @@ public sealed record DmAdjudicationPayload
     /// on a basis of direct knowledge or hearsay, or refused as something the character could not know.
     /// </summary>
     public string? ActingCharacterKnowledge { get; init; }
+
+    /// <summary>
+    /// The rulebook consultation whose guidance the Dungeon Master bound for this ruling (v0.6). Links the
+    /// adjudication to the retrieval/resolver record; null when no consultation ran (e.g. legacy paths).
+    /// </summary>
+    public string? ConsultationId { get; init; }
 }
 
 public sealed record EngineActionPayload
@@ -820,6 +836,196 @@ public sealed record ExitInteractionPayload
     public required int WorldVersionBefore { get; init; }
 
     public required int WorldVersionAfter { get; init; }
+}
+
+/// <summary>
+/// An inventory transfer attempt — give, drop or steal — accepted or rejected. Complements the generic
+/// engine-action row with the requested versus authoritative bindings, ownership before and after, whether
+/// the turn was consumed, and any RNG or rulebook linkage, so a transfer can be audited in full.
+/// </summary>
+public sealed record InventoryInteractionPayload
+{
+    /// <summary>"give_item", "drop_item" or "steal_item".</summary>
+    public required string ActionType { get; init; }
+
+    public required string ActorId { get; init; }
+
+    public required string ActorName { get; init; }
+
+    /// <summary>The recipient (give) or target (steal), by id, when the action names one.</summary>
+    public string? CounterpartyId { get; init; }
+
+    public string? CounterpartyName { get; init; }
+
+    /// <summary>The item reference the Dungeon Master supplied, verbatim.</summary>
+    public required string RequestedItemRef { get; init; }
+
+    /// <summary>The item id the reference resolved to in authoritative state, when it resolved.</summary>
+    public string? ResolvedItemId { get; init; }
+
+    public string? ResolvedItemName { get; init; }
+
+    /// <summary>"accepted" when the engine applied it, "rejected" otherwise.</summary>
+    public required string ValidationResult { get; init; }
+
+    public string? RejectionReason { get; init; }
+
+    /// <summary>Who owned/held the item before the interaction — a character id, or a location such as the floor.</summary>
+    public string? OwnerBefore { get; init; }
+
+    /// <summary>Who owns/holds the item after the interaction. Unchanged from before on a rejection or a failed theft.</summary>
+    public string? OwnerAfter { get; init; }
+
+    public required int WorldVersionBefore { get; init; }
+
+    public required int WorldVersionAfter { get; init; }
+
+    /// <summary>Whether the attempt consumed the actor's turn. True for any accepted action, including a failed theft.</summary>
+    public required bool TurnConsumed { get; init; }
+
+    /// <summary>Whether the engine consulted randomness for this interaction (theft only).</summary>
+    public required bool RngConsulted { get; init; }
+
+    /// <summary>For a theft, whether it succeeded. Null for give/drop, which never roll.</summary>
+    public bool? TheftSucceeded { get; init; }
+
+    /// <summary>The rulebook consultation that guided this action, for cross-referencing.</summary>
+    public string? ConsultationId { get; init; }
+
+    /// <summary>Everyone the public knowledge of this transfer was delivered to.</summary>
+    public IReadOnlyList<string> VisibilityRecipients { get; init; } = [];
+}
+
+/// <summary>
+/// A successful item movement recorded as a provenance event — the item, its previous and new
+/// owner/location, the action type, the acting character, the recipient or target where applicable, the
+/// round and turn, whether RNG was involved and its trace linkage, and the rulebook consultation. Provenance
+/// is an event history, not a second source of authoritative ownership; the sequence of these reconstructs
+/// an item's whole journey through the encounter.
+/// </summary>
+public sealed record ItemProvenancePayload
+{
+    public required string ItemId { get; init; }
+
+    public required string ItemName { get; init; }
+
+    /// <summary>The previous owner (a character id) or location (e.g. a container id, or the floor).</summary>
+    public required string PreviousOwnerOrLocation { get; init; }
+
+    /// <summary>The new owner (a character id) or location.</summary>
+    public required string NewOwnerOrLocation { get; init; }
+
+    /// <summary>"give_item", "drop_item", "steal_item" or "take_item".</summary>
+    public required string ActionType { get; init; }
+
+    public required string ActingCharacterId { get; init; }
+
+    public required string ActingCharacterName { get; init; }
+
+    /// <summary>The recipient (give) or target (steal), where the action names one.</summary>
+    public string? CounterpartyId { get; init; }
+
+    public string? CounterpartyName { get; init; }
+
+    public required int Round { get; init; }
+
+    public required int Turn { get; init; }
+
+    public required int WorldVersionBefore { get; init; }
+
+    public required int WorldVersionAfter { get; init; }
+
+    public required bool RngInvolved { get; init; }
+
+    /// <summary>The purpose of the associated RNG draw, when one was made (theft), so the draw can be found.</summary>
+    public string? RngTracePurpose { get; init; }
+
+    /// <summary>The rulebook consultation that guided the action, when one applies.</summary>
+    public string? ConsultationId { get; init; }
+
+    /// <summary>The source action or reason the movement happened.</summary>
+    public required string Reason { get; init; }
+}
+
+/// <summary>
+/// One automatic rulebook consultation for a take_action request (v0.6): the deterministic retrieval, the
+/// stateless resolver call and its structured guidance, validation, cache result, request sizes against the
+/// configured limits, and the candidate engine tools the guidance narrowed the Dungeon Master down to. The
+/// eventual DM action and engine resolution are linked by <see cref="ConsultationId"/> on the DM-adjudication
+/// and inventory/provenance events, rather than duplicated here.
+/// </summary>
+public sealed record RulebookConsultationPayload
+{
+    public required string ConsultationId { get; init; }
+
+    public required string ActingCharacterId { get; init; }
+
+    public required string ActingCharacterName { get; init; }
+
+    /// <summary>The character's raw natural-language intent — the only encounter-derived text the resolver saw.</summary>
+    public required string RawIntent { get; init; }
+
+    public required string RulebookVersion { get; init; }
+
+    /// <summary>Every rule id retrieval considered (positive-scoring) before the bound was applied.</summary>
+    public required IReadOnlyList<string> ConsideredRuleIds { get; init; }
+
+    /// <summary>The rule cards actually supplied to the resolver, each as "id@version".</summary>
+    public required IReadOnlyList<string> CardsSupplied { get; init; }
+
+    public required string ResolverProvider { get; init; }
+
+    public required string ResolverModel { get; init; }
+
+    /// <summary>The resolver's requested sampling/limit parameters, for reproducibility.</summary>
+    public required IReadOnlyDictionary<string, string> ResolverParameters { get; init; }
+
+    /// <summary>The complete resolver request (intent plus cards). Contains no live game state.</summary>
+    public required string ResolverRequest { get; init; }
+
+    /// <summary>The complete raw resolver response.</summary>
+    public required string ResolverRawResponse { get; init; }
+
+    /// <summary>The parsed, validated guidance, or null on a failure.</summary>
+    public object? ParsedGuidance { get; init; }
+
+    /// <summary>The rule ids and versions the guidance cited (after validation filtering).</summary>
+    public IReadOnlyList<string> CitedRules { get; init; } = [];
+
+    /// <summary>"valid" or "invalid: &lt;reason&gt;".</summary>
+    public required string ValidationOutcome { get; init; }
+
+    public required bool CacheHit { get; init; }
+
+    public long? InputTokens { get; init; }
+
+    public long? OutputTokens { get; init; }
+
+    public required double LatencyMs { get; init; }
+
+    /// <summary>The candidate engine tools exposed to the Dungeon Master for this request (always includes reject_action).</summary>
+    public required IReadOnlyList<string> DmCandidateTools { get; init; }
+
+    /// <summary>Supported, Unsupported, RetrievalFailure, ResolverFailure or MalformedGuidance.</summary>
+    public required string Outcome { get; init; }
+
+    public string? FailureDetail { get; init; }
+
+    // Context protection: sizes against the configured limits, so the request can be shown to stay bounded.
+    public required int CardCount { get; init; }
+
+    public required int CardInputChars { get; init; }
+
+    public required int TotalRequestChars { get; init; }
+
+    public required int MaxCardsConfigured { get; init; }
+
+    public required int MaxInputCharsConfigured { get; init; }
+
+    public required int OutputTokenLimitConfigured { get; init; }
+
+    /// <summary>Whether retrieval dropped cards to stay within the count or size bound.</summary>
+    public required bool Trimmed { get; init; }
 }
 
 /// <summary>A character surrendering — a focused, semantic event for the transcript and observer UI.</summary>

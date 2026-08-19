@@ -12,10 +12,22 @@ public sealed record KnowledgeSeedResult(
 /// Seeds the ledger with the private backstory knowledge a scenario grants before play begins.
 /// </summary>
 /// <remarks>
+/// <para>
 /// A character's <see cref="CharacterDefinition.BackstoryKnowledge"/> names containers it already knows —
 /// both that they exist and what they hold — recorded as <see cref="KnowledgeSource.Backstory"/> at world
 /// version 0. Nobody else automatically shares it, which is exactly what gives, say, a goblin captain who
 /// knows his own cases a reason to tell his ally without the harness scripting that decision.
+/// </para>
+/// <para>
+/// Starting inventory is different: what a character openly carries is plainly visible to everyone else in
+/// the small, no-distance room (v0.6 does not model concealment — carried on the person is carried in plain
+/// sight). So each starting item is minted as an <see cref="FactType.ItemPossession"/> fact recorded as an
+/// initial PUBLIC observation (<see cref="KnowledgeSource.PublicEvent"/>) that every OTHER present character
+/// makes at the outset — not as backstory, which would wrongly imply prior personal knowledge. That is what
+/// makes an openly carried item knowable to others, giving a would-be thief a legitimate informational basis
+/// to attempt a theft; an item held out of sight would simply not be seeded as observed. The owner is not
+/// recorded as "observing" their own item — they already carry it, and it is in their own self-state.
+/// </para>
 /// </remarks>
 public static class KnowledgeSeeder
 {
@@ -27,6 +39,34 @@ public static class KnowledgeSeeder
 
         var created = new List<KnowledgeFact>();
         var learned = new List<CharacterKnowledge>();
+
+        // Everyone present can see what everyone else is openly carrying at the start of the encounter — a
+        // public observation, not prior knowledge. The owner is not recorded as observing their own item.
+        var present = initialState.Characters.Where(c => c.IsPresent).ToList();
+        foreach (var owner in initialState.Characters)
+        {
+            foreach (var item in owner.Inventory)
+            {
+                var possession = ledger.GetOrAddItemPossessionFact(item.Id, item.Name, owner.Name, 0);
+                if (possession.WasCreated)
+                {
+                    created.Add(possession.Fact);
+                }
+
+                foreach (var observer in present)
+                {
+                    if (string.Equals(observer.Id, owner.Id, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    if (ledger.Learn(observer.Id, possession.Fact.Id, KnowledgeSource.PublicEvent, 0, 0, 0) is { } record)
+                    {
+                        learned.Add(record);
+                    }
+                }
+            }
+        }
 
         foreach (var character in scenario.Characters)
         {

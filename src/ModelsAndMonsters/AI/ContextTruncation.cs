@@ -51,6 +51,50 @@ public static class ContextTruncation
     /// <summary>Gap as a fraction of what we sent, to absorb estimation error on larger prompts.</summary>
     private const double DroppedFractionThreshold = 0.08;
 
+    /// <summary>Output room reserved when an agent's MaxOutputTokens is unknown.</summary>
+    private const int DefaultOutputReserveTokens = 1024;
+
+    /// <summary>A safety margin subtracted from a derived budget, absorbing residual estimation error.</summary>
+    private const int HistoryBudgetSafetyMarginTokens = 256;
+
+    /// <summary>Never derive a budget below this, so a tiny window does not summarise every turn to nothing.</summary>
+    private const int MinimumHistoryBudgetTokens = 1024;
+
+    /// <summary>
+    /// A conservative starting estimate, in tokens, for the request overhead our message-only estimate does
+    /// not see — the tool-call schemas and the model's chat-template scaffolding — used before any call has
+    /// measured the real figure from the provider's reported input size. See <see cref="EffectiveHistoryBudget"/>.
+    /// </summary>
+    public const int DefaultPromptOverheadTokens = 1500;
+
+    /// <summary>
+    /// The effective history-summarisation budget for an agent, in the same message-only units as
+    /// <see cref="EstimateSentTokens"/>. When a context window is known, the budget is derived from it so the
+    /// FULL request — the messages the estimate sees, PLUS the tool schemas and chat-template scaffolding it
+    /// does not (<paramref name="observedPromptOverhead"/>, measured from the provider's reported input),
+    /// PLUS room for the model's reply — stays safely inside the window. Without a window the configured
+    /// budget is used unchanged. The configured budget is always an upper bound: a large window does not
+    /// license an unbounded history.
+    /// </summary>
+    /// <remarks>
+    /// This is the fix for a real miscalibration: summarising against a message-only estimate (which omits the
+    /// tool scaffolding) let a "trimmed to 5,500" history sit at ~7,600 real tokens — right under an 8,192
+    /// window, with almost no output room, so replies truncated. Reserving the overhead and the output room
+    /// makes compaction target the real prompt size, keeping the request inside the window on its own.
+    /// </remarks>
+    public static int EffectiveHistoryBudget(int configuredBudget, int? contextWindow, int? maxOutputTokens, int observedPromptOverhead)
+    {
+        if (contextWindow is not int window)
+        {
+            return configuredBudget;
+        }
+
+        var outputReserve = maxOutputTokens is int max and > 0 ? max : DefaultOutputReserveTokens;
+        var overhead = Math.Max(0, observedPromptOverhead);
+        var derived = window - outputReserve - overhead - HistoryBudgetSafetyMarginTokens;
+        return Math.Min(configuredBudget, Math.Max(MinimumHistoryBudgetTokens, derived));
+    }
+
     /// <summary>A rough token estimate for a whole message collection.</summary>
     public static int EstimateSentTokens(IEnumerable<ChatMessage> messages)
     {

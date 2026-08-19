@@ -51,6 +51,10 @@ public sealed class DungeonMasterAgent : ModelAgent
     // answer, so a field rather than a local. Reset at the start of each new adjudication.
     private AgentConversation? _adjudication;
 
+    // The narrowed tool surface for the adjudication currently in flight (v0.6), so a retry re-exposes exactly
+    // the same candidate tools the rulebook guidance selected. Null runs the full engine tool set (legacy path).
+    private IReadOnlyList<AITool>? _adjudicationTools;
+
     // Whether the DM has narrated at least once, so updates after the opening can be told to describe
     // only the new development. Deliberately a flag, not the previous text: quoting the last narration
     // back to the model made it echo that narration instead of narrating the new event.
@@ -244,18 +248,31 @@ public sealed class DungeonMasterAgent : ModelAgent
             cancellationToken);
 
     /// <summary>
-    /// Asks the DM to translate a character's natural-language intent into exactly one tool call.
-    /// The response is returned raw: interpreting and dispatching it is the orchestrator's job.
+    /// Asks the DM to translate a character's natural-language intent into exactly one tool call, binding the
+    /// supplied rulebook guidance to the current authoritative state. The response is returned raw:
+    /// interpreting and dispatching it is the orchestrator's job.
     /// </summary>
+    /// <param name="ruleGuidance">
+    /// Request-scoped guidance from the rulebook resolver, rendered for the DM. Never accumulates in history —
+    /// each adjudication runs on a fresh projection. Null renders a neutral "no guidance" block (legacy path).
+    /// </param>
+    /// <param name="tools">
+    /// The narrowed candidate tool set the guidance selected (plus rejection). Null exposes the full engine
+    /// tool surface, preserving the v0.5 behaviour for callers that do not consult the rulebook.
+    /// </param>
     public Task<ChatResponse> ProposeActionAsync(
         string authoritativeState,
         string characterName,
         string characterKnowledge,
         string intent,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? ruleGuidance = null,
+        IReadOnlyList<AITool>? tools = null)
     {
-        // Each attempt starts fresh, so one adjudication cannot colour the next.
+        // Each attempt starts fresh, so one adjudication cannot colour the next — and the rule guidance is part
+        // of that fresh projection, so it is request-scoped and never accumulates in the DM's long-term history.
         _adjudication = _useProjections ? NewProjection(_adjudicateSystem) : null;
+        _adjudicationTools = tools ?? DungeonMasterTools.All;
 
         var conversation = AdjudicationContext();
         conversation.AppendUser(_prompts.Render("dungeon-master.adjudicate", new Dictionary<string, string?>
@@ -263,13 +280,16 @@ public sealed class DungeonMasterAgent : ModelAgent
             ["state"] = authoritativeState,
             ["character"] = characterName,
             ["knowledge"] = characterKnowledge,
-            ["intent"] = intent
+            ["intent"] = intent,
+            ["guidance"] = string.IsNullOrWhiteSpace(ruleGuidance)
+                ? "No rulebook guidance was supplied for this attempt; rule on it directly from your constitution."
+                : ruleGuidance
         }));
 
-        return CallModelAsync(conversation, "dm.adjudicate", DungeonMasterTools.All, cancellationToken);
+        return CallModelAsync(conversation, "dm.adjudicate", _adjudicationTools, cancellationToken);
     }
 
-    /// <summary>Re-asks for a tool call after the DM replied with prose instead.</summary>
+    /// <summary>Re-asks for a tool call after the DM replied with prose instead, re-exposing the same tool surface.</summary>
     public Task<ChatResponse> RetryProposeActionAsync(string characterName, CancellationToken cancellationToken)
     {
         AdjudicationContext().AppendUser(_prompts.Render("dungeon-master.adjudicate-retry", new Dictionary<string, string?>
@@ -277,7 +297,7 @@ public sealed class DungeonMasterAgent : ModelAgent
             ["character"] = characterName
         }));
 
-        return CallModelAsync(AdjudicationContext(), "dm.adjudicate.retry", DungeonMasterTools.All, cancellationToken);
+        return CallModelAsync(AdjudicationContext(), "dm.adjudicate.retry", _adjudicationTools ?? DungeonMasterTools.All, cancellationToken);
     }
 
     /// <summary>

@@ -28,6 +28,7 @@ public sealed class ObjectSpeechReportTests : IDisposable
     [Fact]
     public async Task The_report_reconstructs_speech_container_state_and_item_ownership()
     {
+        var chest = TestWorld.Chest();
         var harness = new MultiActorHarness(
             new ScriptedChatClient(
                 // Rowan opens the chest.
@@ -44,7 +45,10 @@ public sealed class ObjectSpeechReportTests : IDisposable
                     ScriptedChatClient.Call("r-2", CharacterTools.TakeActionName, ("intent", "I heave the old chest open.")))),
                 ("Elara", new ScriptedChatClient(
                     ScriptedChatClient.Call("e-1", CharacterTools.TakeActionName, ("intent", "I take the vial from the open chest."))))),
-            initialState: TestWorld.TwoVsTwoStateWithChest());
+            initialState: TestWorld.TwoVsTwoStateWithChest(chest));
+
+        // Elara looked inside too, so she has a legitimate basis to take the potion (v0.6 take_item gate).
+        harness.SeedContentsKnowledge(TestWorld.ElaraId, chest);
 
         await harness.RunTurn("Rowan", round: 1, turn: 1);
         await harness.RunTurn("Elara", round: 1, turn: 2);

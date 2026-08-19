@@ -7,6 +7,7 @@ using ModelsAndMonsters.Knowledge;
 using ModelsAndMonsters.Orchestration;
 using ModelsAndMonsters.Prompts;
 using ModelsAndMonsters.Randomness;
+using ModelsAndMonsters.Rulebook;
 using ModelsAndMonsters.Tracing;
 
 namespace ModelsAndMonsters.Tests;
@@ -30,7 +31,9 @@ internal sealed class MultiActorHarness
         GameState? initialState = null,
         IRng? rng = null,
         CombatRules? rules = null,
-        ScenarioDefinition? scenario = null)
+        ScenarioDefinition? scenario = null,
+        bool seedKnowledge = true,
+        ScriptedChatClient? rulebookResolverClient = null)
     {
         DungeonMasterClient = dungeonMasterClient;
         CharacterClients = characterClients;
@@ -46,9 +49,14 @@ internal sealed class MultiActorHarness
         var definitions = resolvedScenario.Characters;
         var characterPrompts = new CharacterPromptFactory(SharedPrompts);
 
-        // Seed the ledger with any private backstory knowledge the scenario grants, from the same state the
-        // engine started with, so tests exercise the real seeding path.
-        KnowledgeSeeder.Seed(Ledger, resolvedScenario, Engine.State);
+        // Seed the ledger with any private backstory knowledge the scenario grants (and the public knowledge
+        // of what each character openly carries), from the same state the engine started with, so tests
+        // exercise the real seeding path. A test can pass seedKnowledge:false to leave the ledger empty — used
+        // to construct an item genuinely unknown to a would-be thief, which the seeding would otherwise reveal.
+        if (seedKnowledge)
+        {
+            KnowledgeSeeder.Seed(Ledger, resolvedScenario, Engine.State);
+        }
 
         DungeonMaster = new DungeonMasterAgent(
             Profile(DungeonMasterAgent.AgentIdentifier),
@@ -73,10 +81,34 @@ internal sealed class MultiActorHarness
             _agentsByName[definition.Name] = agent;
         }
 
+        // When a resolver client is supplied, wire the full v0.6 rulebook stage so orchestration tests can
+        // exercise the retrieval → resolver → guidance → narrowed-tools path. Null keeps the v0.5 direct path.
+        RulebookConsultant? rulebook = null;
+        if (rulebookResolverClient is not null)
+        {
+            RulebookResolverClient = rulebookResolverClient;
+            Catalog = new RuleCatalog();
+            var retriever = new RuleRetriever(Catalog, Limits.RulebookMaxCards, Limits.RulebookMaxInputChars);
+            var validator = new RuleGuidanceValidator(Catalog);
+            var resolver = new RulebookResolver(
+                Profile("RulebookResolver"),
+                new TracingChatClient(rulebookResolverClient, Profile("RulebookResolver"), Trace),
+                SharedPrompts);
+            rulebook = new RulebookConsultant(Catalog, retriever, resolver, validator, new RuleGuidanceCache(), Trace,
+                new RulebookConsultationOptions(
+                    Limits.RulebookMaxCards, Limits.RulebookMaxInputChars, Limits.RulebookOutputTokens, Limits.RulebookCacheEnabled));
+        }
+
         Coordinator = new TurnCoordinator(
             Engine, DungeonMaster, SharedPrompts, new WorldStateFormatter(SharedPrompts),
-            NarrationLog, Ledger, Trace, Console, Limits);
+            NarrationLog, Ledger, Trace, Console, Limits, rulebook: rulebook);
     }
+
+    /// <summary>The scripted resolver client, when the rulebook stage is wired; null otherwise.</summary>
+    public ScriptedChatClient? RulebookResolverClient { get; }
+
+    /// <summary>The rule catalog the wired rulebook uses, for tests that need real rule ids and versions.</summary>
+    public RuleCatalog? Catalog { get; }
 
     public RecordingTraceSink Sink { get; } = new();
 
@@ -86,6 +118,18 @@ internal sealed class MultiActorHarness
 
     /// <summary>The knowledge ledger the coordinator uses, seeded from the scenario's backstory knowledge.</summary>
     public KnowledgeLedger Ledger { get; } = new();
+
+    /// <summary>
+    /// Gives a character a legitimate basis to know what a container holds — as if they had looked inside it.
+    /// Needed by tests that exercise the take mechanics from an already-open container: v0.6's take_item gate
+    /// refuses an item a character has no way to identify, so the discovery step must be present, seeded here
+    /// rather than played out over an extra turn.
+    /// </summary>
+    public void SeedContentsKnowledge(string characterId, Container container)
+    {
+        var fact = Ledger.GetOrAddContentsFact(container.Id, container.Name, container.Contents, 0);
+        Ledger.Learn(characterId, fact.Fact.Id, KnowledgeSource.DirectInspection, 0, 0, 0);
+    }
 
     public ExperimentTrace Trace { get; }
 

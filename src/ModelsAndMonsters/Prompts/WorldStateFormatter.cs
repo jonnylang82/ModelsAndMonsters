@@ -99,8 +99,9 @@ public sealed class WorldStateFormatter
             builder.AppendLine("- An exit being open or closed is public: everyone present sees which, and you may always say so. A closed exit must be opened (open_exit) before anyone can pass through it; passing through an open exit to leave the encounter is escape_encounter. These are two separate acts and are never resolved together.");
             builder.AppendLine("- A SURRENDERED or ESCAPED character is out of the fight and is not a valid target: never resolve an attack against them. A surrendered character is still in the room; an escaped one is gone. Surrender and escape are each a character's own choice — never make one character surrender, open an exit or escape because another told, threatened or asked them to.");
         }
-        builder.AppendLine("- Items move ONLY through containers. A character cannot hand, give, pass, throw or drop an item to another character, and cannot take, snatch, grab or knock an item out of another character's hands or inventory — not even to an ally. The only way to gain an item is take_item from an open container; the only thing to do with one you hold is use_item on yourself. Any attempt to transfer an item between characters is unsupported.");
-        builder.AppendLine("- ACTIONS THE WORLD CAN RESOLVE: attack_character, use_item, open_container, take_item, inspect_object, open_exit, escape_encounter, surrender. Nothing else exists.");
+        builder.AppendLine("- Ordinary inventory items CAN change hands: a character may give one of their own items to another present character (give_item), drop one on the floor for anyone to pick up (drop_item), or try to snatch one from another active character (steal_item — a noticed attempt that may fail). Items are also gained by take_item from an open container or the floor, and used with use_item on oneself. An EQUIPPED WEAPON is not an ordinary item and can never be given, dropped or stolen.");
+        builder.AppendLine("- A theft is always noticed by everyone present, whether it succeeds or fails. A character may only attempt to steal an item it has a legitimate reason to know the target carries (seen it carried, or seen it taken, given or dropped, or been told of it). Never let a character reach for an item it has no way of knowing exists, and never reveal what someone privately carries to justify a theft.");
+        builder.AppendLine("- ACTIONS THE WORLD CAN RESOLVE: attack_character, use_item, open_container, take_item, inspect_object, open_exit, escape_encounter, surrender, give_item, drop_item, steal_item. Nothing else exists.");
 
         return builder.ToString().TrimEnd();
     }
@@ -120,6 +121,26 @@ public sealed class WorldStateFormatter
         var contents = container.Contents.Length == 0
             ? "nothing"
             : string.Join(", ", container.Contents.Select(i => i.Name));
+
+        // A fallen character's body: a lootable thing, but NOT a chest. Describe it as a body, never as an
+        // "open container" or something to "reach into" — its belongings lie on the fallen, taken with take_item.
+        if (container.IsCorpse)
+        {
+            builder.AppendLine($"{container.Name} (id: {container.Id}) - a fallen character's body (NOT a chest or container — never narrate it as 'opened' or 'reached into'). Its belongings are within reach of anyone present.");
+            builder.AppendLine(
+                $"  On the body (anyone present who knows of these may take them from the fallen with take_item): {contents}.");
+            return;
+        }
+
+        // The floor is public: everyone present sees what has been dropped there, so its contents are plainly
+        // visible to all, unlike the private contents of an ordinary opened container.
+        if (container.IsGround)
+        {
+            builder.AppendLine($"{container.Name} (id: {container.Id}) - the room's floor, an always-open ground-loot spot everyone can reach.");
+            builder.AppendLine(
+                $"  Lying on the floor in plain sight of everyone (anyone present may take these with take_item): {contents}.");
+            return;
+        }
 
         if (container.IsOpen)
         {

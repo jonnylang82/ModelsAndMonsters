@@ -60,4 +60,42 @@ public sealed class ContextTruncationTests
 
         Assert.True(withArgs > 4);
     }
+
+    [Fact]
+    public void The_history_budget_reserves_room_for_the_reply_and_the_tool_overhead_inside_the_window()
+    {
+        // The real qwen case: an 8192 window, a 1500 output budget, and a ~2000-token tool/template overhead
+        // the message estimate cannot see. Budgeting against the configured 5500 alone left the real prompt at
+        // ~7600 with no output room; the derived budget must trim earlier so the whole request fits.
+        var budget = ContextTruncation.EffectiveHistoryBudget(
+            configuredBudget: 5500, contextWindow: 8192, maxOutputTokens: 1500, observedPromptOverhead: 2000);
+
+        // 8192 - 1500 (output) - 2000 (overhead) - 256 (safety) = 4436. So message estimate + overhead + output
+        // = 4436 + 2000 + 1500 = 7936 < 8192, leaving genuine output room.
+        Assert.Equal(4436, budget);
+        Assert.True(budget + 2000 + 1500 < 8192);
+    }
+
+    [Fact]
+    public void The_history_budget_is_the_configured_value_when_no_window_is_known()
+    {
+        // Hosted models (OpenAI/Anthropic) do not expose a per-request window here; the configured budget is
+        // used unchanged, since those windows are far larger than any history this harness produces.
+        Assert.Equal(5500, ContextTruncation.EffectiveHistoryBudget(5500, contextWindow: null, maxOutputTokens: 1500, observedPromptOverhead: 2000));
+    }
+
+    [Fact]
+    public void The_history_budget_never_exceeds_the_configured_cap_even_with_a_huge_window()
+    {
+        // A large window does not license an unbounded history — the configured budget is an upper bound.
+        Assert.Equal(5500, ContextTruncation.EffectiveHistoryBudget(5500, contextWindow: 131072, maxOutputTokens: 1500, observedPromptOverhead: 2000));
+    }
+
+    [Fact]
+    public void The_history_budget_stays_positive_even_for_a_tiny_window()
+    {
+        // A window smaller than the reserves must not produce a negative or zero budget that summarises to nothing.
+        var budget = ContextTruncation.EffectiveHistoryBudget(5500, contextWindow: 2048, maxOutputTokens: 1500, observedPromptOverhead: 2000);
+        Assert.True(budget >= 1024);
+    }
 }

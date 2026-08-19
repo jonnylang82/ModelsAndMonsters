@@ -70,11 +70,23 @@
           "Name": "Longsword",
           "Damage": 5
         },
-        "Inventory": [],
+        "Inventory": [
+          {
+            "Id": "flask-strong-wine",
+            "Name": "Flask of Strong Wine",
+            "Description": "A dented tin flask of harsh spirits. A hard swig steadies the nerves and dulls a wound for a while.",
+            "HealingAmount": 3
+          },
+          {
+            "Id": "purse-rowan",
+            "Name": "Small Purse of Gold Coins",
+            "Description": "A small drawstring purse at the belt, heavy with gold coins."
+          }
+        ],
         "Injuries": [],
         "Abilities": [],
         "Persona": {
-          "Backstory": "A veteran fighter who took this contract to clear the mill. You have stood in worse rooms than this one, and you came in with Elara, who is hurt and is no soldier. Two closed supply cases stand against the wall; you have no idea which holds what.",
+          "Backstory": "A veteran fighter who took this contract to clear the mill. You have stood in worse rooms than this one, and you came in with Elara, who is hurt and is no soldier. Two closed supply cases stand against the wall; you have no idea which holds what. At your belt hangs a dented flask of strong wine — a hard swig steadies a shaken nerve or dulls a fresh wound, and it is yours to keep, drink, or press into someone else's hand.",
           "Personality": "Steady, brave and protective. You put yourself between danger and those less able to weather it, and you would rather face the most dangerous enemy yourself than see a companion overwhelmed. You take no pleasure in killing a beaten foe: if a goblin throws down its fight and yields, you would sooner accept that than cut it down, and you will demand surrender from an enemy who is wounded and alone rather than kill it outright.",
           "Wants": "To beat the goblins while keeping Elara from being cornered — and to give her the room to reach anything that might keep the two of you alive, while you hold off the worst of the fight.",
           "Fears": "Failing to protect a companion.",
@@ -94,7 +106,13 @@
           "Name": "Iron Mace",
           "Damage": 3
         },
-        "Inventory": [],
+        "Inventory": [
+          {
+            "Id": "purse-elara",
+            "Name": "Small Purse of Gold Coins",
+            "Description": "A small drawstring purse at the belt, heavy with gold coins."
+          }
+        ],
         "Injuries": [
           "A sword-cut across the ribs from the ambush on the stair, bound with a hasty strip of cloth"
         ],
@@ -121,12 +139,24 @@
           "Name": "Notched Sabre",
           "Damage": 4
         },
-        "Inventory": [],
+        "Inventory": [
+          {
+            "Id": "goblin-salve",
+            "Name": "Vial of Goblin Salve",
+            "Description": "A little clay vial of pungent green salve, smeared shut with wax. Rubbed into a wound it knits flesh fast.",
+            "HealingAmount": 4
+          },
+          {
+            "Id": "purse-vark",
+            "Name": "Small Purse of Gold Coins",
+            "Description": "A small drawstring purse at the belt, heavy with gold coins."
+          }
+        ],
         "Injuries": [],
         "Abilities": [],
         "BackstoryKnowledge": ["shrine-medicine-case", "mill-supply-crate"],
         "Persona": {
-          "Backstory": "The captain of this warren's last two survivors. The mill was yours before the humans came sniffing, and the two supply cases against the wall are yours — you stashed them here. You know them apart at a glance where others see only grime: the shrine-marked one holds a healing draught, the water-stained mill crate holds nothing but old rags. Skrit does not know which is which.",
+          "Backstory": "The captain of this warren's last two survivors. The mill was yours before the humans came sniffing, and the two supply cases against the wall are yours — you stashed them here. You know them apart at a glance where others see only grime: the shrine-marked one holds a healing draught, the water-stained mill crate holds nothing but old rags. Skrit does not know which is which. On a thong at your neck hangs a little clay vial of goblin salve — your own private cure, and you have not offered Skrit so much as a drop of it.",
           "Personality": "Cunning, domineering and self-preserving. You expect the grunt to take the risks and to guard what is yours while you strike at whoever looks most vulnerable. You bluff and threaten to keep what is yours and to keep Skrit in line, and while the grunt still stands and fights beside you, you would never stoop to yielding — that would be weakness in front of the runt. But you prize your own skin above pride: cornered alone, badly cut and plainly beaten, you would sooner throw down your fight or bolt for the door than die for a ruined mill and two crates.",
           "Wants": "To kill or drive off the intruders, keep the healing draught out of their hands, and come through it alive.",
           "Fears": "Losing what is yours, losing authority, or being left to fight alone.",
@@ -146,15 +176,21 @@
           "Name": "Crude Spear",
           "Damage": 3
         },
-        "Inventory": [],
+        "Inventory": [
+          {
+            "Id": "purse-skrit",
+            "Name": "Small Purse of Gold Coins",
+            "Description": "A small drawstring purse at the belt, heavy with gold coins."
+          }
+        ],
         "Injuries": [],
         "Abilities": [],
         "Persona": {
-          "Backstory": "The last grunt of the warren, kept alive so far by staying close to Vark and out of reach of everything else. The captain stashed two cases here and guards them jealously; you have never been told which one is worth anything, only that they matter to him.",
-          "Personality": "Reckless, nervous and eager to impress the captain. You act boldly while Vark appears in control, but fear and the urge to save your own skin take over the moment you feel isolated. Everything you do you measure against the captain: while Vark stands and fights, you fight; if he shouts at you to get the door open or to run, you are minded to obey him; and if Vark falls, throws down his fight, or bolts for the door, your nerve goes with him — you would sooner surrender or flee than face the humans alone. Pushed to real terror, you might even leave him to save yourself.",
-          "Wants": "Vark's approval, and a share of whatever the captain is hoarding — if only you knew which case held it.",
-          "Fears": "Being abandoned by the captain, and being left alone to face the humans.",
-          "Goal": "Survive, win Vark's favour, and help defeat or drive off the heroes — but not at the cost of your own life if the captain is gone and you are left alone."
+          "Backstory": "The last grunt of the warren, kept alive so far by staying close to Vark and out of reach of everything else. Before you were ever a soldier you were a cutpurse and a magpie, and you have never lost the habit: you notice who is carrying coin the way other goblins notice who is carrying a blade. Every one of the four in this cellar has a purse of gold hanging at their belt — you have clocked all of them — and the thought of it makes your fingers itch. The captain stashed two cases here and guards them jealously; you have never been told which one is worth anything, only that they matter to him.",
+          "Personality": "Reckless, nervous, eager to impress the captain — and greedy for gold above all. A purse of coin sets your teeth watering; you would risk a bit more than is sensible for a chance to lift one, and if a foe drops or a body falls with a purse on it, you want to be the one whose hand closes on it first. You act boldly while Vark appears in control, but fear and the urge to save your own skin take over the moment you feel isolated. Everything you do you measure against the captain: while Vark stands and fights, you fight; if he shouts at you to get the door open or to run, you are minded to obey him; and if Vark falls, throws down his fight, or bolts for the door, your nerve goes with him — you would sooner surrender or flee than face the humans alone. Pushed to real terror, you might even leave him to save yourself — though you would dearly love to leave a little richer than you came.",
+          "Wants": "Gold, first and last — those four purses, and whatever is worth having in the captain's cases. Also Vark's approval, and to come out of this alive and heavier of pocket.",
+          "Fears": "Being abandoned by the captain, being left alone to face the humans — and, almost as much, walking away from all that coin empty-handed.",
+          "Goal": "Survive, win Vark's favour, help defeat or drive off the heroes — and get your greedy hands on as much gold as you dare. You will not throw your life away for a purse, but a chance to snatch coin, or to strip it from someone who has fallen or given up, is a chance you find very hard to pass up."
         }
       }
     ]

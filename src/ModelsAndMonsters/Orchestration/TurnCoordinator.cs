@@ -6,6 +6,7 @@ using ModelsAndMonsters.Engine;
 using ModelsAndMonsters.Knowledge;
 using ModelsAndMonsters.Presentation;
 using ModelsAndMonsters.Prompts;
+using ModelsAndMonsters.Rulebook;
 using ModelsAndMonsters.Tracing;
 
 namespace ModelsAndMonsters.Orchestration;
@@ -38,6 +39,7 @@ public sealed class TurnCoordinator
     private readonly HarnessOptions _limits;
     private readonly IntentParser? _intentParser;
     private readonly HistorySummariser? _summariser;
+    private readonly Rulebook.RulebookConsultant? _rulebook;
 
     /// <summary>
     /// The acting character's information view for the adjudication currently in flight, so the ruling can
@@ -45,6 +47,13 @@ public sealed class TurnCoordinator
     /// safe as a field because orchestration is strictly sequential.
     /// </summary>
     private string? _actingKnowledgeView;
+
+    /// <summary>
+    /// The rulebook consultation id for the adjudication currently in flight (v0.6), so the DM ruling,
+    /// inventory interaction and item-provenance events can be cross-referenced to the resolver record. Set
+    /// at the start of each adjudication that consults the rulebook; null when none ran.
+    /// </summary>
+    private string? _currentConsultationId;
 
     public TurnCoordinator(
         IGameEngine engine,
@@ -57,7 +66,8 @@ public sealed class TurnCoordinator
         IGameConsole console,
         HarnessOptions limits,
         IntentParser? intentParser = null,
-        HistorySummariser? summariser = null)
+        HistorySummariser? summariser = null,
+        Rulebook.RulebookConsultant? rulebook = null)
     {
         _engine = engine;
         _dungeonMaster = dungeonMaster;
@@ -70,6 +80,7 @@ public sealed class TurnCoordinator
         _limits = limits;
         _intentParser = intentParser;
         _summariser = summariser;
+        _rulebook = rulebook;
     }
 
     // -----------------------------------------------------------------------------------------
@@ -699,8 +710,25 @@ public sealed class TurnCoordinator
         _actingKnowledgeView = CharacterKnowledgeView.RenderForDungeonMaster(
             character.CharacterId, character.Name, _knowledge, _narrationLog, _engine.State);
 
+        // Every take_action is automatically preceded by a bounded, stateless rulebook consultation (v0.6):
+        // the resolver never sees live state, and its validated guidance narrows the DM to a small candidate
+        // tool set. When no rulebook is wired (the v0.5 path) the DM gets the full engine tool surface.
+        string? guidanceForDm = null;
+        IReadOnlyList<AITool>? candidateTools = null;
+        _currentConsultationId = null;
+        if (_rulebook is not null)
+        {
+            var consultation = await _rulebook
+                .ConsultAsync(character.CharacterId, character.Name, intent, cancellationToken)
+                .ConfigureAwait(false);
+            _currentConsultationId = consultation.ConsultationId;
+            guidanceForDm = RenderGuidanceForDm(consultation);
+            candidateTools = consultation.CandidateTools;
+        }
+
         var response = await _dungeonMaster
-            .ProposeActionAsync(stateText, character.Name, _actingKnowledgeView, intent, cancellationToken)
+            .ProposeActionAsync(stateText, character.Name, _actingKnowledgeView, intent, cancellationToken,
+                guidanceForDm, candidateTools)
             .ConfigureAwait(false);
 
         var calls = ModelAgent.GetToolCalls(response);
@@ -782,10 +810,58 @@ public sealed class TurnCoordinator
             DungeonMasterTools.AttackCharacterName or DungeonMasterTools.UseItemName
                 or DungeonMasterTools.OpenContainerName or DungeonMasterTools.TakeItemName
                 or DungeonMasterTools.InspectObjectName or DungeonMasterTools.OpenExitName
-                or DungeonMasterTools.EscapeEncounterName or DungeonMasterTools.SurrenderName =>
+                or DungeonMasterTools.EscapeEncounterName or DungeonMasterTools.SurrenderName
+                or DungeonMasterTools.GiveItemName or DungeonMasterTools.DropItemName
+                or DungeonMasterTools.StealItemName =>
                 await HandleEngineActionAsync(character, intent, primary, cancellationToken).ConfigureAwait(false),
             _ => HandleUnknownDungeonMasterTool(character, intent, primary)
         };
+    }
+
+    /// <summary>
+    /// Renders one rulebook consultation into the request-scoped guidance block handed to the Dungeon Master.
+    /// Supported guidance names the candidate action(s) and their abstract rules to bind; an unsupported or
+    /// failed consultation instructs an in-world rejection, so the DM fails safe rather than inventing an action.
+    /// </summary>
+    private static string RenderGuidanceForDm(RulebookConsultationResult consultation)
+    {
+        if (consultation.HasSupportedGuidance && consultation.Guidance is { } g)
+        {
+            var lines = new List<string>
+            {
+                $"The rulebook supports this kind of intent. Candidate action(s): {string.Join(", ", g.CandidateActions)}."
+            };
+            if (g.RequiredBindings.Count > 0)
+            {
+                lines.Add($"Bindings to fill from the state: {string.Join("; ", g.RequiredBindings)}.");
+            }
+            if (g.Preconditions.Count > 0)
+            {
+                lines.Add($"Preconditions the engine will check: {string.Join("; ", g.Preconditions)}.");
+            }
+            if (!string.IsNullOrWhiteSpace(g.TurnCost))
+            {
+                lines.Add($"Turn cost: {g.TurnCost}.");
+            }
+            if (!string.IsNullOrWhiteSpace(g.Visibility))
+            {
+                lines.Add($"Visibility: {g.Visibility}.");
+            }
+            lines.Add("Bind exactly one of the candidate actions to the state with exact snapshot names and call it. " +
+                      "If none actually fits the state or this character's knowledge, call reject_action instead.");
+            return string.Join("\n", lines);
+        }
+
+        if (consultation.Outcome == RulebookOutcome.Unsupported && consultation.Guidance is { } u)
+        {
+            return $"The rulebook has no action that resolves this intent: {u.UnsupportedReason} " +
+                   "Reject the attempt in-world (category unsupported) with a short in-world reason. Do not invent an action.";
+        }
+
+        // Retrieval, resolver or malformed-guidance failure: fail safe with a rejection.
+        var detail = consultation.FailureDetail is { } d ? $" ({d})" : "";
+        return $"The rulebook could not provide usable guidance for this intent{detail}. " +
+               "Reject the attempt in-world with a short in-world reason. Do not invent an action.";
     }
 
     private async Task<ActionAttemptOutcome> HandleDungeonMasterRejection(
@@ -861,6 +937,66 @@ public sealed class TurnCoordinator
             return failure;
         }
 
+        // A theft must have a legitimate informational basis: the thief cannot steal an item it has no way of
+        // knowing the target carries. This is enforced deterministically here, before the engine (and before
+        // any RNG), from the thief's own knowledge ledger — never by revealing the target's hidden inventory.
+        // The prompt guides the Dungeon Master to refuse such steals; this guard guarantees it.
+        if (action is StealItemAction stealAction && StealLacksKnowledgeBasis(character, stealAction, out var basisReason))
+        {
+            _trace.Emit(TraceEventType.ToolCallDispatched, new ToolCallDispatchPayload
+            {
+                AgentName = DungeonMasterAgent.AgentIdentifier,
+                CallId = call.CallId,
+                ToolName = call.Name,
+                Arguments = ChatTraceMapper.MapArguments(call.Arguments),
+                DispatchDecision = "Not submitted to the engine: the thief has no informational basis to know the target carries that item. No RNG drawn."
+            }, DungeonMasterAgent.AgentIdentifier);
+
+            RecordDungeonMasterToolResult(call, "The character has no way of knowing the target carries such a thing; the attempt does not happen.");
+
+            EmitInventoryInteraction(character, action, engineResult: null, rejectionReason: "NoInformationalBasis");
+
+            var basis = await InWorldRejectionAsync(character, basisReason, cancellationToken).ConfigureAwait(false);
+            EmitAdjudication(character, intent, ActionResolutionCategory.DmUnsupported, basis, action, null);
+            _console.CharacterRefused(character.Name, basis);
+
+            return new ActionAttemptOutcome
+            {
+                Category = ActionResolutionCategory.DmUnsupported,
+                MessageToCharacter = basis,
+                Action = action
+            };
+        }
+
+        // Taking a specific item from a container likewise requires a legitimate basis to identify what is
+        // inside it: opening or inspecting it, knowing it from before the fight, being told, or seeing the item
+        // in the open. This is the authoritative backstop the reviewer asked for — even if the Dungeon Master
+        // slips and names a hidden item, the take is refused here rather than becoming a real state change.
+        if (action is TakeItemAction takeAction && TakeLacksKnowledgeBasis(character, takeAction, out var takeReason))
+        {
+            _trace.Emit(TraceEventType.ToolCallDispatched, new ToolCallDispatchPayload
+            {
+                AgentName = DungeonMasterAgent.AgentIdentifier,
+                CallId = call.CallId,
+                ToolName = call.Name,
+                Arguments = ChatTraceMapper.MapArguments(call.Arguments),
+                DispatchDecision = "Not submitted to the engine: the character has no informational basis to know that item is inside the container."
+            }, DungeonMasterAgent.AgentIdentifier);
+
+            RecordDungeonMasterToolResult(call, "The character has no way of knowing that is in there to reach for; the attempt does not happen.");
+
+            var takeBasis = await InWorldRejectionAsync(character, takeReason, cancellationToken).ConfigureAwait(false);
+            EmitAdjudication(character, intent, ActionResolutionCategory.DmUnsupported, takeBasis, action, null);
+            _console.CharacterRefused(character.Name, takeBasis);
+
+            return new ActionAttemptOutcome
+            {
+                Category = ActionResolutionCategory.DmUnsupported,
+                MessageToCharacter = takeBasis,
+                Action = action
+            };
+        }
+
         _trace.Emit(TraceEventType.ToolCallDispatched, new ToolCallDispatchPayload
         {
             AgentName = DungeonMasterAgent.AgentIdentifier,
@@ -905,6 +1041,11 @@ public sealed class TurnCoordinator
         // validation result for opening or escaping — accepted or rejected alike.
         EmitExitInteraction(character, action, engineResult);
 
+        // Inventory transfers get an inventory-specific row (bindings, ownership before/after, turn/RNG), and
+        // a successful movement additionally emits an item-provenance event so the item's journey is traceable.
+        EmitInventoryInteraction(character, action, engineResult, rejectionReason: null);
+        EmitItemProvenance(character, action, engineResult);
+
         var resultForDungeonMaster = engineResult.Accepted
             ? engineResult.Outcome!.Summary
             : $"REJECTED BY THE WORLD: {engineResult.RejectionMessage}";
@@ -948,6 +1089,9 @@ public sealed class TurnCoordinator
             OpenExitOutcome openExit => await DeliverExitOpenedAsync(character, openExit, cancellationToken).ConfigureAwait(false),
             EscapeOutcome escape => await DeliverEscapeAsync(character, escape, engineResult, cancellationToken).ConfigureAwait(false),
             SurrenderOutcome surrender => await DeliverSurrenderAsync(character, surrender, engineResult, cancellationToken).ConfigureAwait(false),
+            GiveItemOutcome give => await DeliverGiveAsync(character, give, cancellationToken).ConfigureAwait(false),
+            DropItemOutcome drop => await DeliverDropAsync(character, drop, cancellationToken).ConfigureAwait(false),
+            StealItemOutcome steal => await DeliverStealAsync(character, steal, cancellationToken).ConfigureAwait(false),
             _ => await DeliverCombatOutcomeAsync(character, engineResult, cancellationToken).ConfigureAwait(false)
         };
 
@@ -1259,6 +1403,84 @@ public sealed class TurnCoordinator
     }
 
     /// <summary>
+    /// One character gave an item to another. The transfer is a public event: everyone present sees the item
+    /// change hands, so every present character learns who now carries it, and the whole room hears the
+    /// narration. There is no private channel and no RNG.
+    /// </summary>
+    private async Task<string> DeliverGiveAsync(CharacterAgent character, GiveItemOutcome outcome, CancellationToken cancellationToken)
+    {
+        var stateAfterText = WorldStateFormatter.FormatAuthoritativeState(_engine.State);
+        var narration = await _dungeonMaster
+            .NarratePublicEventAsync(character.Name, outcome.Summary, stateAfterText, cancellationToken)
+            .ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(narration))
+        {
+            narration = outcome.Summary;
+        }
+
+        var worldVersion = _engine.State.Version;
+        var fact = _knowledge.GetOrAddGiveFact(outcome.ItemId, outcome.ItemName, outcome.GiverName, outcome.RecipientName, worldVersion);
+        TraceFactCreatedIfNew(fact, KnowledgeSource.PublicEvent, "give_item", character.Name);
+        DeliverPublicFact(fact.Fact, LivingRecipients(), worldVersion, "give_item");
+
+        RecordPublicNarration("item-given", stateAfterText, outcome.Summary, narration, character, [fact.Fact.Id]);
+        _console.DungeonMaster(narration);
+        return narration;
+    }
+
+    /// <summary>
+    /// A character dropped an item on the floor. Public: everyone present sees it fall and learns it now lies
+    /// on the floor within anyone's reach, and the whole room hears the narration. No private channel, no RNG.
+    /// </summary>
+    private async Task<string> DeliverDropAsync(CharacterAgent character, DropItemOutcome outcome, CancellationToken cancellationToken)
+    {
+        var stateAfterText = WorldStateFormatter.FormatAuthoritativeState(_engine.State);
+        var narration = await _dungeonMaster
+            .NarratePublicEventAsync(character.Name, outcome.Summary, stateAfterText, cancellationToken)
+            .ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(narration))
+        {
+            narration = outcome.Summary;
+        }
+
+        var worldVersion = _engine.State.Version;
+        var fact = _knowledge.GetOrAddDropFact(outcome.ItemId, outcome.ItemName, outcome.ActorName, worldVersion);
+        TraceFactCreatedIfNew(fact, KnowledgeSource.PublicEvent, "drop_item", character.Name);
+        DeliverPublicFact(fact.Fact, LivingRecipients(), worldVersion, "drop_item");
+
+        RecordPublicNarration("item-dropped", stateAfterText, outcome.Summary, narration, character, [fact.Fact.Id]);
+        _console.DungeonMaster(narration);
+        return narration;
+    }
+
+    /// <summary>
+    /// A theft attempt. Public in v0.6: every attempt is noticed, so everyone present learns who tried to
+    /// steal what from whom and whether it succeeded, and the whole room hears the narration. Exactly one RNG
+    /// draw has already decided it inside the engine; this only delivers the public outcome. No private channel.
+    /// </summary>
+    private async Task<string> DeliverStealAsync(CharacterAgent character, StealItemOutcome outcome, CancellationToken cancellationToken)
+    {
+        var stateAfterText = WorldStateFormatter.FormatAuthoritativeState(_engine.State);
+        var narration = await _dungeonMaster
+            .NarratePublicEventAsync(character.Name, outcome.Summary, stateAfterText, cancellationToken)
+            .ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(narration))
+        {
+            narration = outcome.Summary;
+        }
+
+        var worldVersion = _engine.State.Version;
+        var fact = _knowledge.GetOrAddTheftFact(
+            outcome.ItemId, outcome.ItemName, outcome.ThiefName, outcome.TargetName, outcome.Succeeded, worldVersion);
+        TraceFactCreatedIfNew(fact, KnowledgeSource.PublicEvent, "steal_item", character.Name);
+        DeliverPublicFact(fact.Fact, LivingRecipients(), worldVersion, "steal_item");
+
+        RecordPublicNarration("item-theft", stateAfterText, outcome.Summary, narration, character, [fact.Fact.Id]);
+        _console.DungeonMaster(narration);
+        return narration;
+    }
+
+    /// <summary>
     /// A close inspection. The room learns only that the character examined the object; the inspector alone
     /// receives the discovered marking and (for an open container) the current contents, as private
     /// <c>DirectInspection</c> knowledge and a private observation. No RNG, no mutation.
@@ -1348,18 +1570,45 @@ public sealed class TurnCoordinator
     /// describes only what happened. It is spelled out because a take from an already-open container was
     /// otherwise narrated as the lid being lifted; the transition makes "already open, stays open" explicit.
     /// </summary>
-    private static string DescribeObjectTransition(ActionOutcome outcome) => outcome switch
+    private string DescribeObjectTransition(ActionOutcome outcome) => outcome switch
     {
         OpenContainerOutcome o =>
             $"{o.ContainerName} went from CLOSED to OPEN and {o.ActorName} looked inside. Nothing was taken out. " +
             $"Do NOT state what is inside: {o.ActorName} can see the contents, but they are {o.ActorName}'s to see, " +
             "not the room's — narrate only that the lid is up and " + $"{o.ActorName} is looking in.",
-        TakeItemOutcome t =>
-            $"{t.ContainerName} was ALREADY OPEN and stays open — it is not opened in this moment and no lid " +
-            $"is lifted. The only change is that {t.ActorName} took the {t.ItemName} out of it and now holds it " +
-            "in plain sight, where everyone can see what it is.",
+        TakeItemOutcome t => DescribeTakeTransition(t),
         _ => outcome.Summary
     };
+
+    /// <summary>
+    /// The transition hint for a take, phrased for what was taken FROM — an ordinary open container, a fallen
+    /// character's body, or the floor. Corpses and the floor are not chests: a body is never "opened" or
+    /// "reached into", and the floor holds things simply lying there. Getting this right stops the engine's
+    /// container representation ("the open corpse", "reaches into") from leaking into the fiction.
+    /// </summary>
+    private string DescribeTakeTransition(TakeItemOutcome t)
+    {
+        var container = FindContainer(t.ContainerId);
+        if (container is { IsCorpse: true })
+        {
+            return $"The {t.ItemName} was on {t.ContainerName} — a fallen character's BODY, not a chest or a " +
+                   $"container. Narrate {t.ActorName} taking the {t.ItemName} from the body in plain terms " +
+                   $"(stooping over the fallen, lifting it from a belt or slack hand). NEVER call the body " +
+                   $"'open' or a 'container', never say {t.ActorName} 'reaches into' or 'opens' it, and never " +
+                   $"mention a lid. The only change is that {t.ActorName} now holds the {t.ItemName} in plain sight.";
+        }
+
+        if (container is { IsGround: true })
+        {
+            return $"The {t.ItemName} was lying on {t.ContainerName} in plain sight. Narrate {t.ActorName} " +
+                   $"simply picking the {t.ItemName} up off the floor. Do NOT describe a container, a lid, or " +
+                   $"reaching inside anything. The only change is that {t.ActorName} now holds it.";
+        }
+
+        return $"{t.ContainerName} was ALREADY OPEN and stays open — it is not opened in this moment and no lid " +
+               $"is lifted. The only change is that {t.ActorName} took the {t.ItemName} out of it and now holds it " +
+               "in plain sight, where everyone can see what it is.";
+    }
 
     /// <summary>
     /// Records a public narration on the shared channel, delivered to the acting character at once and to
@@ -1606,6 +1855,23 @@ public sealed class TurnCoordinator
                 return new SurrenderAction(
                     ResolveActingCharacter(call, DungeonMasterTools.ActorParameter, character));
 
+            case DungeonMasterTools.GiveItemName:
+                return new GiveItemAction(
+                    ResolveActingCharacter(call, DungeonMasterTools.ActorParameter, character),
+                    ToolArguments.GetRequiredString(call, DungeonMasterTools.RecipientParameter),
+                    ToolArguments.GetRequiredString(call, DungeonMasterTools.ItemParameter));
+
+            case DungeonMasterTools.DropItemName:
+                return new DropItemAction(
+                    ResolveActingCharacter(call, DungeonMasterTools.ActorParameter, character),
+                    ToolArguments.GetRequiredString(call, DungeonMasterTools.ItemParameter));
+
+            case DungeonMasterTools.StealItemName:
+                return new StealItemAction(
+                    ResolveActingCharacter(call, DungeonMasterTools.ThiefParameter, character),
+                    ToolArguments.GetRequiredString(call, DungeonMasterTools.TargetParameter),
+                    ToolArguments.GetRequiredString(call, DungeonMasterTools.ItemParameter));
+
             default:
                 throw new ArgumentException($"No engine action is mapped to tool '{call.Name}'.");
         }
@@ -1750,7 +2016,8 @@ public sealed class TurnCoordinator
             Reason = reason,
             TranslatedAction = action,
             DungeonMasterText = dungeonMasterText,
-            ActingCharacterKnowledge = _actingKnowledgeView
+            ActingCharacterKnowledge = _actingKnowledgeView,
+            ConsultationId = _currentConsultationId
         }, DungeonMasterAgent.AgentIdentifier);
 
     private void DispatchAndRecord(CharacterAgent character, FunctionCallContent call, string result, string decision)
@@ -1893,8 +2160,15 @@ public sealed class TurnCoordinator
     /// </summary>
     private async Task MaybeSummariseHistoryAsync(CharacterAgent character, CancellationToken cancellationToken)
     {
+        // The budget is derived from the character's own context window, output budget and measured prompt
+        // overhead — not the configured number alone — so summarisation keeps the FULL request (messages plus
+        // the tool schemas and chat-template scaffolding the estimate cannot see, plus room for the reply)
+        // inside the window. Budgeting against the message-only estimate alone let the real prompt sit right
+        // under the window and truncate replies.
+        var budget = character.EffectiveHistoryBudget(_limits.HistoryTokenBudget);
+
         var before = character.EstimateHistoryTokens();
-        if (before <= _limits.HistoryTokenBudget)
+        if (before <= budget)
         {
             return;
         }
@@ -1920,10 +2194,12 @@ public sealed class TurnCoordinator
             CharacterName = character.Name,
             EstimatedTokensBefore = before,
             EstimatedTokensAfter = after,
+            EffectiveBudget = budget,
+            MeasuredPromptOverhead = character.ObservedPromptOverheadTokens,
             Summary = recap
         });
 
-        _console.Notice($"{character.Name}'s older memories were summarised (~{before} → ~{after} tokens).");
+        _console.Notice($"{character.Name}'s older memories were summarised (~{before} → ~{after} tokens, budget {budget}).");
     }
 
     private void RecordDungeonMasterToolResult(FunctionCallContent call, object? result)
@@ -2096,6 +2372,224 @@ public sealed class TurnCoordinator
             WorldVersionAfter = after.Version
         }, character.Name);
     }
+
+    /// <summary>
+    /// Whether an attempted theft lacks a legitimate informational basis: the thief holds no knowledge that
+    /// the named item exists at all. Resolved from the target's current inventory and the thief's ledger,
+    /// without revealing anything — a thief with no basis is refused whether or not the target actually
+    /// carries the item. Returns false (basis present, let it proceed to the engine) when the item does not
+    /// resolve against the target, so the engine gives the ordinary "not carrying it" refusal instead.
+    /// </summary>
+    private bool StealLacksKnowledgeBasis(CharacterAgent character, StealItemAction steal, out string reason)
+    {
+        reason = "You have no way of knowing they are carrying such a thing.";
+
+        var target = _engine.State.Resolve(steal.TargetRef);
+        var item = target?.FindItem(steal.ItemRef);
+        if (item is null)
+        {
+            // The item does not resolve against the target; let the engine handle it (unknown target/item),
+            // rather than pre-judging a basis for something that may not be there.
+            return false;
+        }
+
+        return !_knowledge.KnowsItem(character.CharacterId, item.Id);
+    }
+
+    /// <summary>
+    /// Whether taking a specific item from a container lacks a legitimate informational basis: the character
+    /// has no way of knowing that item is inside it. Resolved from the container's current contents and the
+    /// character's own knowledge, without revealing anything — a character with no basis is refused whether or
+    /// not the item is really there. The floor (ground loot dropped in plain sight) is always fair game. Basis
+    /// counts when the character has directly observed the container's contents including this item, knows the
+    /// item as a thing in the open (seen carried, taken, given or dropped), or has been told of it (hearsay).
+    /// Returns false (let the engine handle it) when the container or item does not resolve.
+    /// </summary>
+    private bool TakeLacksKnowledgeBasis(CharacterAgent character, TakeItemAction take, out string reason)
+    {
+        // Phrased as a plain physical fact (you cannot see well enough to grab a particular thing), not as
+        // knowledge bookkeeping, so it reads in-world and does not trip the machinery-leak rephrase.
+        reason = "You cannot make out anything in there clearly enough to lay a hand on it.";
+
+        if (_engine.State.ResolveObject(take.ContainerRef).Object is not Container container)
+        {
+            return false;
+        }
+
+        // The floor holds only things dropped in plain sight of everyone; anyone present may pick them up.
+        if (container.IsGround)
+        {
+            return false;
+        }
+
+        var item = container.FindItem(take.ItemRef);
+        if (item is null)
+        {
+            // The item does not resolve inside the container; let the engine give the ordinary refusal.
+            return false;
+        }
+
+        if (_knowledge.KnowsItemInContainer(character.CharacterId, container.Id, item.Id)
+            || _knowledge.KnowsItem(character.CharacterId, item.Id)
+            || HeardItemMentioned(character.CharacterId, item.Name))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Whether the character has heard another character say the item's name — a hearsay basis to reach for it.
+    /// A deliberately simple name match over what this character has heard on the public channel; it is a
+    /// permissive basis (better to allow a plausibly-heard take than to over-refuse), the strict floor being
+    /// the direct-knowledge and open-item checks alongside it.
+    /// </summary>
+    private bool HeardItemMentioned(string characterId, string itemName) =>
+        !string.IsNullOrWhiteSpace(itemName)
+        && _narrationLog.SpeechHeardBy(characterId)
+            .Any(entry => entry.Text.Contains(itemName, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Records the inventory-specific detail of a give/drop/steal attempt: the requested and resolved item
+    /// bindings, ownership before and after, turn consumption, and any RNG/rulebook linkage. Emitted for
+    /// accepted and rejected attempts alike; a no-op for non-inventory actions. When <paramref name="engineResult"/>
+    /// is null the attempt never reached the engine (a knowledge-basis refusal), carrying the given reason.
+    /// </summary>
+    private void EmitInventoryInteraction(CharacterAgent character, GameAction action, EngineResult? engineResult, string? rejectionReason)
+    {
+        if (action is not (GiveItemAction or DropItemAction or StealItemAction))
+        {
+            return;
+        }
+
+        var before = engineResult?.StateBefore ?? _engine.State;
+        var after = engineResult?.StateAfter ?? _engine.State;
+        var accepted = engineResult?.Accepted ?? false;
+
+        var (counterpartyRef, itemRef) = action switch
+        {
+            GiveItemAction g => (g.RecipientRef, g.ItemRef),
+            StealItemAction s => (s.TargetRef, s.ItemRef),
+            DropItemAction d => ((string?)null, d.ItemRef),
+            _ => (null, "")
+        };
+
+        var counterparty = counterpartyRef is null ? null : before.Resolve(counterpartyRef);
+        var resolvedItem = ResolveTransferItem(before, action, counterparty);
+        var theftSucceeded = (engineResult?.Outcome as StealItemOutcome)?.Succeeded;
+
+        var ownerBefore = action switch
+        {
+            GiveItemAction => character.CharacterId,
+            DropItemAction => character.CharacterId,
+            StealItemAction => counterparty?.Id,
+            _ => null
+        };
+
+        var ownerAfter = accepted
+            ? action switch
+            {
+                GiveItemAction => counterparty?.Id,
+                DropItemAction => Container.GroundId,
+                StealItemAction => theftSucceeded == true ? character.CharacterId : counterparty?.Id,
+                _ => ownerBefore
+            }
+            : ownerBefore;
+
+        _trace.Emit(TraceEventType.InventoryInteraction, new InventoryInteractionPayload
+        {
+            ActionType = action.ActionType,
+            ActorId = character.CharacterId,
+            ActorName = character.Name,
+            CounterpartyId = counterparty?.Id,
+            CounterpartyName = counterparty?.Name,
+            RequestedItemRef = itemRef,
+            ResolvedItemId = resolvedItem?.Id,
+            ResolvedItemName = resolvedItem?.Name,
+            ValidationResult = accepted ? "accepted" : "rejected",
+            RejectionReason = engineResult?.RejectionReason?.ToString() ?? rejectionReason,
+            OwnerBefore = ownerBefore,
+            OwnerAfter = ownerAfter,
+            WorldVersionBefore = before.Version,
+            WorldVersionAfter = after.Version,
+            TurnConsumed = accepted,
+            // Whether a draw actually happened — true only when the engine reached the theft roll, not merely
+            // because the action was a steal. A steal the engine rejects on validation rolls nothing.
+            RngConsulted = engineResult is { } r && r.RngDraws.Count > 0,
+            TheftSucceeded = theftSucceeded,
+            ConsultationId = _currentConsultationId,
+            VisibilityRecipients = accepted ? LivingRecipients() : []
+        }, character.Name);
+    }
+
+    /// <summary>Resolves the item a transfer action names, from wherever it currently sits, for the interaction record.</summary>
+    private static InventoryItem? ResolveTransferItem(GameState state, GameAction action, Character? counterparty) => action switch
+    {
+        GiveItemAction g => state.Resolve(g.GiverRef)?.FindItem(g.ItemRef),
+        DropItemAction d => state.Resolve(d.ActorRef)?.FindItem(d.ItemRef),
+        StealItemAction s => counterparty?.FindItem(s.ItemRef),
+        _ => null
+    };
+
+    /// <summary>
+    /// Records an item-provenance event for a successful movement — give, drop, steal (success) or take —
+    /// capturing the item, its previous and new owner/location, the acting character, any counterparty, the
+    /// round and turn, and the RNG/rulebook linkage. A no-op for a rejected action, a failed theft (nothing
+    /// moved), or a non-movement action, so the provenance history holds exactly the transfers that happened.
+    /// </summary>
+    private void EmitItemProvenance(CharacterAgent character, GameAction action, EngineResult engineResult)
+    {
+        if (!engineResult.Accepted)
+        {
+            return;
+        }
+
+        switch (engineResult.Outcome)
+        {
+            case GiveItemOutcome give:
+                EmitProvenance(give.ItemId, give.ItemName, give.GiverId, give.RecipientId, "give_item", character,
+                    give.RecipientId, give.RecipientName, engineResult, rngInvolved: false, "gave the item away");
+                break;
+            case DropItemOutcome drop:
+                EmitProvenance(drop.ItemId, drop.ItemName, drop.ActorId, Container.GroundId, "drop_item", character,
+                    null, null, engineResult, rngInvolved: false, "dropped the item on the floor");
+                break;
+            case StealItemOutcome { Succeeded: true } steal:
+                EmitProvenance(steal.ItemId, steal.ItemName, steal.TargetId, steal.ThiefId, "steal_item", character,
+                    steal.TargetId, steal.TargetName, engineResult, rngInvolved: true, "stole the item");
+                break;
+            case TakeItemOutcome take:
+                EmitProvenance(take.ItemId, take.ItemName, take.ContainerId, take.ActorId, "take_item", character,
+                    null, null, engineResult, rngInvolved: false, "took the item from a container");
+                break;
+        }
+    }
+
+    private void EmitProvenance(
+        string itemId, string itemName, string previousOwnerOrLocation, string newOwnerOrLocation, string actionType,
+        CharacterAgent actor, string? counterpartyId, string? counterpartyName, EngineResult engineResult,
+        bool rngInvolved, string reason) =>
+        _trace.Emit(TraceEventType.ItemProvenance, new ItemProvenancePayload
+        {
+            ItemId = itemId,
+            ItemName = itemName,
+            PreviousOwnerOrLocation = previousOwnerOrLocation,
+            NewOwnerOrLocation = newOwnerOrLocation,
+            ActionType = actionType,
+            ActingCharacterId = actor.CharacterId,
+            ActingCharacterName = actor.Name,
+            CounterpartyId = counterpartyId,
+            CounterpartyName = counterpartyName,
+            Round = _trace.Round,
+            Turn = _trace.Turn,
+            WorldVersionBefore = engineResult.StateBefore.Version,
+            WorldVersionAfter = engineResult.StateAfter.Version,
+            RngInvolved = rngInvolved,
+            RngTracePurpose = rngInvolved ? "steal.attempt" : null,
+            ConsultationId = _currentConsultationId,
+            Reason = reason
+        }, actor.Name);
 
     private void EmitLimit(string limit, int value, string effect) =>
         _trace.Emit(TraceEventType.HarnessLimitReached, new HarnessLimitPayload

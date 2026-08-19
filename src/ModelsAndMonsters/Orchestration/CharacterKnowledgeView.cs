@@ -119,19 +119,25 @@ public static class CharacterKnowledgeView
         },
         FactType.ContainerOpened => $"{fact.Description} You saw it happen — though what is inside it you know only if you looked.",
         FactType.ItemRemoved => $"{fact.Description} You saw it happen.",
+        FactType.ItemGiven or FactType.ItemDropped or FactType.ItemTheftAttempted => $"{fact.Description} You saw it happen.",
+        FactType.ItemPossession => fact.Description,
         _ => fact.Description
     };
 
     private static string DungeonMasterLine(KnowledgeFact fact, CharacterKnowledge record)
     {
-        var how = record.Source switch
-        {
-            KnowledgeSource.Backstory => "known from before the fight began",
-            KnowledgeSource.DirectInspection => "by inspecting it closely",
-            KnowledgeSource.OpenedContainer => "by opening it and looking inside",
-            KnowledgeSource.PublicEvent => "seen happen in the open",
-            _ => "observed"
-        };
+        // An openly-carried item is a plainly-visible public fact, not something learned by an event or known
+        // from before — say so directly, so the DM never treats it as prior or private knowledge.
+        var how = fact.FactType == FactType.ItemPossession
+            ? "plainly visible — carried openly on the person"
+            : record.Source switch
+            {
+                KnowledgeSource.Backstory => "known from before the fight began",
+                KnowledgeSource.DirectInspection => "by inspecting it closely",
+                KnowledgeSource.OpenedContainer => "by opening it and looking inside",
+                KnowledgeSource.PublicEvent => "seen happen in the open",
+                _ => "observed"
+            };
 
         var when = record.LearnedAtRound > 0 ? $"round {record.LearnedAtRound}" : "before play";
         var version = fact.FactType == FactType.ContainerContents

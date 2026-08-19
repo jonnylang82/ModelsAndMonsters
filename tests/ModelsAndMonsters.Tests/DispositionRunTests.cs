@@ -99,6 +99,9 @@ public sealed class DispositionRunTests : IDisposable
                 MaxModelCallsPerTurn = 8,
                 UseIntentParser = false,
                 SummariseHistory = false,
+                // The v0.6 rulebook stage is exercised by its own tests; this scripted run tests the
+                // deterministic core, so switch it off rather than script a resolver client per attempt.
+                EnableRulebookResolver = false,
                 RunOutputDirectory = _directory
             },
             Combat = new CombatOptions { GlancingBlowChance = 0 }

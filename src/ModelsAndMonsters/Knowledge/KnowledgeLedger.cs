@@ -109,7 +109,8 @@ public sealed class KnowledgeLedger
             SubjectId = subjectId,
             FactType = FactType.ContainerContents,
             Description = DescribeContents(subjectName, contents),
-            WorldVersion = worldVersion
+            WorldVersion = worldVersion,
+            ItemIds = [.. contents.Select(i => i.Id)]
         };
         _facts[id] = fact;
         bySignature[signature] = id;
@@ -118,7 +119,9 @@ public sealed class KnowledgeLedger
 
     /// <summary>
     /// A public item-removal fact: an identifiable item was taken from a container and is now carried, in
-    /// plain view of the room. Keyed by item and the world version at which the removal happened.
+    /// plain view of the room. Keyed by item and the world version at which the removal happened. The fact's
+    /// subject is the <em>item</em>, so knowing it counts as knowing the item exists and is carried — a
+    /// legitimate informational basis for a later theft attempt (see <see cref="KnowsItem"/>).
     /// </summary>
     public FactResult GetOrAddRemovalFact(string itemId, string itemName, string actorName, string containerName, string subjectId, int worldVersion)
     {
@@ -131,13 +134,159 @@ public sealed class KnowledgeLedger
         var fact = new KnowledgeFact
         {
             Id = id,
-            SubjectId = subjectId,
+            SubjectId = itemId,
             FactType = FactType.ItemRemoved,
             Description = $"{actorName} removed the {itemName} from the {containerName} and now carries it.",
             WorldVersion = worldVersion
         };
         _facts[id] = fact;
         return new FactResult(fact, WasCreated: true);
+    }
+
+    /// <summary>
+    /// A public item-possession fact: a character is openly carrying an item, plainly visible to everyone in
+    /// the room. Minted for seeded starting inventory so that what someone carries is knowable to others.
+    /// Keyed by the item, so it is static (world version of first observation); who currently holds it comes
+    /// from authoritative state, but that the item exists and is carried is a stable, observable fact.
+    /// </summary>
+    public FactResult GetOrAddItemPossessionFact(string itemId, string itemName, string ownerName, int worldVersion)
+    {
+        var id = $"{itemId}-carried";
+        if (_facts.TryGetValue(id, out var existing))
+        {
+            return new FactResult(existing, WasCreated: false);
+        }
+
+        var fact = new KnowledgeFact
+        {
+            Id = id,
+            SubjectId = itemId,
+            FactType = FactType.ItemPossession,
+            Description = $"{ownerName} is carrying the {itemName}.",
+            WorldVersion = worldVersion
+        };
+        _facts[id] = fact;
+        return new FactResult(fact, WasCreated: true);
+    }
+
+    /// <summary>
+    /// A public item-give fact: one character handed an item to another in plain view. Keyed by item and the
+    /// world version at which the give happened. Its subject is the item, so it establishes basis to know it.
+    /// </summary>
+    public FactResult GetOrAddGiveFact(string itemId, string itemName, string giverName, string recipientName, int worldVersion)
+    {
+        var id = $"{itemId}-given-wv{worldVersion}";
+        if (_facts.TryGetValue(id, out var existing))
+        {
+            return new FactResult(existing, WasCreated: false);
+        }
+
+        var fact = new KnowledgeFact
+        {
+            Id = id,
+            SubjectId = itemId,
+            FactType = FactType.ItemGiven,
+            Description = $"{giverName} gave the {itemName} to {recipientName}, who now carries it.",
+            WorldVersion = worldVersion
+        };
+        _facts[id] = fact;
+        return new FactResult(fact, WasCreated: true);
+    }
+
+    /// <summary>
+    /// A public item-drop fact: a character dropped an item onto the floor in plain view. Keyed by item and
+    /// the world version at which the drop happened. Its subject is the item.
+    /// </summary>
+    public FactResult GetOrAddDropFact(string itemId, string itemName, string actorName, int worldVersion)
+    {
+        var id = $"{itemId}-dropped-wv{worldVersion}";
+        if (_facts.TryGetValue(id, out var existing))
+        {
+            return new FactResult(existing, WasCreated: false);
+        }
+
+        var fact = new KnowledgeFact
+        {
+            Id = id,
+            SubjectId = itemId,
+            FactType = FactType.ItemDropped,
+            Description = $"{actorName} dropped the {itemName} on the floor, where it lies in plain sight.",
+            WorldVersion = worldVersion
+        };
+        _facts[id] = fact;
+        return new FactResult(fact, WasCreated: true);
+    }
+
+    /// <summary>
+    /// A public theft-attempt fact: a theft was tried in plain view and either succeeded or failed. Keyed by
+    /// item and the world version at which it was resolved. Its subject is the item, so witnessing a theft
+    /// attempt — even a failed one — is itself a legitimate basis to know the item exists.
+    /// </summary>
+    public FactResult GetOrAddTheftFact(string itemId, string itemName, string thiefName, string targetName, bool succeeded, int worldVersion)
+    {
+        var id = $"{itemId}-theft-wv{worldVersion}";
+        if (_facts.TryGetValue(id, out var existing))
+        {
+            return new FactResult(existing, WasCreated: false);
+        }
+
+        var description = succeeded
+            ? $"{thiefName} stole the {itemName} from {targetName} and now carries it."
+            : $"{thiefName} tried to steal the {itemName} from {targetName} but failed; {targetName} kept it.";
+
+        var fact = new KnowledgeFact
+        {
+            Id = id,
+            SubjectId = itemId,
+            FactType = FactType.ItemTheftAttempted,
+            Description = description,
+            WorldVersion = worldVersion
+        };
+        _facts[id] = fact;
+        return new FactResult(fact, WasCreated: true);
+    }
+
+    /// <summary>
+    /// Whether a character holds any knowledge record about the given item — a legitimate informational basis
+    /// for naming or acting on that item. True when the character knows any fact whose subject is the item:
+    /// having seen it carried, seen it taken, given, dropped, or having been shown it. This is what stops a
+    /// character stealing an item it has no way of knowing exists, without leaking the item's presence.
+    /// </summary>
+    public bool KnowsItem(string characterId, string itemId)
+    {
+        foreach (var record in RecordsFor(characterId))
+        {
+            var fact = FindFact(record.FactId);
+            if (fact is not null && string.Equals(fact.SubjectId, itemId, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Whether a character has directly observed that a specific item is (or was) inside a specific container —
+    /// a legitimate basis to reach for it. True when the character holds a <see cref="FactType.ContainerContents"/>
+    /// record for that container whose observed contents include the item (from opening it, inspecting it while
+    /// open, or knowing it from before the fight). This is what lets <c>take_item</c> refuse an item a character
+    /// has no way to identify inside a container, so a Dungeon Master's slip cannot become a valid state change.
+    /// </summary>
+    public bool KnowsItemInContainer(string characterId, string containerId, string itemId)
+    {
+        foreach (var record in RecordsFor(characterId))
+        {
+            var fact = FindFact(record.FactId);
+            if (fact is { FactType: FactType.ContainerContents }
+                && string.Equals(fact.SubjectId, containerId, StringComparison.OrdinalIgnoreCase)
+                && fact.ItemIds.Any(id => string.Equals(id, itemId, StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

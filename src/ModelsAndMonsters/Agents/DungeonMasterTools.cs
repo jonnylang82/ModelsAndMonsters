@@ -20,6 +20,9 @@ public static class DungeonMasterTools
     public const string OpenExitName = "open_exit";
     public const string EscapeEncounterName = "escape_encounter";
     public const string SurrenderName = "surrender";
+    public const string GiveItemName = "give_item";
+    public const string DropItemName = "drop_item";
+    public const string StealItemName = "steal_item";
     public const string RejectActionName = "reject_action";
 
     public const string AttackerParameter = "attacker";
@@ -30,6 +33,8 @@ public static class DungeonMasterTools
     public const string ContainerParameter = "container";
     public const string ObjectParameter = "object";
     public const string ExitParameter = "exit";
+    public const string RecipientParameter = "recipient";
+    public const string ThiefParameter = "thief";
     public const string CategoryParameter = "category";
     public const string ReasonParameter = "reason";
 
@@ -158,6 +163,53 @@ public static class DungeonMasterTools
         """),
         returnJsonSchema: null);
 
+    public static readonly AIFunctionDeclaration GiveItem = AIFunctionFactory.CreateDeclaration(
+        GiveItemName,
+        "Resolve the ACTING character handing one of their own ordinary inventory items to another character present in the room. Use only when the acting character gives away an item they carry; the recipient may be an ally or an enemy. Not for an equipped weapon.",
+        ToolSchema.Parse($$"""
+        {
+          "type": "object",
+          "properties": {
+            "{{ActorParameter}}":     { "type": "string", "description": "Name of the character giving the item — always the character whose intent you are adjudicating — exactly as given in the authoritative state." },
+            "{{RecipientParameter}}": { "type": "string", "description": "Name of the character receiving the item, exactly as given in the authoritative state." },
+            "{{ItemParameter}}":      { "type": "string", "description": "Name of the item being given, exactly as it appears in the giver's inventory." }
+          },
+          "required": ["{{ActorParameter}}", "{{RecipientParameter}}", "{{ItemParameter}}"]
+        }
+        """),
+        returnJsonSchema: null);
+
+    public static readonly AIFunctionDeclaration DropItem = AIFunctionFactory.CreateDeclaration(
+        DropItemName,
+        "Resolve the ACTING character dropping one of their own ordinary inventory items onto the floor, where anyone may later pick it up. Not for an equipped weapon.",
+        ToolSchema.Parse($$"""
+        {
+          "type": "object",
+          "properties": {
+            "{{ActorParameter}}": { "type": "string", "description": "Name of the character dropping the item — always the character whose intent you are adjudicating — exactly as given in the authoritative state." },
+            "{{ItemParameter}}":  { "type": "string", "description": "Name of the item being dropped, exactly as it appears in the actor's inventory." }
+          },
+          "required": ["{{ActorParameter}}", "{{ItemParameter}}"]
+        }
+        """),
+        returnJsonSchema: null);
+
+    public static readonly AIFunctionDeclaration StealItem = AIFunctionFactory.CreateDeclaration(
+        StealItemName,
+        "Resolve the ACTING character trying to snatch one ordinary inventory item from another active character. The attempt is always noticed and may fail. Use only for an item the thief has a legitimate reason to know the target carries. Equipped weapons cannot be stolen.",
+        ToolSchema.Parse($$"""
+        {
+          "type": "object",
+          "properties": {
+            "{{ThiefParameter}}":  { "type": "string", "description": "Name of the character attempting the theft — always the character whose intent you are adjudicating — exactly as given in the authoritative state." },
+            "{{TargetParameter}}": { "type": "string", "description": "Name of the character being stolen from, exactly as given in the authoritative state." },
+            "{{ItemParameter}}":   { "type": "string", "description": "Name of the item being stolen, exactly as it appears in the target's inventory." }
+          },
+          "required": ["{{ThiefParameter}}", "{{TargetParameter}}", "{{ItemParameter}}"]
+        }
+        """),
+        returnJsonSchema: null);
+
     public static readonly AIFunctionDeclaration RejectAction = AIFunctionFactory.CreateDeclaration(
         RejectActionName,
         "Refuse the stated intent because it cannot happen. Use this whenever the intent is not a direct weapon strike or an item use.",
@@ -181,5 +233,28 @@ public static class DungeonMasterTools
         returnJsonSchema: null);
 
     public static readonly IReadOnlyList<AITool> All =
-        [AttackCharacter, UseItem, OpenContainer, TakeItem, InspectObject, OpenExit, EscapeEncounter, Surrender, RejectAction];
+    [
+        AttackCharacter, UseItem, OpenContainer, TakeItem, InspectObject, OpenExit, EscapeEncounter,
+        Surrender, GiveItem, DropItem, StealItem, RejectAction
+    ];
+
+    /// <summary>
+    /// Every engine-action tool by name — the whole set minus the rejection. Used to map the rulebook
+    /// resolver's candidate action names to the concrete tool declarations exposed for one adjudication.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, AIFunctionDeclaration> EngineActionsByName =
+        new Dictionary<string, AIFunctionDeclaration>(StringComparer.OrdinalIgnoreCase)
+        {
+            [AttackCharacterName] = AttackCharacter,
+            [UseItemName] = UseItem,
+            [OpenContainerName] = OpenContainer,
+            [TakeItemName] = TakeItem,
+            [InspectObjectName] = InspectObject,
+            [OpenExitName] = OpenExit,
+            [EscapeEncounterName] = EscapeEncounter,
+            [SurrenderName] = Surrender,
+            [GiveItemName] = GiveItem,
+            [DropItemName] = DropItem,
+            [StealItemName] = StealItem
+        };
 }

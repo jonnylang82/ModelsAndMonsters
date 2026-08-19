@@ -279,6 +279,8 @@ public sealed class TurnOrchestrationTests
         Assert.DoesNotContain(DungeonMasterTools.OpenContainerName, heroTools);
         Assert.DoesNotContain(DungeonMasterTools.TakeItemName, heroTools);
 
+        // With no rulebook resolver wired (the v0.5 path), the DM adjudication call carries the full engine
+        // tool surface plus the rejection. v0.6 narrows it per-request only when a resolver is present.
         var dungeonMasterTools = harness.DungeonMasterClient.RequestOptions[0]!.Tools!.Select(t => t.Name).ToList();
         Assert.Equal(
             [
@@ -286,7 +288,8 @@ public sealed class TurnOrchestrationTests
                 DungeonMasterTools.OpenContainerName, DungeonMasterTools.TakeItemName,
                 DungeonMasterTools.InspectObjectName, DungeonMasterTools.OpenExitName,
                 DungeonMasterTools.EscapeEncounterName, DungeonMasterTools.SurrenderName,
-                DungeonMasterTools.RejectActionName
+                DungeonMasterTools.GiveItemName, DungeonMasterTools.DropItemName,
+                DungeonMasterTools.StealItemName, DungeonMasterTools.RejectActionName
             ],
             dungeonMasterTools);
 

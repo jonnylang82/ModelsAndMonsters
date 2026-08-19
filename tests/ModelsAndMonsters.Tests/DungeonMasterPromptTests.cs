@@ -30,20 +30,20 @@ public sealed class DungeonMasterPromptTests
         var adjudicate = SystemOf(requests[0]);   // the adjudication call carries tools
         var narrate = SystemOf(requests[^1]);      // the outcome narration is the last DM call
 
-        // The hot adjudication path carries the adjudication rules but NOT the narration/answering rules.
-        Assert.Contains("Decide in this order", adjudicate, StringComparison.Ordinal);
+        // The hot adjudication path carries the compact adjudication constitution but NOT the narration/answering
+        // rules. In v0.6 the detailed per-action decision procedure has moved out into rule cards, so the DM
+        // system prompt no longer carries it — it binds the rulebook guidance supplied per request instead.
+        Assert.Contains("Adjudication constitution", adjudicate, StringComparison.Ordinal);
+        Assert.Contains("rule guidance", adjudicate, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("# Narration rules", adjudicate, StringComparison.Ordinal);
         Assert.DoesNotContain("# Answering rules", adjudicate, StringComparison.Ordinal);
 
-        // The narration call carries the narration rules but NOT the adjudication decision procedure.
+        // The narration call carries the narration rules but NOT the adjudication constitution.
         Assert.Contains("# Narration rules", narrate, StringComparison.Ordinal);
-        Assert.DoesNotContain("Decide in this order", narrate, StringComparison.Ordinal);
+        Assert.DoesNotContain("Adjudication constitution", narrate, StringComparison.Ordinal);
 
-        // Both share the core (the shape of the world), and the narration call is far leaner than the
-        // adjudication one because it sheds the large decision procedure.
+        // Both share the core (the shape of the world).
         Assert.Contains("The shape of this world", adjudicate, StringComparison.Ordinal);
         Assert.Contains("The shape of this world", narrate, StringComparison.Ordinal);
-        Assert.True(narrate.Length < adjudicate.Length,
-            $"narration prompt ({narrate.Length}) should be leaner than adjudication prompt ({adjudicate.Length})");
     }
 }

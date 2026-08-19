@@ -38,6 +38,13 @@ public enum EngineRejectionReason
     ExitAlreadyOpen,
     ExitClosed,
 
+    // Inventory transfers (v0.6).
+    UnknownRecipient,
+    RecipientNotPresent,
+    RecipientIsSelf,
+    TargetNotPresent,
+    EquippedWeaponCannotBeTransferred,
+
     UnsupportedAction
 }
 

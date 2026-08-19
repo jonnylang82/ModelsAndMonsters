@@ -33,6 +33,16 @@ public abstract class ModelAgent
     /// <summary>This agent's private history. Never shared with another agent.</summary>
     public AgentConversation Conversation { get; }
 
+    private int _observedPromptOverhead = ContextTruncation.DefaultPromptOverheadTokens;
+
+    /// <summary>
+    /// The measured request overhead, in tokens, beyond the message text our estimate counts — the tool-call
+    /// schemas and the model's chat-template scaffolding. Learned as the largest gap seen between the
+    /// provider's reported input size and our message-only estimate, so history summarisation can budget
+    /// against the FULL request. Starts at a conservative default until the first reported usage refines it.
+    /// </summary>
+    public int ObservedPromptOverheadTokens => _observedPromptOverhead;
+
     /// <summary>
     /// Sends the agent's full history to its model and appends the reply to the history.
     /// </summary>
@@ -69,6 +79,15 @@ public abstract class ModelAgent
     private const int MaxTransientAttempts = 3;
 
     /// <summary>
+    /// The temperature a retry is floored to, so a re-send actually re-samples rather than reproducing the
+    /// same reply. The common transient 5xx is the provider's tool-call parser rejecting a reply the model
+    /// malformed; at temperature zero the draw is greedy and deterministic, so an identical re-send returns
+    /// the identical bad reply (measured: a temp-0 IntentParser 500'd three times on the same malformed XML).
+    /// A small floor breaks the loop while barely perturbing an agent that is already sampling.
+    /// </summary>
+    private const float RetryTemperatureFloor = 0.1f;
+
+    /// <summary>
     /// Sends the request, re-sending on a transient provider failure before giving up. A provider can
     /// return a 5xx for a passing reason — a busy server, or its own tool-call parser rejecting a reply the
     /// model happened to malform — and a fresh send re-samples the reply, which almost always succeeds. One
@@ -76,6 +95,12 @@ public abstract class ModelAgent
     /// shaped wrong) is surfaced at once rather than hammered. Each attempt is its own traced call, so a
     /// retried failure still shows in the trace as a model error followed by the successful send.
     /// </summary>
+    /// <remarks>
+    /// The first attempt uses the agent's exact profile, so a run with no failures still replays identically.
+    /// A retry re-samples: the temperature is floored to <see cref="RetryTemperatureFloor"/> and the seed is
+    /// offset by the attempt number, so the draw genuinely moves rather than repeating the same fault — a
+    /// greedy temp-0 agent with a pinned seed would otherwise reproduce its malformed reply on every retry.
+    /// </remarks>
     private async Task<ChatResponse> SendWithTransientRetryAsync(
         AgentConversation conversation,
         string purpose,
@@ -84,22 +109,65 @@ public abstract class ModelAgent
     {
         for (var attempt = 1; ; attempt++)
         {
+            var profile = attempt == 1 ? Profile : WithRetrySampling(Profile, attempt);
             try
             {
-                var resolved = ChatOptionsFactory.Create(Profile, tools);
+                var resolved = ChatOptionsFactory.Create(profile, tools);
                 using (_client.BeginCall(purpose, resolved.UnsupportedOptionsDropped))
                 {
-                    return await _client
+                    var response = await _client
                         .GetResponseAsync(conversation.BuildRequestMessages(), resolved.Options, cancellationToken)
                         .ConfigureAwait(false);
+
+                    // Learn the request's non-message overhead (tool schemas + chat template) from what the
+                    // provider says it actually processed, so history budgeting reflects the full prompt. The
+                    // response is not yet appended to the conversation here, so this estimates exactly what was sent.
+                    RecordPromptOverhead(conversation, response);
+                    return response;
                 }
             }
             catch (HttpRequestException ex)
                 when (attempt < MaxTransientAttempts && IsTransient(ex) && !cancellationToken.IsCancellationRequested)
             {
-                // Back off briefly, then re-send: a new sample rarely reproduces the same fault.
+                // Back off briefly, then re-send with re-sampling (see WithRetrySampling) so a new draw
+                // rarely reproduces the same fault.
                 await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), cancellationToken).ConfigureAwait(false);
             }
+        }
+    }
+
+    /// <summary>
+    /// The profile a retry attempt uses: the agent's own, but with the temperature raised to at least
+    /// <see cref="RetryTemperatureFloor"/> and the seed offset by the attempt number. Together these ensure a
+    /// re-send draws a different sample — a temperature floor so sampling is not greedy, and a moved seed so
+    /// the draw is not pinned to the same sequence — which is what lets a retry escape a deterministic fault
+    /// such as a malformed tool call. It never lowers an agent's temperature (the floor is a minimum), so an
+    /// agent already sampling above the floor keeps its own temperature and only gets the seed offset.
+    /// </summary>
+    private static AgentModelProfile WithRetrySampling(AgentModelProfile profile, int attempt) =>
+        profile with
+        {
+            Temperature = Math.Max(profile.Temperature ?? 0f, RetryTemperatureFloor),
+            Seed = profile.Seed is { } seed ? seed + attempt : null
+        };
+
+    /// <summary>
+    /// Refines <see cref="ObservedPromptOverheadTokens"/> from the provider's reported input size: the gap
+    /// between it and our message-only estimate is the tool-schema and chat-template overhead the estimate
+    /// cannot see. The largest gap seen is kept (conservative — better to summarise a little early than to
+    /// truncate). A provider that reports no usage leaves the current estimate untouched.
+    /// </summary>
+    private void RecordPromptOverhead(AgentConversation conversation, ChatResponse response)
+    {
+        if (response.Usage?.InputTokenCount is not long reported)
+        {
+            return;
+        }
+
+        var overhead = (int)reported - ContextTruncation.EstimateSentTokens(conversation.BuildRequestMessages());
+        if (overhead > _observedPromptOverhead)
+        {
+            _observedPromptOverhead = overhead;
         }
     }
 

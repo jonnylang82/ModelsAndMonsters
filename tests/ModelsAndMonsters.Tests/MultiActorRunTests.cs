@@ -141,6 +141,9 @@ public sealed class MultiActorRunTests : IDisposable
                 // scripted factory for parser/summariser clients it has no script for.
                 UseIntentParser = false,
                 SummariseHistory = false,
+                // Likewise the rulebook resolver: this scripted run exercises the deterministic core, not the
+                // v0.6 rulebook stage, so switch it off rather than script a resolver client for every attempt.
+                EnableRulebookResolver = false,
                 RunOutputDirectory = _directory
             },
             Combat = new CombatOptions { GlancingBlowChance = 0 } // deterministic damage

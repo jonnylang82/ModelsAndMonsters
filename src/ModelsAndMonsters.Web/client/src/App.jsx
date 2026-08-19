@@ -7,7 +7,7 @@ const API = 'http://localhost:5170'
 const LOG_KINDS = new Set([
   'runHeader', 'notice', 'round', 'narration', 'asks', 'acts', 'speaks',
   'passes', 'refused', 'privateObservation', 'attack',
-  'surrendered', 'escaped', 'exitOpened', 'completed', 'ending'
+  'surrendered', 'escaped', 'exitOpened', 'gave', 'dropped', 'stole', 'completed', 'ending'
 ])
 
 export default function App() {
@@ -16,6 +16,7 @@ export default function App() {
   const [characters, setCharacters] = useState([])
   const [objects, setObjects] = useState([])
   const [exits, setExits] = useState([])
+  const [ground, setGround] = useState([])
   const [turn, setTurn] = useState(null)
   const [round, setRound] = useState(null)
   const [log, setLog] = useState([])
@@ -31,6 +32,7 @@ export default function App() {
       setCharacters(p.characters || [])
       setObjects(p.objects || [])
       setExits(p.exits || [])
+      setGround(p.ground || [])
       return
     }
     if (evt.type === 'turnStarted') { setTurn(p.character); return }
@@ -41,7 +43,7 @@ export default function App() {
 
   const start = useCallback(async () => {
     esRef.current?.close()
-    setCharacters([]); setObjects([]); setExits([]); setTurn(null); setRound(null); setLog([]); setStatus('running')
+    setCharacters([]); setObjects([]); setExits([]); setGround([]); setTurn(null); setRound(null); setLog([]); setStatus('running')
     const res = await fetch(`${API}/api/runs`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
     })
@@ -60,7 +62,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="top">
-        <h1>🎲 Models &amp; Monsters 👺 <span className="version">v0.5</span></h1>
+        <h1>🎲 Models &amp; Monsters 🧌 <span className="version">v0.6</span></h1>
         <div className="controls">
           {round != null && <span className="round">Round {round}</span>}
           <span className={`status ${status}`}>{status}</span>
@@ -74,7 +76,7 @@ export default function App() {
         {characters.map((c) => <CharacterCard key={c.id} c={c} active={c.name === turn} />)}
       </section>
 
-      {(objects.length > 0 || exits.length > 0) && (
+      {(objects.length > 0 || exits.length > 0 || ground.length > 0) && (
         <section className="objects">
           {objects.map((o) => (
             <div key={o.id} className={`obj ${o.isContainer && o.isOpen ? 'open' : ''}`}>
@@ -82,6 +84,12 @@ export default function App() {
               {o.isContainer && <span className="obj-state">{o.isOpen ? 'open' : 'closed'}</span>}
             </div>
           ))}
+          {ground.length > 0 && (
+            <div className="obj ground open">
+              <span className="obj-name">🟫 On the floor</span>
+              <span className="obj-state">{ground.join(', ')}</span>
+            </div>
+          )}
           {exits.map((e) => (
             <div key={e.id} className={`obj exit ${e.isOpen ? 'open' : ''}`}>
               <span className="obj-name">🚪 {e.name}</span>
@@ -144,6 +152,9 @@ function LogLine({ evt }) {
     case 'exitOpened': return <div className="line outcome">🚪 {p.character} opens the {p.exit}.</div>
     case 'surrendered': return <div className="line outcome">🏳️ {p.character} surrenders and leaves the fight (still alive).</div>
     case 'escaped': return <div className="line outcome">🏃 {p.character} escapes through the {p.exit} and is gone (still alive).</div>
+    case 'gave': return <div className="line outcome">🤝 {p.character} gives the {p.item} to {p.recipient}.</div>
+    case 'dropped': return <div className="line outcome">🟫 {p.character} drops the {p.item} on the floor.</div>
+    case 'stole': return <div className="line outcome">{p.succeeded ? `🖐️ ${p.character} snatches the ${p.item} from ${p.target}!` : `✋ ${p.character} lunges for ${p.target}'s ${p.item} — but fails.`}</div>
     case 'completed': {
       const suffix = p.outcome && p.outcome !== 'Ongoing' ? ` — ${p.outcome}` : ''
       return <div className="line divider end">── {p.terminalCondition}{suffix} ──</div>

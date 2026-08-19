@@ -67,6 +67,15 @@ public sealed class CharacterAgent : ModelAgent
     /// <summary>A rough estimate of the tokens this character's next request would send, for the trim trigger.</summary>
     public int EstimateHistoryTokens() => ContextTruncation.EstimateSentTokens(Conversation.BuildRequestMessages());
 
+    /// <summary>
+    /// The effective summarisation budget for this character: the configured budget, but capped so the full
+    /// request — messages, tool scaffolding and room for the reply — stays inside the model's context window.
+    /// Derived from this character's own window, output budget and measured prompt overhead, so it self-
+    /// calibrates per model rather than trusting a fixed number that ignores the window and the tool overhead.
+    /// </summary>
+    public int EffectiveHistoryBudget(int configuredBudget) =>
+        ContextTruncation.EffectiveHistoryBudget(configuredBudget, Profile.ContextWindow, Profile.MaxOutputTokens, ObservedPromptOverheadTokens);
+
     /// <summary>Plans a summary trim keeping the last <paramref name="keepRecentTurns"/> turns full; false if there is nothing older to fold.</summary>
     public bool TryPlanHistorySummary(int keepRecentTurns, out int boundary, out string olderHistory) =>
         Conversation.TryPlanSummaryTrim(keepRecentTurns, out boundary, out olderHistory);

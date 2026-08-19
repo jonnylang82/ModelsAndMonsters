@@ -52,6 +52,9 @@ public sealed class GameEngine : IGameEngine
             OpenExitAction openExit => ResolveOpenExit(openExit),
             EscapeEncounterAction escape => ResolveEscapeEncounter(escape),
             SurrenderAction surrender => ResolveSurrender(surrender),
+            GiveItemAction give => ResolveGiveItem(give),
+            DropItemAction drop => ResolveDropItem(drop),
+            StealItemAction steal => ResolveStealItem(steal),
             _ => EngineResult.Reject(action, _state, EngineRejectionReason.UnsupportedAction,
                 $"The engine has no handler for action type '{action.ActionType}'.")
         };
@@ -234,6 +237,7 @@ public sealed class GameEngine : IGameEngine
                 Name = $"{updatedTarget.Name}'s body",
                 Description = $"The fallen body of {updatedTarget.Name}, its belongings within reach.",
                 IsOpen = true,
+                IsCorpse = true,
                 Contents = updatedTarget.Inventory
             };
 
@@ -691,6 +695,300 @@ public sealed class GameEngine : IGameEngine
         };
 
         return EngineResult.Accept(action, state, after, outcome);
+    }
+
+    /// <summary>
+    /// Resolves the current actor giving one of its ordinary inventory items to another character present in
+    /// the room. No randomness: the transfer is one atomic state change (the item leaves the giver and enters
+    /// the recipient in a single new state), so validation either passes and the item moves, or fails and
+    /// nothing changes. The giver is always the current actor; the engine never moves an item for someone else.
+    /// </summary>
+    private EngineResult ResolveGiveItem(GiveItemAction action)
+    {
+        var state = _state;
+
+        var giver = state.Resolve(action.GiverRef);
+        if (giver is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.UnknownActor,
+                $"There is no character called '{action.GiverRef}' in the room.");
+        }
+
+        if (!giver.CanAct)
+        {
+            return RejectInactiveActor(action, state, giver);
+        }
+
+        var recipient = state.Resolve(action.RecipientRef);
+        if (recipient is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.UnknownRecipient,
+                $"There is no character called '{action.RecipientRef}' in the room to give anything to.");
+        }
+
+        if (string.Equals(recipient.Id, giver.Id, StringComparison.OrdinalIgnoreCase))
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.RecipientIsSelf,
+                $"{giver.Name} cannot give an item to themselves.");
+        }
+
+        // The recipient must be alive and physically here to take it. A surrendered ally is still present and
+        // may be handed something; only the dead and the escaped are out of reach.
+        if (!recipient.IsAlive || !recipient.IsPresent)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.RecipientNotPresent,
+                $"{recipient.Name} is not here to take anything.");
+        }
+
+        if (NamesEquippedWeapon(giver, action.ItemRef))
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.EquippedWeaponCannotBeTransferred,
+                $"{giver.Name}'s {giver.Weapon!.Name} is their equipped weapon, not an item that can be handed over.");
+        }
+
+        var item = giver.FindItem(action.ItemRef);
+        if (item is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.ItemNotPossessed,
+                $"{giver.Name} is not carrying '{action.ItemRef}'.");
+        }
+
+        // One new state carries both halves of the transfer, then a single version increment: the item can
+        // never momentarily exist in both inventories or in neither.
+        var strippedGiver = giver with { Inventory = RemoveFirst(giver, item) };
+        var carryingRecipient = recipient with { Inventory = recipient.Inventory.Add(item) };
+        var after = state
+            .WithCharacter(strippedGiver)
+            .WithCharacter(carryingRecipient) with { Version = state.Version + 1 };
+
+        var outcome = new GiveItemOutcome
+        {
+            GiverId = giver.Id,
+            GiverName = giver.Name,
+            RecipientId = recipient.Id,
+            RecipientName = recipient.Name,
+            ItemId = item.Id,
+            ItemName = item.Name
+        };
+
+        return EngineResult.Accept(action, state, after, outcome);
+    }
+
+    /// <summary>
+    /// Resolves the current actor dropping one of its ordinary inventory items onto the room's ground-loot
+    /// location. No randomness. The item keeps its stable id and moves atomically from the actor's inventory
+    /// to the floor, where it can afterwards be taken through the ordinary <c>take_item</c> interaction. The
+    /// floor container is created the first time anything is dropped and reused thereafter.
+    /// </summary>
+    private EngineResult ResolveDropItem(DropItemAction action)
+    {
+        var state = _state;
+
+        var actor = state.Resolve(action.ActorRef);
+        if (actor is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.UnknownActor,
+                $"There is no character called '{action.ActorRef}' in the room.");
+        }
+
+        if (!actor.CanAct)
+        {
+            return RejectInactiveActor(action, state, actor);
+        }
+
+        if (NamesEquippedWeapon(actor, action.ItemRef))
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.EquippedWeaponCannotBeTransferred,
+                $"{actor.Name}'s {actor.Weapon!.Name} is their equipped weapon, not an item that can be dropped.");
+        }
+
+        var item = actor.FindItem(action.ItemRef);
+        if (item is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.ItemNotPossessed,
+                $"{actor.Name} is not carrying '{action.ItemRef}'.");
+        }
+
+        var (roomWithGround, ground) = PlaceOnGround(state.Room, item);
+        var strippedActor = actor with { Inventory = RemoveFirst(actor, item) };
+        var after = state.WithCharacter(strippedActor) with { Room = roomWithGround, Version = state.Version + 1 };
+
+        var outcome = new DropItemOutcome
+        {
+            ActorId = actor.Id,
+            ActorName = actor.Name,
+            ItemId = item.Id,
+            ItemName = item.Name,
+            GroundContainerName = ground.Name
+        };
+
+        return EngineResult.Accept(action, state, after, outcome);
+    }
+
+    /// <summary>
+    /// Resolves an attempted theft: the current actor trying to take one ordinary inventory item from another
+    /// active character. This is the one inventory action that consults randomness — exactly one seeded d100
+    /// draw against the configured base theft chance decides it. The attempt is always publicly noticed and
+    /// consumes the turn whether it succeeds or fails; on success the item moves atomically from target to
+    /// thief, on failure ownership is unchanged (and, like a missed attack, the state and its version are
+    /// untouched). Validation runs before the draw, so a rejected attempt consults no randomness at all.
+    /// </summary>
+    private EngineResult ResolveStealItem(StealItemAction action)
+    {
+        var state = _state;
+
+        var thief = state.Resolve(action.ThiefRef);
+        if (thief is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.UnknownActor,
+                $"There is no character called '{action.ThiefRef}' in the room.");
+        }
+
+        if (!thief.CanAct)
+        {
+            return RejectInactiveActor(action, state, thief);
+        }
+
+        var target = state.Resolve(action.TargetRef);
+        if (target is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.UnknownTarget,
+                $"There is no character called '{action.TargetRef}' in the room.");
+        }
+
+        if (string.Equals(target.Id, thief.Id, StringComparison.OrdinalIgnoreCase))
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.TargetIsSelf,
+                $"{thief.Name} cannot steal from themselves.");
+        }
+
+        // Both must be active and present: a surrendered, escaped or dead character is out of the fight and
+        // cannot be pickpocketed in v0.6.
+        if (!target.CanAct)
+        {
+            return target.Disposition switch
+            {
+                CharacterDisposition.Surrendered => EngineResult.Reject(action, state,
+                    EngineRejectionReason.TargetHasSurrendered,
+                    $"{target.Name} has surrendered and is no longer part of the fight to steal from."),
+                CharacterDisposition.Escaped => EngineResult.Reject(action, state,
+                    EngineRejectionReason.TargetHasEscaped,
+                    $"{target.Name} has fled the encounter and is no longer here."),
+                _ => EngineResult.Reject(action, state, EngineRejectionReason.TargetIsDead,
+                    $"{target.Name} is dead.")
+            };
+        }
+
+        if (NamesEquippedWeapon(target, action.ItemRef))
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.EquippedWeaponCannotBeTransferred,
+                $"{target.Name}'s {target.Weapon!.Name} is their equipped weapon and cannot be stolen in the middle of a fight.");
+        }
+
+        var item = target.FindItem(action.ItemRef);
+        if (item is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.ItemNotPossessed,
+                $"{target.Name} is not carrying '{action.ItemRef}'.");
+        }
+
+        // Exactly one draw, taken only after every validation has passed. The base chance is a flat
+        // configurable number; v0.6 applies no modifiers, but the record is shaped to carry them.
+        var baseChance = _combatRules.BaseStealChance;
+        var modifiers = new List<string>();
+        var effectiveChance = Math.Clamp(baseChance, 0, 100);
+
+        var sequenceBefore = _rng.DrawCount;
+        var roll = _rng.RollPercent();
+        var succeeded = roll <= effectiveChance;
+        var draw = new RngDraw
+        {
+            Purpose = "steal.attempt",
+            ActionType = action.ActionType,
+            ActorId = thief.Id,
+            ActorName = thief.Name,
+            TargetId = target.Id,
+            TargetName = target.Name,
+            OutcomeSelected = "theft succeeds or fails",
+            Sides = 100,
+            RangeMin = 1,
+            RangeMax = 100,
+            RawRoll = roll,
+            BaseChance = baseChance,
+            Modifiers = modifiers,
+            Threshold = effectiveChance,
+            Comparison = $"roll {roll} {(succeeded ? "<=" : ">")} effective steal chance {effectiveChance}",
+            Result = succeeded ? "stolen" : "failed",
+            Seed = _rng.Seed,
+            SequenceBefore = sequenceBefore,
+            SequenceAfter = _rng.DrawCount
+        };
+
+        var outcome = new StealItemOutcome
+        {
+            ThiefId = thief.Id,
+            ThiefName = thief.Name,
+            TargetId = target.Id,
+            TargetName = target.Name,
+            ItemId = item.Id,
+            ItemName = item.Name,
+            BaseChance = baseChance,
+            Modifiers = modifiers,
+            EffectiveChance = effectiveChance,
+            Roll = roll,
+            Succeeded = succeeded
+        };
+
+        if (!succeeded)
+        {
+            // Nothing changes hands. Like a missed attack, the state and its version are untouched, but the
+            // turn is spent, so the attempt is an accepted action whose before-state equals its after-state.
+            return EngineResult.Accept(action, state, state, outcome, [draw]);
+        }
+
+        var strippedTarget = target with { Inventory = RemoveFirst(target, item) };
+        var carryingThief = thief with { Inventory = thief.Inventory.Add(item) };
+        var after = state
+            .WithCharacter(strippedTarget)
+            .WithCharacter(carryingThief) with { Version = state.Version + 1 };
+
+        return EngineResult.Accept(action, state, after, outcome, [draw]);
+    }
+
+    /// <summary>
+    /// Adds an item to the room's ground-loot container, creating that container the first time anything is
+    /// dropped and appending to it thereafter. Returns the new room and the resulting ground container.
+    /// </summary>
+    private static (Room Room, Container Ground) PlaceOnGround(Room room, InventoryItem item)
+    {
+        var objects = room.Objects;
+        for (var index = 0; index < objects.Length; index++)
+        {
+            if (objects[index] is Container { IsGround: true } existing)
+            {
+                var updated = existing with { Contents = existing.Contents.Add(item) };
+                return (room with { Objects = objects.SetItem(index, updated) }, updated);
+            }
+        }
+
+        var ground = Container.Ground([item]);
+        return (room with { Objects = objects.Add(ground) }, ground);
+    }
+
+    /// <summary>
+    /// True when <paramref name="itemRef"/> names the character's currently equipped weapon rather than an
+    /// ordinary inventory item. Equipped weapons live outside the inventory and are never transferable in
+    /// v0.6, so a reference to one is refused with its own reason rather than a generic "not carrying it".
+    /// </summary>
+    private static bool NamesEquippedWeapon(Character character, string itemRef)
+    {
+        if (character.Weapon is null || string.IsNullOrWhiteSpace(itemRef))
+        {
+            return false;
+        }
+
+        var needle = itemRef.Trim();
+        return string.Equals(character.Weapon.Name, needle, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

@@ -10,6 +10,7 @@ using ModelsAndMonsters.Knowledge;
 using ModelsAndMonsters.Presentation;
 using ModelsAndMonsters.Prompts;
 using ModelsAndMonsters.Randomness;
+using ModelsAndMonsters.Rulebook;
 using ModelsAndMonsters.Tracing;
 
 namespace ModelsAndMonsters.Orchestration;
@@ -98,7 +99,8 @@ public sealed class SimulationRunner
         var gameSeed = RunSeeds.Derive(masterSeed, RunSeeds.GameKey);
 
         var initialState = ScenarioFactory.CreateInitialState(_scenario);
-        var engine = new GameEngine(initialState, new SeededRng(gameSeed), new CombatRules(_options.Combat.GlancingBlowChance));
+        var engine = new GameEngine(initialState, new SeededRng(gameSeed),
+            new CombatRules(_options.Combat.GlancingBlowChance, _options.Combat.BaseStealChance));
 
         // The application-owned knowledge ledger, seeded with the scenario's private backstory knowledge.
         // It is separate from authoritative game state: game state is current mechanical truth, this is the
@@ -142,6 +144,21 @@ public sealed class SimulationRunner
             Seed = RunSeeds.Derive(masterSeed, "agent:history-summariser")
         };
 
+        // The Rulebook Resolver is an independently configurable agent (its own provider/model may be set),
+        // overlaid on the shared defaults. It runs stateless at a low temperature by default with reasoning
+        // off and a small output budget — it only ever emits a small JSON object — and a derived seed keeps
+        // the whole run replayable.
+        var resolverConfig = _options.Agents.RulebookResolver;
+        var resolverBase = AgentModelProfile.FromOptions("RulebookResolver", resolverConfig.Overlay(defaults));
+        var rulebookResolverProfile = resolverBase with
+        {
+            Temperature = resolverConfig.Temperature ?? 0.1f,
+            Effort = resolverConfig.Effort is null ? ReasoningEffort.None : resolverBase.Effort,
+            Thinking = false,
+            MaxOutputTokens = resolverConfig.MaxOutputTokens ?? harness.RulebookOutputTokens,
+            Seed = RunSeeds.Derive(masterSeed, "agent:rulebook-resolver")
+        };
+
         var agentSeeds = new Dictionary<string, long>
         {
             [DungeonMasterAgent.AgentIdentifier] = dungeonMasterProfile.Seed!.Value
@@ -180,6 +197,25 @@ public sealed class SimulationRunner
                 ? new HistorySummariser(historySummariserProfile, CreateTracingClient(historySummariserProfile, trace, clients), _prompts)
                 : null;
 
+            // The bounded rulebook stage (v0.6): a deterministic catalog + retriever + cache, and the stateless
+            // resolver on its own traced client. Null when disabled, in which case the DM gets the full tool set.
+            RulebookConsultant? rulebook = null;
+            if (harness.EnableRulebookResolver)
+            {
+                var catalog = new RuleCatalog();
+                var retriever = new RuleRetriever(catalog, harness.RulebookMaxCards, harness.RulebookMaxInputChars);
+                var validator = new RuleGuidanceValidator(catalog);
+                var cache = new RuleGuidanceCache();
+                var resolver = new RulebookResolver(
+                    rulebookResolverProfile,
+                    CreateTracingClient(rulebookResolverProfile, trace, clients),
+                    _prompts);
+                rulebook = new RulebookConsultant(catalog, retriever, resolver, validator, cache, trace,
+                    new RulebookConsultationOptions(
+                        harness.RulebookMaxCards, harness.RulebookMaxInputChars,
+                        harness.RulebookOutputTokens, harness.RulebookCacheEnabled));
+            }
+
             var characterPrompts = new CharacterPromptFactory(_prompts);
 
             // Fixed turn order: the scenario's character order, repeated every round.
@@ -201,6 +237,10 @@ public sealed class SimulationRunner
             {
                 profilesForManifest[agent.Name] = TracedAgentProfile.From(agent.Profile);
             }
+            if (harness.EnableRulebookResolver)
+            {
+                profilesForManifest["RulebookResolver"] = TracedAgentProfile.From(rulebookResolverProfile);
+            }
 
             WriteManifest(paths, startedAt, initialState, profilesForManifest, seeds);
 
@@ -216,12 +256,18 @@ public sealed class SimulationRunner
 
             trace.Emit(TraceEventType.ScenarioSeeded, initialState);
 
-            // Seed and trace the private backstory knowledge before play begins, so the record shows who
-            // knew what from the outset and nobody else silently inherits it.
+            // Seed and trace the initial knowledge before play begins, so the record shows who knew what from
+            // the outset and nobody silently inherits anything. Two kinds: private backstory knowledge (a
+            // character's own containers), and the public observation everyone present makes of what everyone
+            // else is openly carrying — the latter must be recorded as a public event, not as backstory.
             var seed = KnowledgeSeeder.Seed(knowledge, _scenario, initialState);
+            var presentIds = initialState.Characters.Where(c => c.IsPresent).Select(c => c.Id).ToList();
             foreach (var fact in seed.CreatedFacts)
             {
-                KnowledgeTracing.FactCreated(trace, fact, Knowledge.KnowledgeSource.Backstory, "seed", "harness");
+                var createdBySource = fact.FactType == FactType.ItemPossession
+                    ? Knowledge.KnowledgeSource.PublicEvent
+                    : Knowledge.KnowledgeSource.Backstory;
+                KnowledgeTracing.FactCreated(trace, fact, createdBySource, "seed", "harness");
             }
 
             foreach (var record in seed.LearnedRecords)
@@ -233,7 +279,13 @@ public sealed class SimulationRunner
                 }
 
                 var name = initialState.FindById(record.CharacterId)?.Name ?? record.CharacterId;
-                KnowledgeTracing.FactLearned(trace, fact, record, name, "private", [record.CharacterId], "seed", "harness");
+
+                // An openly-carried item is a public observation the whole room made at the outset; the
+                // backstory container knowledge is private to the one character who began the fight with it.
+                var isPublic = fact.FactType == FactType.ItemPossession;
+                var visibility = isPublic ? "public" : "private";
+                IReadOnlyList<string> recipients = isPublic ? presentIds : [record.CharacterId];
+                KnowledgeTracing.FactLearned(trace, fact, record, name, visibility, recipients, "seed", "harness");
             }
 
             _console.RunHeader(paths.RunId, _scenario.Name, paths.Directory);
@@ -246,7 +298,7 @@ public sealed class SimulationRunner
             var formatter = new WorldStateFormatter(_prompts);
             var coordinator = new TurnCoordinator(
                 engine, dungeonMaster, _prompts, formatter, narrationLog, knowledge, trace, _console, harness,
-                intentParser, historySummariser);
+                intentParser, historySummariser, rulebook);
 
             return await RunLoopAsync(coordinator, engine, trace, paths, turnOrder, cancellationToken)
                 .ConfigureAwait(false);

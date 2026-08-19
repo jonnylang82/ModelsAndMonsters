@@ -14,11 +14,18 @@ public sealed class SimulationOptions
     public CombatOptions Combat { get; set; } = new();
 }
 
-/// <summary>Tunable combat parameters that are not per-character.</summary>
+/// <summary>Tunable combat and engine-probability parameters that are not per-character.</summary>
 public sealed class CombatOptions
 {
     /// <summary>Chance out of 100 that a landed hit is a glancing blow (half damage). 0 disables them.</summary>
     public int GlancingBlowChance { get; set; } = 25;
+
+    /// <summary>
+    /// Base chance out of 100 that an attempted theft succeeds, before any modifier (v0.6 applies none).
+    /// The one probability the inventory system consults; deliberately a flat configurable number rather
+    /// than a derived skill, as v0.6 adds no stat system.
+    /// </summary>
+    public int BaseStealChance { get; set; } = 40;
 }
 
 public sealed class ProvidersOptions
@@ -75,6 +82,13 @@ public sealed class AgentsOptions
     public AgentProfileOptions Default { get; set; } = new();
 
     public AgentProfileOptions DungeonMaster { get; set; } = new();
+
+    /// <summary>
+    /// The Rulebook Resolver's independently configurable model profile (v0.6). Overlaid on
+    /// <see cref="Default"/> like any agent, so it can run on its own provider, model and — importantly — a
+    /// low temperature for stable, reproducible rule guidance. Left empty, it inherits the shared default.
+    /// </summary>
+    public AgentProfileOptions RulebookResolver { get; set; } = new();
 
     /// <summary>
     /// Per-character overrides, keyed by character id. Any character absent here runs on
@@ -275,6 +289,31 @@ public sealed class HarnessOptions
 
     /// <summary>How many of a character's most recent turns are kept verbatim when older ones are summarised.</summary>
     public int RecentTurnsKeptFull { get; set; } = 2;
+
+    /// <summary>
+    /// When true, every <c>take_action</c> is preceded by a bounded, stateless rulebook consultation that
+    /// narrows the Dungeon Master to a small candidate tool set (v0.6). When false, the DM is given the full
+    /// engine tool surface directly (the v0.5 path), which is useful as an A/B comparison.
+    /// </summary>
+    public bool EnableRulebookResolver { get; set; } = true;
+
+    /// <summary>
+    /// A hard CEILING on the rule cards a resolver request may carry — not a trimming budget. The retriever
+    /// sends the whole (small) rulebook every time and lets the resolver do the semantic selection; there is
+    /// no keyword routing deciding which actions the resolver may consider. If the catalog ever grows past
+    /// this many cards the retriever throws at startup (fails visibly) rather than silently dropping cards,
+    /// which would risk hiding the one action an intent needs. Set with headroom above the current catalog.
+    /// </summary>
+    public int RulebookMaxCards { get; set; } = 16;
+
+    /// <summary>A hard CEILING (not a budget) on the total size, in characters, of the cards sent to the resolver. Exceeding it fails visibly at startup rather than trimming.</summary>
+    public int RulebookMaxInputChars { get; set; } = 16000;
+
+    /// <summary>The output-token limit applied to the resolver's reply — it only ever emits a small JSON object.</summary>
+    public int RulebookOutputTokens { get; set; } = 500;
+
+    /// <summary>When true, abstract rule guidance is cached and reused across identical consultations.</summary>
+    public bool RulebookCacheEnabled { get; set; } = true;
 
     public string RunOutputDirectory { get; set; } = "runs";
 }

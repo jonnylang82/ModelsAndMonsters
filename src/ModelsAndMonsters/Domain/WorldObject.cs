@@ -59,8 +59,40 @@ public abstract record WorldObject
 /// </remarks>
 public sealed record Container : WorldObject
 {
+    /// <summary>
+    /// The stable id of the room's ground-loot container — the floor everyone can reach, where dropped
+    /// items lie in plain sight. Created on demand the first time something is dropped (v0.6). It reuses the
+    /// ordinary container machinery, so a dropped item is recovered through the same <c>take_item</c>
+    /// interaction as anything else in an open container, rather than through a parallel inventory system.
+    /// </summary>
+    public const string GroundId = "room-floor";
+
+    /// <summary>Builds the room's ground-loot container holding the given items. Always open and marked as ground.</summary>
+    public static Container Ground(ImmutableArray<InventoryItem> contents) => new()
+    {
+        Id = GroundId,
+        Name = "the floor",
+        Description = "The floor of the room, where dropped things lie in plain sight, within reach of anyone.",
+        IsOpen = true,
+        IsGround = true,
+        Contents = contents
+    };
+
     /// <summary>Whether the container is open. Closed containers hide their contents from characters.</summary>
     public bool IsOpen { get; init; }
+
+    /// <summary>
+    /// True for the room's ground-loot container (the floor). Its contents lie in the open — dropping is a
+    /// public act — so, unlike an ordinary opened container, everyone present can see what is on the floor.
+    /// </summary>
+    public bool IsGround { get; init; }
+
+    /// <summary>
+    /// True for a fallen character's body — the lootable "container" the death-looting rule leaves behind. It
+    /// is not a chest and must never be narrated as one: a body is not "opened" and is not "reached into". The
+    /// flag lets narration and state formatting describe taking belongings from a body in plain in-world terms.
+    /// </summary>
+    public bool IsCorpse { get; init; }
 
     /// <summary>The items currently inside. Authoritative even while closed; only visibility depends on open state.</summary>
     public ImmutableArray<InventoryItem> Contents { get; init; } = [];

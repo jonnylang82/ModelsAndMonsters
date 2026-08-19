@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using ModelsAndMonsters.Configuration;
 using ModelsAndMonsters.Domain;
 using ModelsAndMonsters.Engine;
+using ModelsAndMonsters.Prompts;
 using ModelsAndMonsters.Randomness;
 
 namespace ModelsAndMonsters.Tests;
@@ -45,8 +46,11 @@ public sealed class ObjectEngineTests
         Assert.Equal("Bundle of Damp Rags", rags.Name);
         Assert.False(rags.IsHealingItem);
 
-        // Neither item begins in any character's inventory.
-        Assert.All(state.Characters, c => Assert.Empty(c.Inventory));
+        // Neither supply-case item begins in any character's inventory — they are found only in the cases.
+        // (v0.6 does seed ordinary carried items for the transfer actions, but never the case contents.)
+        var carriedIds = state.Characters.SelectMany(c => c.Inventory).Select(i => i.Id).ToList();
+        Assert.DoesNotContain("small-healing-potion", carriedIds);
+        Assert.DoesNotContain("bundle-of-damp-rags", carriedIds);
     }
 
     [Fact]
@@ -340,11 +344,17 @@ public sealed class ObjectEngineTests
         Assert.False(elara.IsAlive);
         Assert.Empty(elara.Inventory);
 
-        // A single open corpse container now holds it.
+        // A single open corpse container now holds it, flagged as a body so narration never calls it a chest.
         var corpse = Assert.Single(engine.State.Room.Objects.OfType<Container>());
         Assert.Equal("corpse-" + TestWorld.ElaraId, corpse.Id);
         Assert.True(corpse.IsOpen);
+        Assert.True(corpse.IsCorpse);
         Assert.Equal("Small Healing Potion", Assert.Single(corpse.Contents).Name);
+
+        // The authoritative state describes it as a body, not an "open container" — the leak the review flagged.
+        var stateText = WorldStateFormatter.FormatAuthoritativeState(engine.State);
+        Assert.Contains("a fallen character's body", stateText, StringComparison.Ordinal);
+        Assert.Contains("never narrate it as 'opened' or 'reached into'", stateText, StringComparison.Ordinal);
 
         // The transfer is part of the one accepted action, and the outcome reports the drop.
         Assert.Equal(versionBefore + 1, engine.State.Version);

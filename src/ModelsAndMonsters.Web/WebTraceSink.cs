@@ -42,6 +42,15 @@ public sealed class WebTraceSink : ITraceSink
                         case OpenExitOutcome openExit:
                             _publish(UiEvent.ExitOpened(openExit.ActorName, openExit.ExitName));
                             break;
+                        case GiveItemOutcome give:
+                            _publish(UiEvent.Gave(give.GiverName, give.RecipientName, give.ItemName));
+                            break;
+                        case DropItemOutcome drop:
+                            _publish(UiEvent.Dropped(drop.ActorName, drop.ItemName));
+                            break;
+                        case StealItemOutcome steal:
+                            _publish(UiEvent.StoleAttempt(steal.ThiefName, steal.TargetName, steal.ItemName, steal.Succeeded));
+                            break;
                     }
 
                     _publish(UiEvent.State(StateDto.From(engine.StateAfter)));

@@ -144,6 +144,28 @@ public enum TraceEventType
     /// </summary>
     ExitInteraction,
 
+    /// <summary>
+    /// An inventory transfer attempt — give, drop or steal — accepted or rejected. Complements the generic
+    /// <see cref="EngineAction"/> row with the requested and authoritative bindings, ownership before and
+    /// after, turn consumption, and the RNG/rulebook linkage.
+    /// </summary>
+    InventoryInteraction,
+
+    /// <summary>
+    /// A successful item movement recorded as a provenance event: the item, its previous and new
+    /// owner/location, the action, the acting character, round and turn, and any RNG or rulebook linkage.
+    /// Provenance is an event history, not a second source of ownership; together these reconstruct an
+    /// item's journey through the encounter.
+    /// </summary>
+    ItemProvenance,
+
+    /// <summary>
+    /// One automatic rulebook consultation for a <c>take_action</c> request: the deterministic rule
+    /// retrieval, the stateless resolver call and its structured guidance, validation, cache result, sizes
+    /// and the candidate engine tools the guidance narrowed the Dungeon Master down to.
+    /// </summary>
+    RulebookConsultation,
+
     /// <summary>A character surrendered and left active combat. A focused, semantic companion to <see cref="DispositionChanged"/>.</summary>
     CharacterSurrendered,
 

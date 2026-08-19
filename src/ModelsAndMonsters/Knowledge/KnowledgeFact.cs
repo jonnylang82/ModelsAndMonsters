@@ -28,7 +28,23 @@ public enum FactType
     CharacterSurrendered,
 
     /// <summary>A character escaped through an exit in plain view — a public, observable departure from the fight.</summary>
-    CharacterEscaped
+    CharacterEscaped,
+
+    /// <summary>
+    /// A character is openly carrying an item — visible to everyone in the small, no-distance room. Minted
+    /// for seeded starting inventory so that what a character plainly carries is knowable to others, which is
+    /// what gives a would-be thief a legitimate informational basis to attempt a theft. Keyed by the item.
+    /// </summary>
+    ItemPossession,
+
+    /// <summary>An item was given from one character to another in plain view — a public, observable transfer.</summary>
+    ItemGiven,
+
+    /// <summary>An item was dropped onto the floor in plain view — a public, observable transfer.</summary>
+    ItemDropped,
+
+    /// <summary>A theft was attempted in plain view — always noticed in v0.6, whether it succeeded or failed.</summary>
+    ItemTheftAttempted
 }
 
 /// <summary>
@@ -78,6 +94,15 @@ public sealed record KnowledgeFact
 
     /// <summary>The world version this fact describes. 0 for static facts such as an exterior marking.</summary>
     public required int WorldVersion { get; init; }
+
+    /// <summary>
+    /// The item ids this fact structurally pertains to — the contents observed, for a
+    /// <see cref="FactType.ContainerContents"/> fact. Empty for facts about no specific item. Kept separately
+    /// from the prose <see cref="Description"/> so a character's basis to know a specific item is inside a
+    /// container can be checked deterministically (see <see cref="KnowledgeLedger.KnowsItemInContainer"/>),
+    /// which is what lets <c>take_item</c> refuse an item the character had no legitimate way to identify.
+    /// </summary>
+    public IReadOnlyList<string> ItemIds { get; init; } = [];
 }
 
 /// <summary>

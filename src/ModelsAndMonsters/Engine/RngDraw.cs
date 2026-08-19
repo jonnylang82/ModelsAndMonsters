@@ -41,8 +41,22 @@ public sealed record RngDraw
     /// <summary>The raw value drawn, before any interpretation.</summary>
     public required int RawRoll { get; init; }
 
-    /// <summary>The threshold the raw roll was compared against (the hit chance, the glancing chance).</summary>
+    /// <summary>The threshold the raw roll was compared against (the hit chance, the glancing chance, the effective theft chance).</summary>
     public required int Threshold { get; init; }
+
+    /// <summary>
+    /// The base chance out of 100 before any modifier, when the threshold was derived from a configurable
+    /// base rather than being a fixed per-actor stat. Null for draws with no distinct base (attack rolls,
+    /// where the threshold is the actor's hit chance directly).
+    /// </summary>
+    public int? BaseChance { get; init; }
+
+    /// <summary>
+    /// Every modifier applied to <see cref="BaseChance"/> to reach <see cref="Threshold"/>, each a short
+    /// human-readable note. Empty when no modifier applied. Recorded so a draw's effective chance can be
+    /// reconstructed from its base rather than only observed as a final number.
+    /// </summary>
+    public IReadOnlyList<string> Modifiers { get; init; } = [];
 
     /// <summary>How the raw roll was turned into the result, e.g. "roll &lt;= 80 lands".</summary>
     public required string Comparison { get; init; }

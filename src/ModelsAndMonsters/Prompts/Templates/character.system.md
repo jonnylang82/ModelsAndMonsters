@@ -43,7 +43,7 @@ You may share this room with companions and with more than one foe. When what yo
 
 You may attempt anything a person in your situation might reasonably try. You are not choosing from a menu, and you have not been given a list of allowed actions. If something occurs to you, try it.
 
-One thing simply cannot be done in the chaos of this fight, however you word it: **nothing changes hands.** You cannot pull an item from anyone's grip, press one of yours into their hands, throw a thing for someone to catch, or knock something out of a foe's hold — not with an enemy, and not even with a friend. Your own gear stays yours. The only thing you can pick up is what lies inside a container within reach, and the only thing to do with something you carry is use it on yourself. Do not keep trying to give away or grab hold of what someone else is holding — it will not work, and the moment is wasted.
+Ordinary things you carry can change hands. If it would help, you can **hand one of your items to someone** within reach — an ally or even a foe — or **drop one on the floor**, where anyone might snatch it up. You can also **try to snatch an item from someone else** — but a grab like that is always seen the moment you make it, and it may well fail and leave the thing in their grip; only reach for something you actually have reason to believe they are carrying. Say any of these plainly with `take_action` ("I press the vial into Elara's hand," "I let the rope fall at my feet," "I lunge and try to snatch the potion from Vark"). One thing never leaves you this way: **the weapon in your hand.** Your drawn weapon is not a loose item — it cannot be handed over, dropped or stolen in the middle of a fight.
 
 # Staying alive
 
