@@ -59,6 +59,17 @@ public sealed record GameState
     public IEnumerable<Character> LivingOnTeam(string team) =>
         Characters.Where(c => c.IsAlive && string.Equals(c.Team, team, StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>
+    /// Active members of a team — those still fighting. This, not the living count, is what the v0.5
+    /// terminal condition is evaluated over: a team with only surrendered or escaped members has left the
+    /// fight even though those members are alive.
+    /// </summary>
+    public IEnumerable<Character> ActiveOnTeam(string team) =>
+        Characters.Where(c => c.CanAct && string.Equals(c.Team, team, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Everyone still physically present — active or surrendered — and therefore reachable by public events.</summary>
+    public IEnumerable<Character> PresentCharacters() => Characters.Where(c => c.IsPresent);
+
     /// <summary>Returns a new state with <paramref name="updated"/> replacing the character of the same id.</summary>
     public GameState WithCharacter(Character updated)
     {
@@ -125,6 +136,57 @@ public sealed record GameState
 
         throw new InvalidOperationException($"No container with id '{updated.Id}' exists in the current room.");
     }
+
+    /// <summary>The exits out of the room.</summary>
+    public ImmutableArray<EncounterExit> Exits => Room.Exits;
+
+    /// <summary>
+    /// Resolves an exit by id or name, case-insensitively, reporting ambiguity rather than guessing — the
+    /// same discipline the engine applies to characters and objects. An exact id match always wins; failing
+    /// that a name is matched, and a name shared by two or more exits resolves to nothing with
+    /// <c>Ambiguous</c> set so the engine can refuse it.
+    /// </summary>
+    public ExitResolution ResolveExit(string idOrName)
+    {
+        if (string.IsNullOrWhiteSpace(idOrName))
+        {
+            return new ExitResolution(null, Ambiguous: false);
+        }
+
+        var needle = idOrName.Trim();
+
+        var byId = Room.Exits.FirstOrDefault(e => string.Equals(e.Id, needle, StringComparison.OrdinalIgnoreCase));
+        if (byId is not null)
+        {
+            return new ExitResolution(byId, Ambiguous: false);
+        }
+
+        var byName = Room.Exits
+            .Where(e => string.Equals(e.Name, needle, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        return byName.Count switch
+        {
+            0 => new ExitResolution(null, Ambiguous: false),
+            1 => new ExitResolution(byName[0], Ambiguous: false),
+            _ => new ExitResolution(null, Ambiguous: true)
+        };
+    }
+
+    /// <summary>Returns a new state with <paramref name="updated"/> replacing the exit of the same id in the room.</summary>
+    public GameState WithExit(EncounterExit updated)
+    {
+        var exits = Room.Exits;
+        for (var index = 0; index < exits.Length; index++)
+        {
+            if (string.Equals(exits[index].Id, updated.Id, StringComparison.OrdinalIgnoreCase))
+            {
+                return this with { Room = Room with { Exits = exits.SetItem(index, updated) } };
+            }
+        }
+
+        throw new InvalidOperationException($"No exit with id '{updated.Id}' exists in the current room.");
+    }
 }
 
 /// <summary>
@@ -136,4 +198,14 @@ public sealed record GameState
 public readonly record struct ObjectResolution(WorldObject? Object, bool Ambiguous)
 {
     public bool Found => Object is not null;
+}
+
+/// <summary>
+/// The outcome of resolving an exit reference: the exit it named (if any), and whether the reference was
+/// ambiguous. As with <see cref="ObjectResolution"/>, ambiguity is distinct from "not found" so it can be
+/// refused with a different explanation.
+/// </summary>
+public readonly record struct ExitResolution(EncounterExit? Exit, bool Ambiguous)
+{
+    public bool Found => Exit is not null;
 }

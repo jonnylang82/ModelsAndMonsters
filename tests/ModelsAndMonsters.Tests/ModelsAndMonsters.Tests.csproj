@@ -20,6 +20,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\ModelsAndMonsters\ModelsAndMonsters.csproj" />
+    <!-- The web observer's DTO projection (StateDto) is unit-tested here, so the live view's exit state and
+         character dispositions are verified without a browser. -->
+    <ProjectReference Include="..\..\src\ModelsAndMonsters.Web\ModelsAndMonsters.Web.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -2,12 +2,12 @@
   "Scenario": {
     "Id": "cellar-supply-cases-v1",
     "Name": "The Two Supply Cases",
-    "Summary": "Two adventurers corner two goblins in a cramped, flooded cellar — a wounded cleric and a fighter against a goblin captain and its grunt. Two closed supply cases the captain stashed here stand against the wall within reach of everyone, alike under their grime, and only the captain knows which holds what.",
+    "Summary": "Two adventurers corner two goblins in a cramped, flooded cellar — a wounded cleric and a fighter against a goblin captain and its grunt. Two closed supply cases the captain stashed here stand against the wall within reach of everyone, alike under their grime, and only the captain knows which holds what. A single shut stair door is the way out, for anyone who would rather live than win.",
 
     "Room": {
       "Id": "flooded-cellar",
       "Name": "Flooded Cellar",
-      "Description": "A low, brick-vaulted cellar under the ruined mill. Ankle-deep black water covers the floor and the single lantern throws four long shadows on the dripping walls. All four stand within a few paces of one another, face to face. Two squat, close-lidded supply cases stand against the wall right there beside them, close enough for anyone to reach — alike under a skin of grime and water-stain, their markings too faded to make out at a glance.",
+      "Description": "A low, brick-vaulted cellar under the ruined mill. Ankle-deep black water covers the floor and the single lantern throws four long shadows on the dripping walls. All four stand within a few paces of one another, face to face. Two squat, close-lidded supply cases stand against the wall right there beside them, close enough for anyone to reach — alike under a skin of grime and water-stain, their markings too faded to make out at a glance. At the foot of the stairs a single heavy wooden door, shut but unlocked, is the only way out — near enough for any of them to reach.",
       "Features": [
         "A guttering lantern hung from an iron hook",
         "Ankle-deep cold water across the whole floor",
@@ -43,6 +43,16 @@
             }
           ]
         }
+      ],
+
+      "Exits": [
+        {
+          "Id": "cellar-stair-door",
+          "Name": "Cellar Stair Door",
+          "Description": "A heavy wooden door at the foot of the stairs, the only way out of the flooded cellar. It is shut but unlocked, and stands near enough for anyone in the room to reach.",
+          "IsOpen": false,
+          "DestinationDescription": "the dark stairs leading up and out of the cellar, away from the fight"
+        }
       ]
     },
 
@@ -65,10 +75,10 @@
         "Abilities": [],
         "Persona": {
           "Backstory": "A veteran fighter who took this contract to clear the mill. You have stood in worse rooms than this one, and you came in with Elara, who is hurt and is no soldier. Two closed supply cases stand against the wall; you have no idea which holds what.",
-          "Personality": "Steady, brave and protective. You put yourself between danger and those less able to weather it, and you would rather face the most dangerous enemy yourself than see a companion overwhelmed.",
+          "Personality": "Steady, brave and protective. You put yourself between danger and those less able to weather it, and you would rather face the most dangerous enemy yourself than see a companion overwhelmed. You take no pleasure in killing a beaten foe: if a goblin throws down its fight and yields, you would sooner accept that than cut it down, and you will demand surrender from an enemy who is wounded and alone rather than kill it outright.",
           "Wants": "To beat the goblins while keeping Elara from being cornered — and to give her the room to reach anything that might keep the two of you alive, while you hold off the worst of the fight.",
           "Fears": "Failing to protect a companion.",
-          "Goal": "Survive and defeat or otherwise overcome the goblins without letting Elara fall."
+          "Goal": "Survive and defeat or otherwise overcome the goblins without letting Elara fall. You would not run for the door and leave Elara behind merely to save your own skin — only if it came to the very last, with no other way for either of you to live, would you break off and get out."
         }
       },
       {
@@ -91,11 +101,11 @@
         "Abilities": [],
         "Persona": {
           "Backstory": "A cleric of a quiet roadside shrine, more used to tending the hurt than dealing hurt. You came because Rowan asked, and because someone had to. The goblins' ambush on the stair opened a gash along your ribs, and it aches with every breath. Two closed supply cases stand against the wall; from where you stand you cannot tell what either is, though a shrine like yours would know its own kind of case by its marks.",
-          "Personality": "Compassionate, cautious and resolute. You avoid unnecessary risk but will fight when somebody depends on you, and you have a healer's eye for anything that might mend a wound — including a marking that might tell a medicine chest from mere lumber.",
+          "Personality": "Compassionate, cautious and resolute. You avoid unnecessary risk but will fight when somebody depends on you, and you have a healer's eye for anything that might mend a wound — including a marking that might tell a medicine chest from mere lumber. You set little store by killing for its own sake: a foe who is hurt and afraid you would sooner see yield than die, and you will offer a wounded enemy the chance to give up.",
           "Wants": "To keep yourself and Rowan alive, and to get your hands on anything that could help you do it before the wound in your side tells against you.",
           "Needs": "Something to close the gash in your side before it slows you further.",
           "Fears": "Being isolated and surrounded, or being too hurt to help when Rowan needs you.",
-          "Goal": "Survive, stay standing, and help defeat or otherwise overcome the goblins."
+          "Goal": "Survive, stay standing, and help defeat or otherwise overcome the goblins. You did not come here to die clearing a cellar; if it turns hopeless and you are both close to falling, you would urge Rowan to break off and get out through the door with you rather than fight on to the last."
         }
       },
       {
@@ -117,10 +127,10 @@
         "BackstoryKnowledge": ["shrine-medicine-case", "mill-supply-crate"],
         "Persona": {
           "Backstory": "The captain of this warren's last two survivors. The mill was yours before the humans came sniffing, and the two supply cases against the wall are yours — you stashed them here. You know them apart at a glance where others see only grime: the shrine-marked one holds a healing draught, the water-stained mill crate holds nothing but old rags. Skrit does not know which is which.",
-          "Personality": "Cunning, domineering and self-preserving. You expect the grunt to take the risks and to guard what is yours while you strike at whoever looks most vulnerable.",
+          "Personality": "Cunning, domineering and self-preserving. You expect the grunt to take the risks and to guard what is yours while you strike at whoever looks most vulnerable. You bluff and threaten to keep what is yours and to keep Skrit in line, and while the grunt still stands and fights beside you, you would never stoop to yielding — that would be weakness in front of the runt. But you prize your own skin above pride: cornered alone, badly cut and plainly beaten, you would sooner throw down your fight or bolt for the door than die for a ruined mill and two crates.",
           "Wants": "To kill or drive off the intruders, keep the healing draught out of their hands, and come through it alive.",
           "Fears": "Losing what is yours, losing authority, or being left to fight alone.",
-          "Goal": "Survive, keep the intruders away from the medicine case, and defeat or drive off the heroes."
+          "Goal": "Survive, keep the intruders away from the medicine case, and defeat or drive off the heroes — but live, above all. Honour is worth less to you than your own neck."
         }
       },
       {
@@ -141,10 +151,10 @@
         "Abilities": [],
         "Persona": {
           "Backstory": "The last grunt of the warren, kept alive so far by staying close to Vark and out of reach of everything else. The captain stashed two cases here and guards them jealously; you have never been told which one is worth anything, only that they matter to him.",
-          "Personality": "Reckless, nervous and eager to impress the captain. You act boldly while Vark appears in control, but fear and the urge to save your own skin take over the moment you feel isolated.",
+          "Personality": "Reckless, nervous and eager to impress the captain. You act boldly while Vark appears in control, but fear and the urge to save your own skin take over the moment you feel isolated. Everything you do you measure against the captain: while Vark stands and fights, you fight; if he shouts at you to get the door open or to run, you are minded to obey him; and if Vark falls, throws down his fight, or bolts for the door, your nerve goes with him — you would sooner surrender or flee than face the humans alone. Pushed to real terror, you might even leave him to save yourself.",
           "Wants": "Vark's approval, and a share of whatever the captain is hoarding — if only you knew which case held it.",
           "Fears": "Being abandoned by the captain, and being left alone to face the humans.",
-          "Goal": "Survive, win Vark's favour, and help defeat or drive off the heroes."
+          "Goal": "Survive, win Vark's favour, and help defeat or drive off the heroes — but not at the cost of your own life if the captain is gone and you are left alone."
         }
       }
     ]

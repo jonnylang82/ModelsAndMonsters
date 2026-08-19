@@ -27,8 +27,15 @@ public sealed record UiEvent(string Type, object? Payload)
     public static UiEvent State(StateDto state) => new("state", state);
     public static UiEvent TurnStarted(string character) => new("turnStarted", new { character });
     public static UiEvent Attack(AttackDto attack) => new("attack", attack);
-    public static UiEvent Completed(string terminalCondition, IReadOnlyList<string> survivors) =>
-        new("completed", new { terminalCondition, survivors });
+
+    // A character leaving active combat other than by death, so the transcript can read it distinctly.
+    public static UiEvent Surrendered(string character) => new("surrendered", new { character });
+    public static UiEvent Escaped(string character, string exit) => new("escaped", new { character, exit });
+    public static UiEvent ExitOpened(string character, string exit) => new("exitOpened", new { character, exit });
+
+    public static UiEvent Completed(
+        string terminalCondition, string? outcome, IReadOnlyList<string> winningTeams, IReadOnlyList<string> survivors) =>
+        new("completed", new { terminalCondition, outcome, winningTeams, survivors });
 }
 
 /// <summary>A character as the cards render it.</summary>
@@ -43,7 +50,8 @@ public sealed record CharacterDto(
     string? Weapon,
     IReadOnlyList<string> Inventory,
     IReadOnlyList<string> Injuries,
-    bool Alive);
+    bool Alive,
+    string Disposition);
 
 /// <summary>
 /// A room object as the object panel renders it: its name and, for a container, whether it stands open —
@@ -52,8 +60,12 @@ public sealed record CharacterDto(
 /// </summary>
 public sealed record ObjectDto(string Id, string Name, bool IsContainer, bool IsOpen);
 
-/// <summary>A snapshot of every character and room object, sent whenever the authoritative state advances.</summary>
-public sealed record StateDto(int Version, IReadOnlyList<CharacterDto> Characters, IReadOnlyList<ObjectDto> Objects)
+/// <summary>An exit as the room-state panel renders it: its name and whether it stands open — both public.</summary>
+public sealed record ExitDto(string Id, string Name, bool IsOpen);
+
+/// <summary>A snapshot of every character, room object and exit, sent whenever the authoritative state advances.</summary>
+public sealed record StateDto(
+    int Version, IReadOnlyList<CharacterDto> Characters, IReadOnlyList<ObjectDto> Objects, IReadOnlyList<ExitDto> Exits)
 {
     public static StateDto From(GameState state) => new(
         state.Version,
@@ -62,9 +74,11 @@ public sealed record StateDto(int Version, IReadOnlyList<CharacterDto> Character
             c.Weapon?.Name,
             [.. c.Inventory.Select(i => i.Name)],
             [.. c.Injuries.Select(i => i.Description)],
-            c.IsAlive))],
+            c.IsAlive,
+            c.Disposition.ToString()))],
         [.. state.Room.Objects.Select(o => new ObjectDto(
-            o.Id, o.Name, o is Container, o is Container { IsOpen: true }))]);
+            o.Id, o.Name, o is Container, o is Container { IsOpen: true }))],
+        [.. state.Room.Exits.Select(e => new ExitDto(e.Id, e.Name, e.IsOpen))]);
 }
 
 /// <summary>One resolved attack, for the combat ticker and card damage flashes.</summary>

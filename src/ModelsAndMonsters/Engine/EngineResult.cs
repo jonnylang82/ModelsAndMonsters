@@ -29,6 +29,15 @@ public enum EngineRejectionReason
     ObjectReferenceAmbiguous,
     NothingToInspect,
 
+    // Non-lethal outcomes and exits (v0.5).
+    TargetHasSurrendered,
+    TargetHasEscaped,
+    ActorNotActive,
+    UnknownExit,
+    ExitReferenceAmbiguous,
+    ExitAlreadyOpen,
+    ExitClosed,
+
     UnsupportedAction
 }
 

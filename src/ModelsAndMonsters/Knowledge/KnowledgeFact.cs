@@ -19,7 +19,16 @@ public enum FactType
     ContainerOpened,
 
     /// <summary>A publicly observable transfer: a named, identifiable item was removed and is now carried.</summary>
-    ItemRemoved
+    ItemRemoved,
+
+    /// <summary>An exit was opened in plain view of the room. Its open state is public, like a container's.</summary>
+    ExitOpened,
+
+    /// <summary>A character surrendered in plain view — a public, observable change in who is still fighting.</summary>
+    CharacterSurrendered,
+
+    /// <summary>A character escaped through an exit in plain view — a public, observable departure from the fight.</summary>
+    CharacterEscaped
 }
 
 /// <summary>

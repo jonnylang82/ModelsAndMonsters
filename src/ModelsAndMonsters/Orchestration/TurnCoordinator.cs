@@ -116,19 +116,34 @@ public sealed class TurnCoordinator
         _trace.SetPosition(round, turn, character.Name);
 
         var self = _engine.State.RequireById(character.CharacterId);
-        if (!self.IsAlive)
+        if (!self.CanAct)
         {
-            // A dead actor is skipped without any model call, and the skip is traced so the fixed turn
-            // order stays visible and uncorrupted in the record rather than a turn simply going missing.
+            // Only an active character takes a turn. Anyone dead, surrendered or escaped is skipped without
+            // any model call, and the skip is traced with its disposition so the fixed turn order stays
+            // visible and uncorrupted in the record rather than a turn simply going missing.
+            var (reason, notice) = self.Disposition switch
+            {
+                CharacterDisposition.Surrendered =>
+                    ($"{character.Name} has surrendered and takes no further turns.",
+                     $"{character.Name} has surrendered; their turn is skipped."),
+                CharacterDisposition.Escaped =>
+                    ($"{character.Name} has escaped the encounter and takes no further turns.",
+                     $"{character.Name} has escaped; their turn is skipped."),
+                _ =>
+                    ($"{character.Name} is dead and cannot take a turn.",
+                     $"{character.Name} lies fallen; their turn passes.")
+            };
+
             _trace.Emit(TraceEventType.TurnSkipped, new TurnSkippedPayload
             {
                 CharacterId = character.CharacterId,
                 CharacterName = character.Name,
                 Team = self.Team,
-                Reason = $"{character.Name} is dead and cannot take a turn."
+                Reason = reason,
+                Disposition = self.Disposition.ToString()
             });
 
-            _console.Notice($"{character.Name} lies fallen; their turn passes.");
+            _console.Notice(notice);
 
             return new TurnResult
             {
@@ -766,7 +781,8 @@ public sealed class TurnCoordinator
                 await HandleDungeonMasterRejection(character, intent, primary, cancellationToken).ConfigureAwait(false),
             DungeonMasterTools.AttackCharacterName or DungeonMasterTools.UseItemName
                 or DungeonMasterTools.OpenContainerName or DungeonMasterTools.TakeItemName
-                or DungeonMasterTools.InspectObjectName =>
+                or DungeonMasterTools.InspectObjectName or DungeonMasterTools.OpenExitName
+                or DungeonMasterTools.EscapeEncounterName or DungeonMasterTools.SurrenderName =>
                 await HandleEngineActionAsync(character, intent, primary, cancellationToken).ConfigureAwait(false),
             _ => HandleUnknownDungeonMasterTool(character, intent, primary)
         };
@@ -885,6 +901,10 @@ public sealed class TurnCoordinator
         // so container/item ids, the world-version transition and both halves of a transfer are explicit.
         EmitObjectInteraction(character, action, engineResult);
 
+        // Exit interactions likewise get an exit-specific row, recording the open/closed transition and the
+        // validation result for opening or escaping — accepted or rejected alike.
+        EmitExitInteraction(character, action, engineResult);
+
         var resultForDungeonMaster = engineResult.Accepted
             ? engineResult.Outcome!.Summary
             : $"REJECTED BY THE WORLD: {engineResult.RejectionMessage}";
@@ -925,6 +945,9 @@ public sealed class TurnCoordinator
             OpenContainerOutcome open => await DeliverContainerOpenedAsync(character, open, cancellationToken).ConfigureAwait(false),
             TakeItemOutcome take => DeliverItemTaken(character, take, await NarrateObjectAsync(character, take, cancellationToken).ConfigureAwait(false)),
             InspectObjectOutcome inspect => await DeliverInspectionAsync(character, inspect, cancellationToken).ConfigureAwait(false),
+            OpenExitOutcome openExit => await DeliverExitOpenedAsync(character, openExit, cancellationToken).ConfigureAwait(false),
+            EscapeOutcome escape => await DeliverEscapeAsync(character, escape, engineResult, cancellationToken).ConfigureAwait(false),
+            SurrenderOutcome surrender => await DeliverSurrenderAsync(character, surrender, engineResult, cancellationToken).ConfigureAwait(false),
             _ => await DeliverCombatOutcomeAsync(character, engineResult, cancellationToken).ConfigureAwait(false)
         };
 
@@ -961,10 +984,182 @@ public sealed class TurnCoordinator
             narration = engineResult.Outcome!.Summary;
         }
 
+        // A lethal blow is a disposition change (Active -> Dead), recorded alongside surrender and escape so
+        // every way a character leaves active combat shares one auditable event trail.
+        if (engineResult.Outcome is AttackOutcome { TargetDied: true } killed)
+        {
+            var team = _engine.State.FindById(killed.TargetId)?.Team ?? "";
+            EmitDispositionChanged(killed.TargetId, killed.TargetName, team,
+                CharacterDisposition.Active, CharacterDisposition.Dead, "killed in combat",
+                engineResult, exitId: null, LivingRecipients());
+        }
+
         RecordPublicNarration("action-outcome", stateAfterText, engineResult.Outcome!.Summary, narration, character);
         _console.DungeonMaster(narration);
         return narration;
     }
+
+    /// <summary>
+    /// An exit was opened. The act is public — everyone present sees the door swing open — so every present
+    /// character learns the exit is open as a public fact, and the whole room hears the narration. Opening
+    /// moves no one; escaping through it is a separate act.
+    /// </summary>
+    private async Task<string> DeliverExitOpenedAsync(CharacterAgent character, OpenExitOutcome outcome, CancellationToken cancellationToken)
+    {
+        var stateAfterText = WorldStateFormatter.FormatAuthoritativeState(_engine.State);
+        var narration = await _dungeonMaster
+            .NarratePublicEventAsync(character.Name, outcome.Summary, stateAfterText, cancellationToken)
+            .ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(narration))
+        {
+            narration = outcome.Summary;
+        }
+
+        var worldVersion = _engine.State.Version;
+        var fact = _knowledge.GetOrAddExitOpenedFact(outcome.ExitId, outcome.ExitName, worldVersion);
+        TraceFactCreatedIfNew(fact, KnowledgeSource.PublicEvent, "open_exit", character.Name);
+        var recipients = LivingRecipients();
+        DeliverPublicFact(fact.Fact, recipients, worldVersion, "open_exit");
+
+        RecordPublicNarration("exit-opened", stateAfterText, outcome.Summary, narration, character, [fact.Fact.Id]);
+        _console.DungeonMaster(narration);
+        return narration;
+    }
+
+    /// <summary>
+    /// A character surrendered. Public: everyone present sees them yield, so every present character learns
+    /// it as a public fact, and the whole room hears the narration. It is a disposition change (Active ->
+    /// Surrendered) recorded as such, plus a focused surrender event for the transcript and observer UI.
+    /// </summary>
+    private async Task<string> DeliverSurrenderAsync(
+        CharacterAgent character, SurrenderOutcome outcome, EngineResult engineResult, CancellationToken cancellationToken)
+    {
+        var stateAfterText = WorldStateFormatter.FormatAuthoritativeState(_engine.State);
+        var narration = await _dungeonMaster
+            .NarratePublicEventAsync(character.Name, outcome.Summary, stateAfterText, cancellationToken)
+            .ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(narration))
+        {
+            narration = outcome.Summary;
+        }
+
+        var worldVersion = _engine.State.Version;
+        var team = _engine.State.FindById(character.CharacterId)?.Team ?? "";
+        var fact = _knowledge.GetOrAddSurrenderFact(character.CharacterId, character.Name, worldVersion);
+        TraceFactCreatedIfNew(fact, KnowledgeSource.PublicEvent, "surrender", character.Name);
+        var recipients = LivingRecipients();
+        DeliverPublicFact(fact.Fact, recipients, worldVersion, "surrender");
+
+        EmitDispositionChanged(character.CharacterId, character.Name, team,
+            CharacterDisposition.Active, CharacterDisposition.Surrendered, "surrender",
+            engineResult, exitId: null, recipients);
+
+        _trace.Emit(TraceEventType.CharacterSurrendered, new CharacterSurrenderedPayload
+        {
+            CharacterId = character.CharacterId,
+            CharacterName = character.Name,
+            Team = team,
+            Round = _trace.Round,
+            Turn = _trace.Turn,
+            PublicRecipients = recipients
+        }, character.Name);
+
+        RecordPublicNarration("character-surrendered", stateAfterText, outcome.Summary, narration, character, [fact.Fact.Id]);
+        _console.DungeonMaster(narration);
+        return narration;
+    }
+
+    /// <summary>
+    /// A character escaped through an open exit. Public: everyone still present sees them go, so every
+    /// present character (which no longer includes the escaper) learns it as a public fact. It is a
+    /// disposition change (Active -> Escaped) recorded as such, plus a focused escape event.
+    /// </summary>
+    private async Task<string> DeliverEscapeAsync(
+        CharacterAgent character, EscapeOutcome outcome, EngineResult engineResult, CancellationToken cancellationToken)
+    {
+        var stateAfterText = WorldStateFormatter.FormatAuthoritativeState(_engine.State);
+        var narration = await _dungeonMaster
+            .NarratePublicEventAsync(character.Name, outcome.Summary, stateAfterText, cancellationToken)
+            .ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(narration))
+        {
+            narration = outcome.Summary;
+        }
+
+        var worldVersion = _engine.State.Version;
+        var team = _engine.State.FindById(character.CharacterId)?.Team ?? "";
+        var fact = _knowledge.GetOrAddEscapeFact(character.CharacterId, character.Name, outcome.ExitName, worldVersion);
+        TraceFactCreatedIfNew(fact, KnowledgeSource.PublicEvent, "escape_encounter", character.Name);
+
+        // The escaper is already gone, so the present recipients no longer include them.
+        var recipients = LivingRecipients();
+        DeliverPublicFact(fact.Fact, recipients, worldVersion, "escape_encounter");
+
+        EmitDispositionChanged(character.CharacterId, character.Name, team,
+            CharacterDisposition.Active, CharacterDisposition.Escaped, "escape_encounter",
+            engineResult, exitId: outcome.ExitId, recipients);
+
+        _trace.Emit(TraceEventType.CharacterEscaped, new CharacterEscapedPayload
+        {
+            CharacterId = character.CharacterId,
+            CharacterName = character.Name,
+            Team = team,
+            ExitId = outcome.ExitId,
+            ExitName = outcome.ExitName,
+            DestinationDescription = outcome.DestinationDescription,
+            Round = _trace.Round,
+            Turn = _trace.Turn,
+            PublicRecipients = recipients
+        }, character.Name);
+
+        RecordPublicNarration("character-escaped", stateAfterText, outcome.Summary, narration, character, [fact.Fact.Id]);
+        _console.DungeonMaster(narration);
+        return narration;
+    }
+
+    /// <summary>
+    /// Delivers a public knowledge fact to every present recipient and records the public delivery — the
+    /// shared tail of every v0.5 public event (exit opened, surrender, escape).
+    /// </summary>
+    private void DeliverPublicFact(
+        Knowledge.KnowledgeFact fact, IReadOnlyList<string> recipients, int worldVersion, string sourceEvent)
+    {
+        foreach (var recipientId in recipients)
+        {
+            var name = _engine.State.FindById(recipientId)?.Name ?? recipientId;
+            LearnAndTrace(recipientId, name, fact, KnowledgeSource.PublicEvent, worldVersion, "public", recipients, sourceEvent);
+        }
+
+        _trace.Emit(TraceEventType.PublicFactDelivered, new PublicFactDeliveredPayload
+        {
+            Fact = fact.Description,
+            Recipients = recipients,
+            RelatedFactIds = [fact.Id],
+            WorldVersion = worldVersion,
+            SourceEvent = sourceEvent
+        });
+    }
+
+    /// <summary>Records a character's disposition change — surrender, escape or death — as one auditable event.</summary>
+    private void EmitDispositionChanged(
+        string characterId, string characterName, string team,
+        CharacterDisposition previous, CharacterDisposition next, string cause,
+        EngineResult engineResult, string? exitId, IReadOnlyList<string> publicRecipients) =>
+        _trace.Emit(TraceEventType.DispositionChanged, new DispositionChangedPayload
+        {
+            CharacterId = characterId,
+            CharacterName = characterName,
+            Team = team,
+            PreviousDisposition = previous.ToString(),
+            NewDisposition = next.ToString(),
+            Cause = cause,
+            Round = _trace.Round,
+            Turn = _trace.Turn,
+            WorldVersionBefore = engineResult.StateBefore.Version,
+            WorldVersionAfter = engineResult.StateAfter.Version,
+            ExitId = exitId,
+            PublicRecipients = publicRecipients
+        }, characterName);
 
     /// <summary>Narrates an object outcome (open/take) to the room, returning the public narration text.</summary>
     private async Task<string> NarrateObjectAsync(CharacterAgent character, ActionOutcome outcome, CancellationToken cancellationToken)
@@ -1397,9 +1592,59 @@ public sealed class TurnCoordinator
                     ResolveActingCharacter(call, DungeonMasterTools.ActorParameter, character),
                     ToolArguments.GetRequiredString(call, DungeonMasterTools.ObjectParameter));
 
+            case DungeonMasterTools.OpenExitName:
+                return new OpenExitAction(
+                    ResolveActingCharacter(call, DungeonMasterTools.ActorParameter, character),
+                    ResolveExitReference(call));
+
+            case DungeonMasterTools.EscapeEncounterName:
+                return new EscapeEncounterAction(
+                    ResolveActingCharacter(call, DungeonMasterTools.ActorParameter, character),
+                    ResolveExitReference(call));
+
+            case DungeonMasterTools.SurrenderName:
+                return new SurrenderAction(
+                    ResolveActingCharacter(call, DungeonMasterTools.ActorParameter, character));
+
             default:
                 throw new ArgumentException($"No engine action is mapped to tool '{call.Name}'.");
         }
+    }
+
+    /// <summary>
+    /// Resolves the exit named by an <c>open_exit</c> or <c>escape_encounter</c> tool call. A weaker Dungeon
+    /// Master model sometimes invents an exit name ("doorway to the north") rather than using the one in the
+    /// snapshot, which would make the engine reject a genuine attempt to leave. When the room has exactly one
+    /// exit the intent can only mean that exit, so an unmatched reference is corrected to it — the same
+    /// discipline <see cref="ResolveActingCharacter"/> applies to the actor. The correction is traced, so the
+    /// Dungeon Master's original argument is never silently discarded; with two or more exits nothing is
+    /// guessed and the engine refuses an unknown or ambiguous reference in-world.
+    /// </summary>
+    private string ResolveExitReference(FunctionCallContent call)
+    {
+        var named = ToolArguments.GetRequiredString(call, DungeonMasterTools.ExitParameter);
+        var exits = _engine.State.Exits;
+
+        if (exits.Any(e => e.Matches(named)))
+        {
+            return named;
+        }
+
+        if (exits.Length == 1)
+        {
+            _trace.Emit(TraceEventType.AdjudicationCorrected, new AdjudicationCorrectionPayload
+            {
+                ToolName = call.Name,
+                Parameter = DungeonMasterTools.ExitParameter,
+                DungeonMasterValue = named,
+                CorrectedValue = exits[0].Name,
+                Justification = "The named exit does not match the room's single exit; corrected to it."
+            }, DungeonMasterAgent.AgentIdentifier);
+
+            return exits[0].Name;
+        }
+
+        return named;
     }
 
     /// <summary>
@@ -1730,18 +1975,21 @@ public sealed class TurnCoordinator
     }
 
     /// <summary>
-    /// Everyone alive in the room, who is therefore an intended recipient of public narration. Recorded
-    /// on the narration event so the audience is explicit, even though each character actually receives
-    /// it at a different moment (the actor at once, the others as their own turn begins).
+    /// Everyone still present in the room — active or surrendered — who is therefore an intended recipient
+    /// of public narration and public facts. Recorded on the narration event so the audience is explicit,
+    /// even though each character actually receives it at a different moment. An escaped character has left
+    /// the room and receives nothing further; a surrendered character is still present and keeps learning
+    /// public events even though it takes no more turns. (Before v0.5 every living character was present, so
+    /// this preserves the old audience exactly.)
     /// </summary>
     private IReadOnlyList<string> LivingRecipients() =>
-        [.. _engine.State.Characters.Where(c => c.IsAlive).Select(c => c.Id)];
+        [.. _engine.State.Characters.Where(c => c.IsPresent).Select(c => c.Id)];
 
-    /// <summary>Every living character except the given one — the intended audience for that character's speech.</summary>
+    /// <summary>Every present character except the given one — the intended audience for that character's speech.</summary>
     private IReadOnlyList<string> LivingRecipientsExcept(string speakerId) =>
     [
         .. _engine.State.Characters
-            .Where(c => c.IsAlive && !string.Equals(c.Id, speakerId, StringComparison.OrdinalIgnoreCase))
+            .Where(c => c.IsPresent && !string.Equals(c.Id, speakerId, StringComparison.OrdinalIgnoreCase))
             .Select(c => c.Id)
     ];
 
@@ -1802,6 +2050,50 @@ public sealed class TurnCoordinator
             ContainerContentsAfter = containerAfter is null ? null : [.. containerAfter.Contents.Select(i => i.Name)],
             ActorInventoryBefore = actorBefore is null ? null : [.. actorBefore.Inventory.Select(i => i.Name)],
             ActorInventoryAfter = actorAfter is null ? null : [.. actorAfter.Inventory.Select(i => i.Name)]
+        }, character.Name);
+    }
+
+    /// <summary>
+    /// Records the exit-specific detail of an open-exit or escape attempt: the exit id, the open/closed
+    /// transition and the world-version change. Emitted for accepted and rejected attempts alike; a no-op
+    /// for non-exit actions.
+    /// </summary>
+    private void EmitExitInteraction(CharacterAgent character, GameAction action, EngineResult result)
+    {
+        if (action is not (OpenExitAction or EscapeEncounterAction))
+        {
+            return;
+        }
+
+        var before = result.StateBefore;
+        var after = result.StateAfter;
+
+        var exitRef = action switch
+        {
+            OpenExitAction open => open.ExitRef,
+            EscapeEncounterAction escape => escape.ExitRef,
+            _ => null
+        };
+
+        var exitBefore = exitRef is null ? null : before.ResolveExit(exitRef).Exit;
+        var exitId = (result.Outcome as OpenExitOutcome)?.ExitId
+            ?? (result.Outcome as EscapeOutcome)?.ExitId
+            ?? exitBefore?.Id;
+        var exitAfter = exitId is null
+            ? null
+            : after.Exits.FirstOrDefault(e => string.Equals(e.Id, exitId, StringComparison.OrdinalIgnoreCase));
+
+        _trace.Emit(TraceEventType.ExitInteraction, new ExitInteractionPayload
+        {
+            ActorId = character.CharacterId,
+            ExitId = exitId,
+            ActionType = action.ActionType,
+            StateBefore = exitBefore is null ? null : (exitBefore.IsOpen ? "open" : "closed"),
+            StateAfter = exitAfter is null ? null : (exitAfter.IsOpen ? "open" : "closed"),
+            ValidationResult = result.Accepted ? "accepted" : "rejected",
+            RejectionReason = result.RejectionReason?.ToString(),
+            WorldVersionBefore = before.Version,
+            WorldVersionAfter = after.Version
         }, character.Name);
     }
 

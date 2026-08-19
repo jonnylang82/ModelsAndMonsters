@@ -32,19 +32,35 @@ public sealed class WebTraceSink : ITraceSink
                     break;
 
                 case TraceEventType.EngineAction when traceEvent.Data is EngineActionPayload engine && engine.Accepted:
-                    if (engine.Outcome is AttackOutcome attack)
+                    switch (engine.Outcome)
                     {
-                        _publish(UiEvent.Attack(new AttackDto(
-                            attack.AttackerName, attack.TargetName, attack.Hit, attack.Glancing,
-                            attack.DamageDealt, attack.TargetHealthAfter, attack.TargetMaxHealth, attack.TargetDied)));
+                        case AttackOutcome attack:
+                            _publish(UiEvent.Attack(new AttackDto(
+                                attack.AttackerName, attack.TargetName, attack.Hit, attack.Glancing,
+                                attack.DamageDealt, attack.TargetHealthAfter, attack.TargetMaxHealth, attack.TargetDied)));
+                            break;
+                        case OpenExitOutcome openExit:
+                            _publish(UiEvent.ExitOpened(openExit.ActorName, openExit.ExitName));
+                            break;
                     }
 
                     _publish(UiEvent.State(StateDto.From(engine.StateAfter)));
                     break;
 
+                // Surrender and escape are structured departures from combat, so the transcript can read them
+                // distinctly from a death; each also re-sends the full state, updating the cards live.
+                case TraceEventType.CharacterSurrendered when traceEvent.Data is CharacterSurrenderedPayload surrender:
+                    _publish(UiEvent.Surrendered(surrender.CharacterName));
+                    break;
+
+                case TraceEventType.CharacterEscaped when traceEvent.Data is CharacterEscapedPayload escape:
+                    _publish(UiEvent.Escaped(escape.CharacterName, escape.ExitName));
+                    break;
+
                 case TraceEventType.RunCompleted when traceEvent.Data is RunCompletedPayload completed:
                     _publish(UiEvent.State(StateDto.From(completed.FinalState)));
-                    _publish(UiEvent.Completed(completed.TerminalCondition, completed.Survivors));
+                    _publish(UiEvent.Completed(
+                        completed.TerminalCondition, completed.Outcome, completed.WinningTeams, completed.Survivors));
                     break;
             }
         }

@@ -754,18 +754,151 @@ public sealed record TurnSkippedPayload
     public required string Team { get; init; }
 
     public required string Reason { get; init; }
+
+    /// <summary>The character's disposition at the moment the turn was skipped (Surrendered, Escaped or Dead).</summary>
+    public string? Disposition { get; init; }
 }
 
 /// <summary>
-/// One team's standing at a terminal-condition check: how many of its members are still alive.
+/// A character's disposition changing — the authoritative record of someone leaving active combat, whether
+/// by surrender, escape or death. It carries the full before/after so the transition can be reconstructed on
+/// its own, and the public recipients who directly learned of it.
+/// </summary>
+public sealed record DispositionChangedPayload
+{
+    public required string CharacterId { get; init; }
+
+    public required string CharacterName { get; init; }
+
+    public required string Team { get; init; }
+
+    public required string PreviousDisposition { get; init; }
+
+    public required string NewDisposition { get; init; }
+
+    /// <summary>What caused the change, e.g. "surrender", "escape_encounter", "killed in combat".</summary>
+    public required string Cause { get; init; }
+
+    public required int Round { get; init; }
+
+    public required int Turn { get; init; }
+
+    public required int WorldVersionBefore { get; init; }
+
+    public required int WorldVersionAfter { get; init; }
+
+    /// <summary>The exit used, when the change was an escape; null otherwise.</summary>
+    public string? ExitId { get; init; }
+
+    /// <summary>The present living characters who learned of the change as a public fact.</summary>
+    public IReadOnlyList<string> PublicRecipients { get; init; } = [];
+}
+
+/// <summary>
+/// An exit interaction — opening an exit or escaping through one — accepted or rejected. Carries the exit id,
+/// the open/closed transition and the world-version change the generic engine-action row does not surface.
+/// </summary>
+public sealed record ExitInteractionPayload
+{
+    public required string ActorId { get; init; }
+
+    public string? ExitId { get; init; }
+
+    /// <summary>"open_exit" or "escape_encounter".</summary>
+    public required string ActionType { get; init; }
+
+    /// <summary>The exit's open state before the interaction: "open" or "closed". Null when the exit did not resolve.</summary>
+    public string? StateBefore { get; init; }
+
+    public string? StateAfter { get; init; }
+
+    /// <summary>"accepted" when the engine applied it, "rejected" otherwise.</summary>
+    public required string ValidationResult { get; init; }
+
+    public string? RejectionReason { get; init; }
+
+    public required int WorldVersionBefore { get; init; }
+
+    public required int WorldVersionAfter { get; init; }
+}
+
+/// <summary>A character surrendering — a focused, semantic event for the transcript and observer UI.</summary>
+public sealed record CharacterSurrenderedPayload
+{
+    public required string CharacterId { get; init; }
+
+    public required string CharacterName { get; init; }
+
+    public required string Team { get; init; }
+
+    public required int Round { get; init; }
+
+    public required int Turn { get; init; }
+
+    public IReadOnlyList<string> PublicRecipients { get; init; } = [];
+}
+
+/// <summary>A character escaping through an exit — a focused, semantic event for the transcript and observer UI.</summary>
+public sealed record CharacterEscapedPayload
+{
+    public required string CharacterId { get; init; }
+
+    public required string CharacterName { get; init; }
+
+    public required string Team { get; init; }
+
+    public required string ExitId { get; init; }
+
+    public required string ExitName { get; init; }
+
+    public required string DestinationDescription { get; init; }
+
+    public required int Round { get; init; }
+
+    public required int Turn { get; init; }
+
+    public IReadOnlyList<string> PublicRecipients { get; init; } = [];
+}
+
+/// <summary>
+/// One team's standing at a terminal-condition check, broken down by disposition so a team defeated by
+/// surrender or escape is distinguishable from one wiped out, not merely by a living headcount.
 /// </summary>
 public sealed record TeamStandingPayload
 {
     public required string Team { get; init; }
 
+    /// <summary>Members still alive in any disposition (active + surrendered + escaped).</summary>
     public required int Living { get; init; }
 
     public required int Total { get; init; }
+
+    /// <summary>Members still actively fighting — what decides whether the team is still a contender.</summary>
+    public int Active { get; init; }
+
+    public int Surrendered { get; init; }
+
+    public int Escaped { get; init; }
+
+    public int Dead { get; init; }
+}
+
+/// <summary>What became of one character who has left active combat, for the team-outcome record.</summary>
+public sealed record CharacterResolutionPayload
+{
+    public required string CharacterId { get; init; }
+
+    public required string CharacterName { get; init; }
+
+    public required string Team { get; init; }
+
+    public required string Disposition { get; init; }
+
+    /// <summary>The exit used, when the character escaped; null otherwise.</summary>
+    public string? ExitName { get; init; }
+
+    /// <summary>The one-line in-world account, e.g. "Skrit escaped through the Cellar Stair Door."</summary>
+    public required string Summary { get; init; }
 }
 
 public sealed record TeamOutcomePayload
@@ -780,6 +913,15 @@ public sealed record TeamOutcomePayload
     public IReadOnlyList<string> WinningTeams { get; init; } = [];
 
     public IReadOnlyList<string> EliminatedTeams { get; init; } = [];
+
+    /// <summary>The outcome classification — Elimination, Surrender, Withdrawal, Mixed, Draw, HarnessLimit or Ongoing.</summary>
+    public required string Outcome { get; init; }
+
+    /// <summary>What became of each character who has left active combat, in state order.</summary>
+    public IReadOnlyList<CharacterResolutionPayload> Resolutions { get; init; } = [];
+
+    /// <summary>A multi-line account of what happened to each character who left the fight.</summary>
+    public string? ResolutionSummary { get; init; }
 
     public required string Description { get; init; }
 }
@@ -873,6 +1015,12 @@ public sealed record RunCompletedPayload
     public IReadOnlyList<string> Survivors { get; init; } = [];
 
     public IReadOnlyList<string> Casualties { get; init; } = [];
+
+    /// <summary>The outcome classification of the whole encounter: Elimination, Surrender, Withdrawal, Mixed, Draw or HarnessLimit.</summary>
+    public string? Outcome { get; init; }
+
+    /// <summary>The winning team(s), when the encounter reached a decision rather than a harness limit.</summary>
+    public IReadOnlyList<string> WinningTeams { get; init; } = [];
 
     public required GameState FinalState { get; init; }
 }

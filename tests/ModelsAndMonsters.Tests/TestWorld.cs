@@ -312,6 +312,61 @@ internal static class TestWorld
         return scenario;
     }
 
+    // ------------------------------------------------------------------------------------------
+    // The cellar stair door (v0.5 yield-or-escape slice).
+    // ------------------------------------------------------------------------------------------
+
+    public const string StairDoorId = "cellar-stair-door";
+
+    /// <summary>The cellar stair door. Closed and unlocked by default — the single way out of the encounter.</summary>
+    public static EncounterExit StairDoor(bool open = false) => new()
+    {
+        Id = StairDoorId,
+        Name = "Cellar Stair Door",
+        Description = "A heavy wooden door at the foot of the stairs leading out of the flooded cellar.",
+        IsOpen = open,
+        DestinationDescription = "the dark stairs, up and out of the cellar"
+    };
+
+    /// <summary>A room state with the given exit and characters.</summary>
+    public static GameState StateWithExit(EncounterExit exit, params Character[] characters) => new()
+    {
+        Room = new Room("flooded-cellar", "Flooded Cellar", "A cramped, flooded cellar.", ImmutableArray<string>.Empty)
+        {
+            Exits = [exit]
+        },
+        Characters = [.. characters],
+        Version = 0
+    };
+
+    /// <summary>The 2v2 state with the cellar stair door present. Elara starts wounded, as in the shipped scenario.</summary>
+    public static GameState TwoVsTwoStateWithExit(bool exitOpen = false) =>
+        StateWithExit(StairDoor(exitOpen), Rowan(), Elara(health: 6), Vark(), Skrit());
+
+    /// <summary>An engine over a state that includes the cellar stair door; attacks land for full damage.</summary>
+    public static GameEngine EngineWithExit(bool exitOpen = false, IRng? rng = null, params Character[] characters) =>
+        new(StateWithExit(StairDoor(exitOpen),
+                characters.Length == 0 ? [Rowan(), Elara(health: 6), Vark(), Skrit()] : characters),
+            rng ?? new SeededRng(1), CombatRules.NoGlancing);
+
+    /// <summary>The 2v2 scenario mirroring the shipped v0.5 one: the two supply cases and the cellar stair door.</summary>
+    public static ScenarioDefinition TwoVsTwoScenarioWithExit()
+    {
+        var scenario = TwoVsTwoScenario();
+        scenario.Room.Exits =
+        [
+            new ExitDefinition
+            {
+                Id = StairDoorId,
+                Name = "Cellar Stair Door",
+                Description = "A heavy wooden door at the foot of the stairs.",
+                IsOpen = false,
+                DestinationDescription = "Outside the encounter"
+            }
+        ];
+        return scenario;
+    }
+
     public static ScenarioDefinition Scenario() => new()
     {
         Id = "test-scenario",

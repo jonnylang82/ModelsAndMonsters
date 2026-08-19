@@ -49,6 +49,9 @@ public sealed class GameEngine : IGameEngine
             OpenContainerAction open => ResolveOpenContainer(open),
             TakeItemAction take => ResolveTakeItem(take),
             InspectObjectAction inspect => ResolveInspectObject(inspect),
+            OpenExitAction openExit => ResolveOpenExit(openExit),
+            EscapeEncounterAction escape => ResolveEscapeEncounter(escape),
+            SurrenderAction surrender => ResolveSurrender(surrender),
             _ => EngineResult.Reject(action, _state, EngineRejectionReason.UnsupportedAction,
                 $"The engine has no handler for action type '{action.ActionType}'.")
         };
@@ -91,10 +94,21 @@ public sealed class GameEngine : IGameEngine
                 $"{attacker.Name} cannot attack themselves.");
         }
 
-        if (!target.IsAlive)
+        // Only an active combatant can be struck. A character who is dead, has surrendered, or has escaped
+        // is out of the fight, and each is refused with its own reason so the DM can explain it in-world.
+        if (!target.IsCombatTarget)
         {
-            return EngineResult.Reject(action, state, EngineRejectionReason.TargetIsDead,
-                $"{target.Name} is already dead.");
+            return target.Disposition switch
+            {
+                CharacterDisposition.Surrendered => EngineResult.Reject(action, state,
+                    EngineRejectionReason.TargetHasSurrendered,
+                    $"{target.Name} has surrendered and is no longer a part of the fight."),
+                CharacterDisposition.Escaped => EngineResult.Reject(action, state,
+                    EngineRejectionReason.TargetHasEscaped,
+                    $"{target.Name} has fled the encounter and is no longer here to strike."),
+                _ => EngineResult.Reject(action, state, EngineRejectionReason.TargetIsDead,
+                    $"{target.Name} is already dead.")
+            };
         }
 
         if (attacker.Weapon is null)
@@ -201,6 +215,9 @@ public sealed class GameEngine : IGameEngine
         var updatedTarget = target with
         {
             Health = healthAfter,
+            // Death is recorded as an explicit disposition change, not left to derive from health alone, so
+            // the authoritative state names it and an orchestration-layer disposition trace can key off it.
+            Disposition = died ? CharacterDisposition.Dead : target.Disposition,
             Injuries = injury is null ? target.Injuries : target.Injuries.Add(injury)
         };
 
@@ -527,6 +544,172 @@ public sealed class GameEngine : IGameEngine
         // No mutation and no version change: inspection is observation, not action-on-the-world.
         return EngineResult.Accept(action, state, state, outcome);
     }
+
+    /// <summary>
+    /// Opens a closed exit. No randomness: opening either succeeds or is refused on authoritative state
+    /// alone, so its result carries no draws and the combat generator is never advanced. Opening only
+    /// changes the door from shut to open; it never moves anyone through it.
+    /// </summary>
+    private EngineResult ResolveOpenExit(OpenExitAction action)
+    {
+        var state = _state;
+
+        var actor = state.Resolve(action.ActorRef);
+        if (actor is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.UnknownActor,
+                $"There is no character called '{action.ActorRef}' in the room.");
+        }
+
+        if (!actor.CanAct)
+        {
+            return RejectInactiveActor(action, state, actor);
+        }
+
+        var resolution = state.ResolveExit(action.ExitRef);
+        if (resolution.Ambiguous)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.ExitReferenceAmbiguous,
+                $"'{action.ExitRef}' could mean more than one way out; it is not clear which is meant.");
+        }
+
+        if (resolution.Exit is not { } exit)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.UnknownExit,
+                $"There is no exit called '{action.ExitRef}' in the room.");
+        }
+
+        if (exit.IsOpen)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.ExitAlreadyOpen,
+                $"The {exit.Name} already stands open.");
+        }
+
+        var opened = exit with { IsOpen = true };
+        var after = state.WithExit(opened) with { Version = state.Version + 1 };
+
+        var outcome = new OpenExitOutcome
+        {
+            ActorId = actor.Id,
+            ActorName = actor.Name,
+            ExitId = exit.Id,
+            ExitName = exit.Name,
+            DestinationDescription = exit.DestinationDescription
+        };
+
+        return EngineResult.Accept(action, state, after, outcome);
+    }
+
+    /// <summary>
+    /// Passes a character through an already-open exit, setting their disposition to
+    /// <see cref="CharacterDisposition.Escaped"/> and recording which exit they used. No randomness, no
+    /// escape roll, no opportunity attack and no pursuit — an open exit is simply walked through. Their
+    /// health, inventory and equipment are untouched; they are alive, just gone.
+    /// </summary>
+    private EngineResult ResolveEscapeEncounter(EscapeEncounterAction action)
+    {
+        var state = _state;
+
+        var actor = state.Resolve(action.ActorRef);
+        if (actor is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.UnknownActor,
+                $"There is no character called '{action.ActorRef}' in the room.");
+        }
+
+        if (!actor.CanAct)
+        {
+            return RejectInactiveActor(action, state, actor);
+        }
+
+        var resolution = state.ResolveExit(action.ExitRef);
+        if (resolution.Ambiguous)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.ExitReferenceAmbiguous,
+                $"'{action.ExitRef}' could mean more than one way out; it is not clear which is meant.");
+        }
+
+        if (resolution.Exit is not { } exit)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.UnknownExit,
+                $"There is no exit called '{action.ExitRef}' in the room.");
+        }
+
+        if (!exit.IsOpen)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.ExitClosed,
+                $"The {exit.Name} is still shut; you cannot escape through it until it is open.");
+        }
+
+        var escaped = actor with
+        {
+            Disposition = CharacterDisposition.Escaped,
+            EscapedThroughExitId = exit.Id
+        };
+        var after = state.WithCharacter(escaped) with { Version = state.Version + 1 };
+
+        var outcome = new EscapeOutcome
+        {
+            ActorId = actor.Id,
+            ActorName = actor.Name,
+            ExitId = exit.Id,
+            ExitName = exit.Name,
+            DestinationDescription = exit.DestinationDescription
+        };
+
+        return EngineResult.Accept(action, state, after, outcome);
+    }
+
+    /// <summary>
+    /// Sets an active character's disposition to <see cref="CharacterDisposition.Surrendered"/>. No
+    /// randomness and unilateral: it needs no opponent approval, roll or prior demand. It changes only the
+    /// disposition — the character keeps their weapon and inventory, and nothing is disarmed or transferred.
+    /// </summary>
+    private EngineResult ResolveSurrender(SurrenderAction action)
+    {
+        var state = _state;
+
+        var actor = state.Resolve(action.ActorRef);
+        if (actor is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.UnknownActor,
+                $"There is no character called '{action.ActorRef}' in the room.");
+        }
+
+        if (!actor.CanAct)
+        {
+            return RejectInactiveActor(action, state, actor);
+        }
+
+        var surrendered = actor with { Disposition = CharacterDisposition.Surrendered };
+        var after = state.WithCharacter(surrendered) with { Version = state.Version + 1 };
+
+        var outcome = new SurrenderOutcome
+        {
+            ActorId = actor.Id,
+            ActorName = actor.Name
+        };
+
+        return EngineResult.Accept(action, state, after, outcome);
+    }
+
+    /// <summary>
+    /// The shared refusal for an actor who cannot act on the three v0.5 disposition/exit actions. Only an
+    /// active character reaches the engine as an actor in normal play (the turn loop skips the rest), so
+    /// this is a defensive guard; it still names the specific reason for the record.
+    /// </summary>
+    private static EngineResult RejectInactiveActor(GameAction action, GameState state, Character actor) =>
+        actor.Disposition switch
+        {
+            CharacterDisposition.Dead => EngineResult.Reject(action, state, EngineRejectionReason.ActorIsDead,
+                $"{actor.Name} is dead and cannot act."),
+            CharacterDisposition.Surrendered => EngineResult.Reject(action, state, EngineRejectionReason.ActorNotActive,
+                $"{actor.Name} has already surrendered and takes no further part in the fight."),
+            CharacterDisposition.Escaped => EngineResult.Reject(action, state, EngineRejectionReason.ActorNotActive,
+                $"{actor.Name} has already left the encounter."),
+            _ => EngineResult.Reject(action, state, EngineRejectionReason.ActorNotActive,
+                $"{actor.Name} cannot act right now.")
+        };
 
     /// <summary>
     /// Resolves an item reference against a container's contents, reporting ambiguity rather than

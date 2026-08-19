@@ -23,6 +23,7 @@ body {
 
 .top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
 .top h1 { font-size: 18px; margin: 0; letter-spacing: 0.3px; }
+.top h1 .version { font-size: 12px; color: var(--muted); font-weight: 400; letter-spacing: 0.5px; }
 .controls { display: flex; align-items: center; gap: 10px; }
 .round { color: var(--muted); font-size: 13px; }
 .status { font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }
@@ -93,3 +94,18 @@ button.ghost { background: transparent; color: var(--muted); border: 1px solid v
 .line.sys { color: var(--muted); font-size: 12px; }
 .line.divider { color: var(--muted); text-align: center; letter-spacing: 1px; margin: 14px 0 8px; }
 .line.divider.end { color: var(--accent); }
+.line.outcome { color: var(--accent); font-size: 13px; }
+
+/* v0.5 — non-combat dispositions. Surrendered and escaped characters are subdued but never shown as
+   fallen: lighter than the dead treatment, with a clear label, and no grayscale death wash. */
+.card.surrendered { opacity: 0.72; border-top-color: var(--muted); }
+.card.escaped { opacity: 0.62; border-top-color: var(--muted); border-style: dashed; }
+.card.surrendered .hpfill, .card.escaped .hpfill { filter: grayscale(0.4); opacity: 0.7; }
+.disposition { font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px; font-weight: 700; margin-top: 4px; color: var(--muted); }
+.disposition.dead { color: var(--monsters); }
+.disposition.surrendered { color: var(--accent); }
+.disposition.escaped { color: var(--heroes); }
+
+/* v0.5 — the cellar exit chip, alongside the object chips. Dashed while shut, solid + accented once open. */
+.obj.exit { border-style: dashed; }
+.obj.exit.open { border-style: solid; }

@@ -130,6 +130,26 @@ public enum TraceEventType
     /// <summary>One complete random draw the engine made, with full context for replay and comparison.</summary>
     RngDraw,
 
+    /// <summary>
+    /// A character's disposition changed — active to surrendered, escaped or dead. Records the full before
+    /// and after, the cause, and the public recipients who learned of it, so a character leaving active
+    /// combat is auditable independently of the action that caused it.
+    /// </summary>
+    DispositionChanged,
+
+    /// <summary>
+    /// An attempt to open an exit or escape through one, accepted or rejected. Complements the generic
+    /// <see cref="EngineAction"/> row with the exit-specific id, the open/closed transition and the
+    /// validation result.
+    /// </summary>
+    ExitInteraction,
+
+    /// <summary>A character surrendered and left active combat. A focused, semantic companion to <see cref="DispositionChanged"/>.</summary>
+    CharacterSurrendered,
+
+    /// <summary>A character escaped through an exit and left the encounter. A focused, semantic companion to <see cref="DispositionChanged"/>.</summary>
+    CharacterEscaped,
+
     /// <summary>The team terminal condition was evaluated after an accepted action or a turn.</summary>
     TeamOutcomeEvaluated,
 

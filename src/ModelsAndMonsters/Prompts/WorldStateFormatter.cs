@@ -46,7 +46,7 @@ public sealed class WorldStateFormatter
         foreach (var character in state.Characters)
         {
             builder.AppendLine();
-            builder.AppendLine($"{character.Name} (id: {character.Id}, {character.Role.ToString().ToLowerInvariant()}) - {(character.IsAlive ? "alive" : "DEAD")}");
+            builder.AppendLine($"{character.Name} (id: {character.Id}, {character.Role.ToString().ToLowerInvariant()}) - {DescribeDisposition(character)}");
             builder.AppendLine($"  Condition: {DescribeCondition(character)}");
             builder.AppendLine($"  Currently holding: {FormatWeapon(character.Weapon)}");
             builder.AppendLine($"  Carrying: {FormatInventory(character.Inventory)}");
@@ -65,6 +65,21 @@ public sealed class WorldStateFormatter
             }
         }
 
+        if (state.Room.Exits.Length > 0)
+        {
+            builder.AppendLine();
+            builder.AppendLine("WAYS OUT OF THE ROOM:");
+            foreach (var exit in state.Room.Exits)
+            {
+                builder.AppendLine();
+                builder.AppendLine($"{exit.Name} (id: {exit.Id}) - {(exit.IsOpen ? "OPEN" : "CLOSED")}. {exit.Description}");
+                builder.AppendLine($"  Leads to: {exit.DestinationDescription}. " +
+                    (exit.IsOpen
+                        ? "It stands open: a character may pass through it to leave the encounter (escape_encounter)."
+                        : "It is shut but NOT locked or barred — it can be pulled open at any time (open_exit) before anyone can pass through it. Opening it and leaving through it are two separate acts."));
+            }
+        }
+
         builder.AppendLine();
         builder.AppendLine("STATE NOTES:");
         builder.AppendLine("- Condition is already a description, not a number. There are no hit points, health totals or armour values to reveal — state condition only in words.");
@@ -79,7 +94,13 @@ public sealed class WorldStateFormatter
             builder.AppendLine("- A container being open or closed is public: everyone in the room sees which, and you may always say so. Its contents are not. Opening does NOT make them public: only the character who opened it, who knew what it held from before the fight, who has since inspected it while open, who saw an item carried out of it, or who was told, knows what is inside. Being in the room is not enough. When you answer or adjudicate for a character, you are told exactly what THAT character knows; never hand them contents they have not discovered, even for an open container.");
             builder.AppendLine("- An exterior marking on a container is legible only to a character who spends a turn inspecting it closely. Never reveal a marking in an answer or narration; it is discovered only through inspection, and then only by the one inspecting.");
         }
-        builder.AppendLine("- ACTIONS THE WORLD CAN RESOLVE: attack_character, use_item, open_container, take_item, inspect_object. Nothing else exists.");
+        if (state.Room.Exits.Length > 0)
+        {
+            builder.AppendLine("- An exit being open or closed is public: everyone present sees which, and you may always say so. A closed exit must be opened (open_exit) before anyone can pass through it; passing through an open exit to leave the encounter is escape_encounter. These are two separate acts and are never resolved together.");
+            builder.AppendLine("- A SURRENDERED or ESCAPED character is out of the fight and is not a valid target: never resolve an attack against them. A surrendered character is still in the room; an escaped one is gone. Surrender and escape are each a character's own choice — never make one character surrender, open an exit or escape because another told, threatened or asked them to.");
+        }
+        builder.AppendLine("- Items move ONLY through containers. A character cannot hand, give, pass, throw or drop an item to another character, and cannot take, snatch, grab or knock an item out of another character's hands or inventory — not even to an ally. The only way to gain an item is take_item from an open container; the only thing to do with one you hold is use_item on yourself. Any attempt to transfer an item between characters is unsupported.");
+        builder.AppendLine("- ACTIONS THE WORLD CAN RESOLVE: attack_character, use_item, open_container, take_item, inspect_object, open_exit, escape_encounter, surrender. Nothing else exists.");
 
         return builder.ToString().TrimEnd();
     }
@@ -130,15 +151,18 @@ public sealed class WorldStateFormatter
     /// </summary>
     public string FormatCharacterSelfState(Character character, GameState state)
     {
+        // Only those still actively fighting are listed: a surrendered or escaped character is out of the
+        // fight and is not an ally to guard or an enemy to strike. A surrendered enemy is not a valid target,
+        // and an escaped one is gone; leaving them off keeps the character from aiming at someone it cannot hit.
         var allies = state.Characters
-            .Where(c => c.IsAlive
+            .Where(c => c.CanAct
                         && !string.Equals(c.Id, character.Id, StringComparison.OrdinalIgnoreCase)
                         && character.IsAllyOf(c))
             .Select(c => c.Name)
             .ToList();
 
         var enemies = state.Characters
-            .Where(c => c.IsAlive && !character.IsAllyOf(c))
+            .Where(c => c.CanAct && !character.IsAllyOf(c))
             .Select(c => c.Name)
             .ToList();
 
@@ -146,7 +170,8 @@ public sealed class WorldStateFormatter
         {
             ["name"] = character.Name,
             ["allies"] = allies.Count == 0 ? "none — you stand alone" : string.Join(", ", allies),
-            ["enemies"] = enemies.Count == 0 ? "none left standing" : string.Join(", ", enemies),
+            ["enemies"] = enemies.Count == 0 ? "none left fighting" : string.Join(", ", enemies),
+            ["exits"] = FormatExits(state.Exits),
             ["health"] = character.Health.ToString(),
             ["max_health"] = character.MaxHealth.ToString(),
             ["armour"] = character.Armour.ToString(),
@@ -164,6 +189,21 @@ public sealed class WorldStateFormatter
     /// raw numbers; handing it a band instead of a total makes it structurally unable to leak one, which
     /// is more reliable than instructing a small model not to. The engine keeps the exact value.
     /// </summary>
+    /// <summary>
+    /// The character's standing for the authoritative block: whether they are still fighting, have yielded,
+    /// have fled, or are dead. This is public, plainly-visible state (like who has fallen), so the Dungeon
+    /// Master may always act on it.
+    /// </summary>
+    private static string DescribeDisposition(Character character) => character.Disposition switch
+    {
+        CharacterDisposition.Surrendered =>
+            "alive but has SURRENDERED — out of the fight, present but takes no turns, and is NOT a valid target (cannot be attacked)",
+        CharacterDisposition.Escaped =>
+            "alive but has ESCAPED — gone from the room, takes no turns, and cannot be reached or targeted",
+        CharacterDisposition.Dead => "DEAD",
+        _ => "alive and active"
+    };
+
     private static string DescribeCondition(Character character)
     {
         if (!character.IsAlive)
@@ -180,6 +220,22 @@ public sealed class WorldStateFormatter
             >= 0.20 => "badly wounded",
             _ => "barely standing, close to death"
         };
+    }
+
+    /// <summary>
+    /// A short, public description of the room's exits for a character — the name of each and whether it
+    /// stands open or shut. An exit's open state is plainly visible to everyone, so it is safe to hand a
+    /// character directly every turn.
+    /// </summary>
+    private static string FormatExits(IReadOnlyList<EncounterExit> exits)
+    {
+        if (exits.Count == 0)
+        {
+            return "none you can see — there is no way out of this room.";
+        }
+
+        return string.Join("; ", exits.Select(e =>
+            $"the {e.Name} ({(e.IsOpen ? "standing open — it can be gone through" : "shut — it must be opened before anyone can leave through it")})"));
     }
 
     private static string FormatWeapon(Weapon? weapon) =>

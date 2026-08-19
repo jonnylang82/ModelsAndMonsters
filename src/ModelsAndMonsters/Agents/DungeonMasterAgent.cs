@@ -37,6 +37,16 @@ public sealed class DungeonMasterAgent : ModelAgent
     private readonly PromptLibrary _prompts;
     private readonly bool _useProjections;
 
+    // The Dungeon Master's rules are modular: one shared CORE (identity, authoritative state, the shape of
+    // the world) plus a rules block per job. When projecting, each task runs on a fresh projection seeded
+    // with only CORE + that job's rules, so the hot adjudication path never carries the narration/answering
+    // rules it does not use (and vice versa) — which keeps each call well inside the context window. When
+    // not projecting (the A/B comparison mode) everything shares one conversation carrying the full combined
+    // prompt, so that mode is unchanged.
+    private readonly string _narrateSystem;
+    private readonly string _answerSystem;
+    private readonly string _adjudicateSystem;
+
     // The adjudication projection persists between the proposal (or mapping) call and its tool-result
     // answer, so a field rather than a local. Reset at the start of each new adjudication.
     private AgentConversation? _adjudication;
@@ -51,24 +61,42 @@ public sealed class DungeonMasterAgent : ModelAgent
         TracingChatClient client,
         PromptLibrary prompts,
         bool projectContext = true)
-        : base(AgentIdentifier, profile, client, prompts.Render("dungeon-master.system"))
+        : base(AgentIdentifier, profile, client, ComposeFull(prompts))
     {
         _prompts = prompts;
         _useProjections = projectContext;
+
+        var core = prompts.Render("dungeon-master.core");
+        _narrateSystem = Join(core, prompts.Render("dungeon-master.rules-narrate"));
+        _answerSystem = Join(core, prompts.Render("dungeon-master.rules-answer"));
+        _adjudicateSystem = Join(core, prompts.Render("dungeon-master.rules-adjudicate"));
     }
 
     /// <summary>True when the DM runs each task on a projection rather than one growing conversation.</summary>
     public bool UsesProjections => _useProjections;
 
-    /// <summary>A fresh conversation seeded with only the system prompt.</summary>
-    private AgentConversation NewProjection() => new(AgentName, Conversation.SystemPrompt);
+    /// <summary>The full combined system prompt: CORE plus all three job rule blocks, used when not projecting.</summary>
+    private static string ComposeFull(PromptLibrary prompts) => Join(
+        prompts.Render("dungeon-master.core"),
+        prompts.Render("dungeon-master.rules-narrate"),
+        prompts.Render("dungeon-master.rules-answer"),
+        prompts.Render("dungeon-master.rules-adjudicate"));
 
-    /// <summary>Where narration and answering run: a fresh projection, or the shared conversation.</summary>
-    private AgentConversation NarrationContext() => _useProjections ? NewProjection() : Conversation;
+    /// <summary>Joins prompt fragments with a single blank line between them.</summary>
+    private static string Join(params string[] parts) => string.Join("\n\n", Array.ConvertAll(parts, p => p.TrimEnd()));
 
-    /// <summary>Where adjudication runs: the current isolated projection, or the shared conversation.</summary>
+    /// <summary>A fresh conversation seeded with the given system prompt.</summary>
+    private AgentConversation NewProjection(string systemPrompt) => new(AgentName, systemPrompt);
+
+    /// <summary>Where narration runs: a fresh CORE+narration projection, or the shared conversation.</summary>
+    private AgentConversation NarrateContext() => _useProjections ? NewProjection(_narrateSystem) : Conversation;
+
+    /// <summary>Where answering runs: a fresh CORE+answering projection, or the shared conversation.</summary>
+    private AgentConversation AnswerContext() => _useProjections ? NewProjection(_answerSystem) : Conversation;
+
+    /// <summary>Where adjudication runs: the current isolated CORE+adjudication projection, or the shared conversation.</summary>
     private AgentConversation AdjudicationContext() =>
-        _useProjections ? _adjudication ??= NewProjection() : Conversation;
+        _useProjections ? _adjudication ??= NewProjection(_adjudicateSystem) : Conversation;
 
     /// <summary>Converts authoritative state into prose for everyone in the room.</summary>
     public Task<string> NarrateAsync(
@@ -162,7 +190,7 @@ public sealed class DungeonMasterAgent : ModelAgent
     {
         // Answers come from authoritative state, not from remembered prior questions, so each runs on
         // its own fresh context and carries no continuity forward.
-        var conversation = NarrationContext();
+        var conversation = AnswerContext();
         conversation.AppendUser(_prompts.Render("dungeon-master.answer", new Dictionary<string, string?>
         {
             ["state"] = authoritativeState,
@@ -174,6 +202,26 @@ public sealed class DungeonMasterAgent : ModelAgent
         var response = await CallModelAsync(conversation, "dm.answer", tools: null, cancellationToken).ConfigureAwait(false);
         return ModelText.Clean(response);
     }
+
+    /// <summary>
+    /// Narrates a public event the whole room sees — an exit opened, a surrender, an escape — from the
+    /// engine's reported summary. Like the other outcome narrations it runs only after the engine has applied
+    /// and reported the change, so the DM describes a fact rather than deciding one.
+    /// </summary>
+    public Task<string> NarratePublicEventAsync(
+        string actorName,
+        string engineResultSummary,
+        string authoritativeState,
+        CancellationToken cancellationToken) =>
+        NarrateProjectedAsync(
+            _prompts.Render("dungeon-master.public-event", new Dictionary<string, string?>
+            {
+                ["actor"] = actorName,
+                ["result"] = engineResultSummary,
+                ["state"] = authoritativeState
+            }),
+            "dm.narrate.public-event",
+            cancellationToken);
 
     /// <summary>
     /// Narrates a close inspection to the room. Public: it says only that the character examined the object.
@@ -207,7 +255,7 @@ public sealed class DungeonMasterAgent : ModelAgent
         CancellationToken cancellationToken)
     {
         // Each attempt starts fresh, so one adjudication cannot colour the next.
-        _adjudication = _useProjections ? NewProjection() : null;
+        _adjudication = _useProjections ? NewProjection(_adjudicateSystem) : null;
 
         var conversation = AdjudicationContext();
         conversation.AppendUser(_prompts.Render("dungeon-master.adjudicate", new Dictionary<string, string?>
@@ -249,7 +297,7 @@ public sealed class DungeonMasterAgent : ModelAgent
         string characterName,
         CancellationToken cancellationToken)
     {
-        var conversation = NarrationContext();
+        var conversation = NarrateContext();
         conversation.AppendUser(_prompts.Render("dungeon-master.rephrase-rejection", new Dictionary<string, string?>
         {
             ["character"] = characterName,
@@ -271,7 +319,7 @@ public sealed class DungeonMasterAgent : ModelAgent
         string characterName,
         CancellationToken cancellationToken)
     {
-        var conversation = NarrationContext();
+        var conversation = AnswerContext();
         conversation.AppendUser(_prompts.Render("dungeon-master.rephrase-answer", new Dictionary<string, string?>
         {
             ["character"] = characterName,
@@ -310,7 +358,7 @@ public sealed class DungeonMasterAgent : ModelAgent
     /// </summary>
     private async Task<string> NarrateProjectedAsync(string renderedTask, string purpose, CancellationToken cancellationToken)
     {
-        var conversation = NarrationContext();
+        var conversation = NarrateContext();
 
         var task = _useProjections && _hasNarrated
             ? "This is a mid-encounter update. The scene is already set, so do not re-describe the room " +

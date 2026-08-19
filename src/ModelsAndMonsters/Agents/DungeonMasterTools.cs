@@ -17,6 +17,9 @@ public static class DungeonMasterTools
     public const string OpenContainerName = "open_container";
     public const string TakeItemName = "take_item";
     public const string InspectObjectName = "inspect_object";
+    public const string OpenExitName = "open_exit";
+    public const string EscapeEncounterName = "escape_encounter";
+    public const string SurrenderName = "surrender";
     public const string RejectActionName = "reject_action";
 
     public const string AttackerParameter = "attacker";
@@ -26,6 +29,7 @@ public static class DungeonMasterTools
     public const string ItemParameter = "item";
     public const string ContainerParameter = "container";
     public const string ObjectParameter = "object";
+    public const string ExitParameter = "exit";
     public const string CategoryParameter = "category";
     public const string ReasonParameter = "reason";
 
@@ -110,6 +114,50 @@ public static class DungeonMasterTools
         """),
         returnJsonSchema: null);
 
+    public static readonly AIFunctionDeclaration OpenExit = AIFunctionFactory.CreateDeclaration(
+        OpenExitName,
+        "Resolve a character opening a closed exit (such as a door) so it can be passed through. Use only for getting the exit open — not for going through it. Opening is a separate act from leaving.",
+        ToolSchema.Parse($$"""
+        {
+          "type": "object",
+          "properties": {
+            "{{ActorParameter}}": { "type": "string", "description": "Name of the character opening the exit, exactly as given in the authoritative state." },
+            "{{ExitParameter}}": { "type": "string", "description": "Name of the exit, exactly as given in the authoritative state." }
+          },
+          "required": ["{{ActorParameter}}", "{{ExitParameter}}"]
+        }
+        """),
+        returnJsonSchema: null);
+
+    public static readonly AIFunctionDeclaration EscapeEncounter = AIFunctionFactory.CreateDeclaration(
+        EscapeEncounterName,
+        "Resolve a character passing through an already-open exit to leave the encounter, abandoning the fight. Use only when the exit is open and the character is going through it.",
+        ToolSchema.Parse($$"""
+        {
+          "type": "object",
+          "properties": {
+            "{{ActorParameter}}": { "type": "string", "description": "Name of the character leaving through the exit, exactly as given in the authoritative state." },
+            "{{ExitParameter}}": { "type": "string", "description": "Name of the open exit they pass through, exactly as given in the authoritative state." }
+          },
+          "required": ["{{ActorParameter}}", "{{ExitParameter}}"]
+        }
+        """),
+        returnJsonSchema: null);
+
+    public static readonly AIFunctionDeclaration Surrender = AIFunctionFactory.CreateDeclaration(
+        SurrenderName,
+        "Resolve a character yielding and taking no further part in the fight. Use only when the ACTING character gives up their OWN fight — never when they merely tell someone else to surrender.",
+        ToolSchema.Parse($$"""
+        {
+          "type": "object",
+          "properties": {
+            "{{ActorParameter}}": { "type": "string", "description": "Name of the character who is surrendering, exactly as given in the authoritative state. This is always the character whose intent you are adjudicating." }
+          },
+          "required": ["{{ActorParameter}}"]
+        }
+        """),
+        returnJsonSchema: null);
+
     public static readonly AIFunctionDeclaration RejectAction = AIFunctionFactory.CreateDeclaration(
         RejectActionName,
         "Refuse the stated intent because it cannot happen. Use this whenever the intent is not a direct weapon strike or an item use.",
@@ -132,5 +180,6 @@ public static class DungeonMasterTools
         """),
         returnJsonSchema: null);
 
-    public static readonly IReadOnlyList<AITool> All = [AttackCharacter, UseItem, OpenContainer, TakeItem, InspectObject, RejectAction];
+    public static readonly IReadOnlyList<AITool> All =
+        [AttackCharacter, UseItem, OpenContainer, TakeItem, InspectObject, OpenExit, EscapeEncounter, Surrender, RejectAction];
 }

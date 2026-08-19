@@ -33,13 +33,23 @@ public static class ScenarioFactory
                 $"Duplicate container id '{duplicateContainerId.Key}' in scenario '{scenario.Id}'.");
         }
 
+        var duplicateExitId = scenario.Room.Exits
+            .GroupBy(e => e.Id, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault(g => g.Count() > 1);
+        if (duplicateExitId is not null)
+        {
+            throw new InvalidOperationException(
+                $"Duplicate exit id '{duplicateExitId.Key}' in scenario '{scenario.Id}'.");
+        }
+
         var room = new Room(
             scenario.Room.Id,
             scenario.Room.Name,
             scenario.Room.Description,
             [.. scenario.Room.Features])
         {
-            Objects = [.. scenario.Room.Containers.Select(ToContainer)]
+            Objects = [.. scenario.Room.Containers.Select(ToContainer)],
+            Exits = [.. scenario.Room.Exits.Select(ToExit)]
         };
 
         var characters = scenario.Characters.Select(ToCharacter).ToImmutableArray();
@@ -111,6 +121,25 @@ public static class ScenarioFactory
             IsOpen = definition.IsOpen,
             Contents = [.. definition.Contents.Select(ToItem)],
             ExteriorClue = string.IsNullOrWhiteSpace(definition.ExteriorClue) ? null : definition.ExteriorClue.Trim()
+        };
+    }
+
+    private static EncounterExit ToExit(ExitDefinition definition)
+    {
+        if (string.IsNullOrWhiteSpace(definition.Id))
+        {
+            throw new InvalidOperationException($"Exit '{definition.Name}' is missing an id.");
+        }
+
+        return new EncounterExit
+        {
+            Id = definition.Id,
+            Name = definition.Name,
+            Description = definition.Description,
+            IsOpen = definition.IsOpen,
+            DestinationDescription = string.IsNullOrWhiteSpace(definition.DestinationDescription)
+                ? "Outside the encounter"
+                : definition.DestinationDescription.Trim()
         };
     }
 

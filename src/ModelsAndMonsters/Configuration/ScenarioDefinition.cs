@@ -34,6 +34,28 @@ public sealed class RoomDefinition
 
     /// <summary>Persistent containers seeded into the room, such as the contested chest.</summary>
     public List<ContainerDefinition> Containers { get; set; } = [];
+
+    /// <summary>Ways out of the encounter seeded into the room, such as the cellar stair door.</summary>
+    public List<ExitDefinition> Exits { get; set; } = [];
+}
+
+/// <summary>
+/// An exit seeded into a room. Passing through it removes a character from the encounter rather than
+/// moving them to another room — there is no second room in v0.5.
+/// </summary>
+public sealed class ExitDefinition
+{
+    public string Id { get; set; } = "";
+
+    public string Name { get; set; } = "";
+
+    public string Description { get; set; } = "";
+
+    /// <summary>Whether the exit starts open. Defaults to closed — it must be opened before anyone can leave.</summary>
+    public bool IsOpen { get; set; }
+
+    /// <summary>Where passing through leads, described for narration. Defaults to leaving the encounter entirely.</summary>
+    public string DestinationDescription { get; set; } = "Outside the encounter";
 }
 
 /// <summary>

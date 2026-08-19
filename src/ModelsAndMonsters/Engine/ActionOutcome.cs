@@ -157,6 +157,64 @@ public sealed record InspectObjectOutcome : ActionOutcome
         "nothing about the object was revealed to anyone else.";
 }
 
+/// <summary>
+/// The result of opening an exit. Public: everyone present sees the door swing open, so the
+/// <see cref="Summary"/> can be narrated to the whole room. It states only that the door is now open, not
+/// that anyone left through it — that is a separate act.
+/// </summary>
+public sealed record OpenExitOutcome : ActionOutcome
+{
+    public required string ActorId { get; init; }
+    public required string ActorName { get; init; }
+    public required string ExitId { get; init; }
+    public required string ExitName { get; init; }
+    public required string DestinationDescription { get; init; }
+
+    public override string OutcomeType => "open_exit";
+
+    public override string Summary =>
+        $"{ActorName} pulled the {ExitName} open. It now stands open, exposing {DestinationDescription}. " +
+        "Nobody has passed through it yet.";
+}
+
+/// <summary>
+/// The result of a character escaping through an open exit. Public: everyone present sees them go. The
+/// character is now <see cref="Domain.CharacterDisposition.Escaped"/> — alive, gone from the room, and no
+/// longer a valid target.
+/// </summary>
+public sealed record EscapeOutcome : ActionOutcome
+{
+    public required string ActorId { get; init; }
+    public required string ActorName { get; init; }
+    public required string ExitId { get; init; }
+    public required string ExitName { get; init; }
+    public required string DestinationDescription { get; init; }
+
+    public override string OutcomeType => "escape_encounter";
+
+    public override string Summary =>
+        $"{ActorName} went through the open {ExitName} and left the encounter, escaping to {DestinationDescription}. " +
+        $"{ActorName} is alive but no longer present, and can no longer be reached or targeted.";
+}
+
+/// <summary>
+/// The result of a character surrendering. Public: everyone present sees them yield. The character is now
+/// <see cref="Domain.CharacterDisposition.Surrendered"/> — alive, still present, but out of the fight and no
+/// longer a valid target. No weapon or item is taken from them.
+/// </summary>
+public sealed record SurrenderOutcome : ActionOutcome
+{
+    public required string ActorId { get; init; }
+    public required string ActorName { get; init; }
+
+    public override string OutcomeType => "surrender";
+
+    public override string Summary =>
+        $"{ActorName} surrendered, lowering their weapon and making no further attempt to fight. " +
+        $"{ActorName} is alive and still present, but takes no further turns and can no longer be attacked. " +
+        $"{ActorName} keeps their weapon and belongings; nothing was taken from them.";
+}
+
 public sealed record TakeItemOutcome : ActionOutcome
 {
     public required string ActorId { get; init; }

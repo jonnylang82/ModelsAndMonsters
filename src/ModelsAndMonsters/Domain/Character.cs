@@ -53,7 +53,40 @@ public sealed record Character
 
     public ImmutableArray<string> Abilities { get; init; } = [];
 
-    public bool IsAlive => Health > 0;
+    /// <summary>
+    /// How this character stands in the encounter — the single authoritative type for its standing. When a
+    /// scenario or test does not set one, it derives from health: a character at zero health is
+    /// <see cref="CharacterDisposition.Dead"/>, otherwise <see cref="CharacterDisposition.Active"/>. That
+    /// derivation is what keeps every pre-v0.5 construction (which set only <see cref="Health"/>) meaning
+    /// exactly what it did before, while surrender and escape set the disposition explicitly without
+    /// touching health.
+    /// </summary>
+    public CharacterDisposition Disposition
+    {
+        get => _disposition ?? (Health > 0 ? CharacterDisposition.Active : CharacterDisposition.Dead);
+        init => _disposition = value;
+    }
+
+    private readonly CharacterDisposition? _disposition;
+
+    /// <summary>
+    /// The id of the exit this character left through, when it has <see cref="CharacterDisposition.Escaped"/>.
+    /// Null for everyone still in the encounter. Recorded so a withdrawal can be traced and reported to the
+    /// exact door used.
+    /// </summary>
+    public string? EscapedThroughExitId { get; init; }
+
+    /// <summary>Alive unless dead. A surrendered or escaped character is still alive.</summary>
+    public bool IsAlive => Disposition != CharacterDisposition.Dead;
+
+    /// <summary>Physically in the room: an active or surrendered character. The escaped and the dead are not present.</summary>
+    public bool IsPresent => Disposition is CharacterDisposition.Active or CharacterDisposition.Surrendered;
+
+    /// <summary>Able to take a turn — only an active character acts.</summary>
+    public bool CanAct => Disposition == CharacterDisposition.Active;
+
+    /// <summary>A valid target for a combat action. In v0.5 only an active character may be attacked.</summary>
+    public bool IsCombatTarget => Disposition == CharacterDisposition.Active;
 
     /// <summary>The default team label for a role, used when a scenario leaves the team unset.</summary>
     public static string DefaultTeamForRole(CharacterRole role) => role switch

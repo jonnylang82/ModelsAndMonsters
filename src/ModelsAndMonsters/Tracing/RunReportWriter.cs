@@ -65,11 +65,14 @@ public static class RunReportWriter
 
         var report = new StringBuilder();
         WriteHeader(report, manifest, finalState, events, runDirectory);
+        WriteOutcome(report, events, finalState);
         WritePerAgentActivity(report, events);
         WriteCommunicationAndObjects(report, events);
+        WriteNonCombatOutcomes(report, events);
         WriteScenario(report, manifest);
         WriteTeams(report, manifest);
         WriteKnowledge(report, events, manifest, finalState);
+        WriteExitState(report, manifest, finalState);
         WriteTranscript(report, events);
         if (includeFullTrace)
         {
@@ -467,6 +470,149 @@ public static class RunReportWriter
         report.AppendLine();
     }
 
+    /// <summary>
+    /// The headline outcome: who won, how the encounter was classified, and — split by disposition — what
+    /// became of every character. Distinguishing the dead from the surrendered and the escaped is the point
+    /// of v0.5, so none of the three is ever collapsed into "fallen". Skipped when neither a final team
+    /// evaluation nor a run-completed event was recorded.
+    /// </summary>
+    private static void WriteOutcome(StringBuilder report, IReadOnlyList<TraceRow> events, JsonElement? finalState)
+    {
+        var final = events.LastOrDefault(e => e.EventType == "TeamOutcomeEvaluated" && Text(e.Data, "Trigger") == "final");
+        var completed = events.LastOrDefault(e => e.EventType == "RunCompleted");
+        if (final is null && completed is null)
+        {
+            return;
+        }
+
+        var classification = (final is null ? null : Text(final.Data, "Outcome"))
+            ?? (completed is null ? null : Text(completed.Data, "Outcome"))
+            ?? "unknown";
+        var winners = final is not null ? JoinArray(final.Data, "WinningTeams")
+            : completed is not null ? JoinArray(completed.Data, "WinningTeams") : "";
+        var terminal = completed is not null ? Text(completed.Data, "TerminalCondition")
+            : final is not null ? Text(final.Data, "Description") : "";
+
+        report.AppendLine("## Outcome");
+        report.AppendLine();
+        report.AppendLine("| | |");
+        report.AppendLine("| --- | --- |");
+        Row(report, "Result", terminal);
+        Row(report, "Winner", string.IsNullOrWhiteSpace(winners) ? "none — no team held the field" : winners);
+        Row(report, "Classification", classification);
+        report.AppendLine();
+
+        // The per-disposition breakdown, read from the authoritative final state so it is always exact.
+        if (TryGet(finalState, out var state, "State"))
+        {
+            var byDisposition = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var c in Characters(state))
+            {
+                var disposition = Scalar(c, "Disposition");
+                (byDisposition.TryGetValue(disposition, out var list) ? list : byDisposition[disposition] = []).Add(Scalar(c, "Name"));
+            }
+
+            string Names(string disposition) =>
+                byDisposition.TryGetValue(disposition, out var list) && list.Count > 0 ? string.Join(", ", list) : "(none)";
+
+            report.AppendLine($"- **Killed:** {Names("Dead")}");
+            report.AppendLine($"- **Surrendered:** {Names("Surrendered")}");
+            report.AppendLine($"- **Escaped:** {Names("Escaped")}");
+            report.AppendLine($"- **Still active:** {Names("Active")}");
+            report.AppendLine();
+        }
+
+        // The per-character account of who left the fight and how, one bullet each, taken from the deciding
+        // evaluation's structured resolutions (not the flattened summary string, whose newlines are stripped
+        // for table safety).
+        if (final is not null && Property(final.Data, "Resolutions") is { ValueKind: JsonValueKind.Array } resolutions
+            && resolutions.GetArrayLength() > 0)
+        {
+            report.AppendLine("How each character left active combat:");
+            report.AppendLine();
+            foreach (var resolution in resolutions.EnumerateArray())
+            {
+                report.AppendLine($"- {Scalar(resolution, "Summary")}");
+            }
+
+            report.AppendLine();
+        }
+    }
+
+    /// <summary>
+    /// Per-character counts of the v0.5 non-combat actions — surrender, exit-opening and escape — with
+    /// attempts and acceptances separated, drawn deterministically from the engine-action rows. Skipped
+    /// when a run had none of them, so pre-v0.5 runs add no empty section. Persuasive or threatening speech
+    /// is deliberately NOT tallied here: it cannot be classified deterministically and is reported as
+    /// ordinary public speech above.
+    /// </summary>
+    private static void WriteNonCombatOutcomes(StringBuilder report, IReadOnlyList<TraceRow> events)
+    {
+        var actions = new[] { "surrender", "open_exit", "escape_encounter" };
+        var rows = events
+            .Where(e => e.EventType == "EngineAction" && actions.Contains(Text(e.Data, "ActionType")))
+            .ToList();
+        if (rows.Count == 0)
+        {
+            return;
+        }
+
+        var tallies = new Dictionary<string, NonCombatTally>(StringComparer.Ordinal);
+        NonCombatTally For(string name) =>
+            tallies.TryGetValue(name, out var t) ? t : tallies[name] = new NonCombatTally();
+
+        foreach (var row in rows)
+        {
+            var actor = Text(row.Data, "Action", "ActorRef") ?? "(unknown)";
+            var accepted = IsTrue(row.Data, "Accepted");
+            var tally = For(actor);
+            switch (Text(row.Data, "ActionType"))
+            {
+                case "surrender":
+                    tally.SurrenderAttempts++;
+                    if (accepted) tally.Surrenders++;
+                    break;
+                case "open_exit":
+                    tally.ExitOpenAttempts++;
+                    if (accepted) tally.ExitOpenings++;
+                    break;
+                case "escape_encounter":
+                    tally.EscapeAttempts++;
+                    if (accepted) tally.Escapes++;
+                    break;
+            }
+        }
+
+        report.AppendLine("## Non-combat outcomes");
+        report.AppendLine();
+        report.AppendLine("Surrender, exit-opening and escape, per character. \"Attempts\" counts every try reaching the engine; the acceptance columns count those the engine applied.");
+        report.AppendLine();
+        report.AppendLine("| Character | Surrender attempts | Surrenders | Escape attempts | Escapes | Exit-open attempts | Exit openings |");
+        report.AppendLine("| --- | --- | --- | --- | --- | --- | --- |");
+        foreach (var (name, t) in tallies.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        {
+            report.AppendLine(
+                $"| {name} | {t.SurrenderAttempts} | {t.Surrenders} | {t.EscapeAttempts} | {t.Escapes} | {t.ExitOpenAttempts} | {t.ExitOpenings} |");
+        }
+
+        var all = tallies.Values;
+        report.AppendLine(
+            $"| **Total** | {all.Sum(t => t.SurrenderAttempts)} | {all.Sum(t => t.Surrenders)} | " +
+            $"{all.Sum(t => t.EscapeAttempts)} | {all.Sum(t => t.Escapes)} | " +
+            $"{all.Sum(t => t.ExitOpenAttempts)} | {all.Sum(t => t.ExitOpenings)} |");
+        report.AppendLine();
+    }
+
+    private sealed class NonCombatTally
+    {
+        public int SurrenderAttempts;
+        public int Surrenders;
+        public int EscapeAttempts;
+        public int Escapes;
+        public int ExitOpenAttempts;
+        public int ExitOpenings;
+    }
+
     /// <summary>Team membership, taken from the recorded initial state so it is always present.</summary>
     private static void WriteTeams(StringBuilder report, JsonElement? manifest)
     {
@@ -678,6 +824,62 @@ public static class RunReportWriter
         }
     }
 
+    /// <summary>
+    /// The room's exits: their opening state, and who escaped through each. Reconstructed from the initial
+    /// and final authoritative state so it is independent of any narration. Skipped when the scenario seeded
+    /// no exit, so pre-v0.5 runs add no empty section.
+    /// </summary>
+    private static void WriteExitState(StringBuilder report, JsonElement? manifest, JsonElement? finalState)
+    {
+        var initial = new List<(string Id, string Name, bool Open, string Destination)>();
+        if (TryGet(manifest, out var initState, "InitialState"))
+        {
+            foreach (var e in Exits(initState))
+            {
+                initial.Add((Scalar(e, "Id"), Scalar(e, "Name"), IsOpenExit(e), Scalar(e, "DestinationDescription")));
+            }
+        }
+
+        if (initial.Count == 0)
+        {
+            return;
+        }
+
+        var finalOpen = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        var escapers = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        if (TryGet(finalState, out var fs, "State"))
+        {
+            foreach (var e in Exits(fs))
+            {
+                finalOpen[Scalar(e, "Id")] = IsOpenExit(e);
+            }
+
+            foreach (var c in Characters(fs))
+            {
+                var exitId = Text(c, "EscapedThroughExitId");
+                if (!string.IsNullOrEmpty(exitId))
+                {
+                    (escapers.TryGetValue(exitId, out var list) ? list : escapers[exitId] = []).Add(Scalar(c, "Name"));
+                }
+            }
+        }
+
+        report.AppendLine("## Exit state");
+        report.AppendLine();
+        report.AppendLine("Each way out of the room: its initial and final state, and who left through it.");
+        report.AppendLine();
+        report.AppendLine("| Exit | Leads to | Initial state | Final state | Escaped through it |");
+        report.AppendLine("| --- | --- | --- | --- | --- |");
+        foreach (var (id, name, open, destination) in initial)
+        {
+            var finalStateText = finalOpen.TryGetValue(id, out var f) ? (f ? "open" : "closed") : (open ? "open" : "closed");
+            var who = escapers.TryGetValue(id, out var names) && names.Count > 0 ? string.Join(", ", names) : "(nobody)";
+            report.AppendLine($"| {name} | {destination} | {(open ? "open" : "closed")} | {finalStateText} | {who} |");
+        }
+
+        report.AppendLine();
+    }
+
     private static IEnumerable<JsonElement> Containers(JsonElement state) =>
         state.TryGetProperty("Room", out var room)
         && room.TryGetProperty("Objects", out var objects)
@@ -687,6 +889,16 @@ public static class RunReportWriter
 
     private static bool IsOpenContainer(JsonElement container) =>
         container.TryGetProperty("IsOpen", out var open) && open.ValueKind == JsonValueKind.True;
+
+    private static IEnumerable<JsonElement> Exits(JsonElement state) =>
+        state.TryGetProperty("Room", out var room)
+        && room.TryGetProperty("Exits", out var exits)
+        && exits.ValueKind == JsonValueKind.Array
+            ? exits.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.Object)
+            : [];
+
+    private static bool IsOpenExit(JsonElement exit) =>
+        exit.TryGetProperty("IsOpen", out var open) && open.ValueKind == JsonValueKind.True;
 
     private static bool RecipientsContain(JsonElement? data, string id) =>
         TryGet(data, out var array, "Recipients")
@@ -808,7 +1020,10 @@ public static class RunReportWriter
                     $"*[{Text(row.Data, "Purpose")}: rolled {Text(row.Data, "RawRoll")} vs {Text(row.Data, "Threshold")} " +
                     $"→ {Text(row.Data, "Result")}]*",
                 "EngineAction" => TranscribeEngineAction(row),
-                "TurnSkipped" => $"*— {Text(row.Data, "CharacterName")} lies fallen; their turn is skipped*",
+                // A departure from active combat, in plain readable terms — never "fallen" for a survivor.
+                "CharacterSurrendered" => $"*— {Text(row.Data, "CharacterName")} surrenders and takes no further part in the fight (still alive)*",
+                "CharacterEscaped" => $"*— {Text(row.Data, "CharacterName")} escapes through the {Text(row.Data, "ExitName")} and leaves the encounter (still alive)*",
+                "TurnSkipped" => TranscribeTurnSkipped(row),
                 "TeamOutcomeEvaluated" => TranscribeTeamOutcome(row),
                 "ContextWindowSaturated" =>
                     $"*[{Text(row.Data, "AgentName")} sent ~{Text(row.Data, "EstimatedSentTokens")} tokens but only " +
@@ -917,7 +1132,31 @@ public static class RunReportWriter
     private static string? TranscribeTeamOutcome(TraceRow row)
     {
         var isOver = row.Data.TryGetProperty("IsOver", out var o) && o.ValueKind == JsonValueKind.True;
-        return isOver ? $"*— {Text(row.Data, "Description")}*" : null;
+        if (!isOver)
+        {
+            return null;
+        }
+
+        // The deciding line names how it ended (Elimination / Surrender / Withdrawal / Mixed / Draw) so the
+        // reader sees at a glance that a win came without killing everyone.
+        var outcome = Text(row.Data, "Outcome");
+        var classified = string.IsNullOrWhiteSpace(outcome) || outcome == "Ongoing" ? "" : $" [{outcome}]";
+        return $"*— {Text(row.Data, "Description")}{classified}*";
+    }
+
+    /// <summary>
+    /// A skipped turn, described by the character's disposition. A surrendered or escaped character must
+    /// never be described as "fallen" — only the dead have fallen.
+    /// </summary>
+    private static string TranscribeTurnSkipped(TraceRow row)
+    {
+        var name = Text(row.Data, "CharacterName");
+        return Text(row.Data, "Disposition") switch
+        {
+            "Surrendered" => $"*— {name}'s turn is skipped: they have surrendered*",
+            "Escaped" => $"*— {name}'s turn is skipped: they have escaped*",
+            _ => $"*— {name} lies fallen; their turn is skipped*"
+        };
     }
 
     private static string TranscribeEngineAction(TraceRow row)
@@ -1165,6 +1404,8 @@ public static class RunReportWriter
                     ("Standings", FormatStandings(Property(d, "Standings"))),
                     ("Winning teams", JoinArray(d, "WinningTeams")),
                     ("Eliminated teams", JoinArray(d, "EliminatedTeams")),
+                    ("Outcome", Text(d, "Outcome")),
+                    ("Resolution", Text(d, "ResolutionSummary")),
                     ("Description", Text(d, "Description")));
                 break;
 
@@ -1172,7 +1413,45 @@ public static class RunReportWriter
                 yield return Bullets(
                     ("Character", $"{Text(d, "CharacterName")} (`{Text(d, "CharacterId")}`)"),
                     ("Team", Text(d, "Team")),
+                    ("Disposition", Text(d, "Disposition")),
                     ("Reason", Text(d, "Reason")));
+                break;
+
+            case "DispositionChanged":
+                yield return Bullets(
+                    ("Character", $"{Text(d, "CharacterName")} (`{Text(d, "CharacterId")}`)"),
+                    ("Team", Text(d, "Team")),
+                    ("Change", $"{Text(d, "PreviousDisposition")} → {Text(d, "NewDisposition")}"),
+                    ("Cause", Text(d, "Cause")),
+                    ("Exit", Text(d, "ExitId")),
+                    ("World version", $"{Text(d, "WorldVersionBefore")} → {Text(d, "WorldVersionAfter")}"),
+                    ("Learned by", JoinArray(d, "PublicRecipients")));
+                break;
+
+            case "ExitInteraction":
+                yield return Bullets(
+                    ("Actor", $"`{Text(d, "ActorId")}`"),
+                    ("Action", $"`{Text(d, "ActionType")}`"),
+                    ("Exit", Text(d, "ExitId")),
+                    ("Validation", $"`{Text(d, "ValidationResult")}`"),
+                    ("Rejection", Text(d, "RejectionReason")),
+                    ("Exit state", $"{Text(d, "StateBefore")} → {Text(d, "StateAfter")}"),
+                    ("World version", $"{Text(d, "WorldVersionBefore")} → {Text(d, "WorldVersionAfter")}"));
+                break;
+
+            case "CharacterSurrendered":
+                yield return Bullets(
+                    ("Character", $"{Text(d, "CharacterName")} (`{Text(d, "CharacterId")}`)"),
+                    ("Team", Text(d, "Team")),
+                    ("Learned by", JoinArray(d, "PublicRecipients")));
+                break;
+
+            case "CharacterEscaped":
+                yield return Bullets(
+                    ("Character", $"{Text(d, "CharacterName")} (`{Text(d, "CharacterId")}`)"),
+                    ("Team", Text(d, "Team")),
+                    ("Exit", $"{Text(d, "ExitName")} (`{Text(d, "ExitId")}`) → {Text(d, "DestinationDescription")}"),
+                    ("Learned by", JoinArray(d, "PublicRecipients")));
                 break;
 
             case "CharacterQuestion":
@@ -1252,6 +1531,8 @@ public static class RunReportWriter
             case "RunCompleted":
                 yield return Bullets(
                     ("Terminal condition", Text(d, "TerminalCondition")),
+                    ("Outcome", Text(d, "Outcome")),
+                    ("Winning teams", JoinArray(d, "WinningTeams")),
                     ("Rounds played", Text(d, "RoundsPlayed")),
                     ("Survivors", JoinArray(d, "Survivors")),
                     ("Casualties", JoinArray(d, "Casualties")));
@@ -1408,7 +1689,12 @@ public static class RunReportWriter
         // end-state itself — the characters, their inventories, and the room's containers.
         if (TryGet(finalState, out var state, "State"))
         {
-            report.AppendLine("| Character | Team | Health | Armour | Weapon | Inventory | Injuries | Alive |");
+            // Final location is the room for anyone still present or fallen; only an escaped character is
+            // elsewhere. Disposition, not a bare alive/dead flag, is what distinguishes surrendered and
+            // escaped survivors from the dead — the report must never call either one "fallen".
+            var roomName = TryGet(state, out var roomEl, "Room") ? Scalar(roomEl, "Name") : "the room";
+
+            report.AppendLine("| Character | Team | Health | Disposition | Final location | Weapon | Inventory | Injuries |");
             report.AppendLine("| --- | --- | --- | --- | --- | --- | --- | --- |");
             foreach (var character in Characters(state))
             {
@@ -1417,10 +1703,14 @@ public static class RunReportWriter
                     ? $"{Scalar(w, "Name")} (damage {Scalar(w, "Damage")})"
                     : "none";
 
+                var disposition = Scalar(character, "Disposition");
+                var escaped = string.Equals(disposition, "Escaped", StringComparison.OrdinalIgnoreCase);
+                var location = escaped ? "Outside the encounter" : roomName;
+
                 report.AppendLine(
                     $"| {Scalar(character, "Name")} | {Scalar(character, "Team")} | {health}/{Scalar(character, "MaxHealth")} " +
-                    $"| {Scalar(character, "Armour")} | {weapon} | {NamesOf(character, "Inventory")} " +
-                    $"| {DescriptionsOf(character, "Injuries")} | {(health > 0 ? "yes" : "no")} |");
+                    $"| {disposition} | {location} | {weapon} | {NamesOf(character, "Inventory")} " +
+                    $"| {DescriptionsOf(character, "Injuries")} |");
             }
 
             report.AppendLine();

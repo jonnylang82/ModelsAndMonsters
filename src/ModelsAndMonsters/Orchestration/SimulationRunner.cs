@@ -403,8 +403,12 @@ public sealed class SimulationRunner
         var finalState = engine.State;
 
         // A final team-outcome evaluation, so the record ends with the standings that decided it even
-        // when the run stopped on a harness limit rather than an elimination.
-        EmitTeamOutcome(trace, "final", ending ?? TerminalCondition.Evaluate(finalState));
+        // when the run stopped on a harness limit rather than a decision. When the run stopped on a limit
+        // the encounter is not terminal, so its classification is HarnessLimit rather than the (Ongoing)
+        // reading the pure evaluator would give.
+        var finalResult = ending ?? TerminalCondition.Evaluate(finalState);
+        var finalOutcome = ending is { IsOver: true } ? finalResult.Outcome : EncounterOutcome.HarnessLimit;
+        EmitTeamOutcome(trace, "final", finalResult, finalOutcome);
 
         _console.Ending(SummariseEnding(finalState, terminalCondition));
 
@@ -414,6 +418,8 @@ public sealed class SimulationRunner
             RoundsPlayed = roundsPlayed,
             Survivors = [.. finalState.Characters.Where(c => c.IsAlive).Select(c => c.Name)],
             Casualties = [.. finalState.Characters.Where(c => !c.IsAlive).Select(c => c.Name)],
+            Outcome = finalOutcome.ToString(),
+            WinningTeams = finalResult.WinningTeams,
             FinalState = finalState
         }, "harness");
 
@@ -442,7 +448,13 @@ public sealed class SimulationRunner
         };
     }
 
-    private static void EmitTeamOutcome(ExperimentTrace trace, string trigger, TerminalConditionResult outcome) =>
+    /// <summary>
+    /// Records a team-outcome evaluation. <paramref name="outcomeOverride"/> replaces the pure evaluator's
+    /// classification for the final check when the run stopped on a harness limit — there the encounter is
+    /// not terminal, so it is classified as <see cref="EncounterOutcome.HarnessLimit"/> rather than Ongoing.
+    /// </summary>
+    private static void EmitTeamOutcome(
+        ExperimentTrace trace, string trigger, TerminalConditionResult outcome, EncounterOutcome? outcomeOverride = null) =>
         trace.Emit(TraceEventType.TeamOutcomeEvaluated, new TeamOutcomePayload
         {
             Trigger = trigger,
@@ -451,10 +463,25 @@ public sealed class SimulationRunner
             {
                 Team = s.Team,
                 Living = s.Living,
-                Total = s.Total
+                Total = s.Total,
+                Active = s.Active,
+                Surrendered = s.Surrendered,
+                Escaped = s.Escaped,
+                Dead = s.Dead
             })],
             WinningTeams = outcome.WinningTeams,
             EliminatedTeams = outcome.EliminatedTeams,
+            Outcome = (outcomeOverride ?? outcome.Outcome).ToString(),
+            Resolutions = [.. outcome.Resolutions.Select(r => new CharacterResolutionPayload
+            {
+                CharacterId = r.CharacterId,
+                CharacterName = r.CharacterName,
+                Team = r.Team,
+                Disposition = r.Disposition.ToString(),
+                ExitName = r.ExitName,
+                Summary = r.Summary
+            })],
+            ResolutionSummary = outcome.Resolutions.Count == 0 ? null : outcome.ResolutionSummary,
             Description = outcome.Description
         }, "harness");
 
@@ -503,9 +530,13 @@ public sealed class SimulationRunner
 
     private static string SummariseEnding(GameState state, string terminalCondition)
     {
-        var lines = state.Characters.Select(c => c.IsAlive
-            ? $"{c.Name} ({c.Team}) survives with {c.Health} of {c.MaxHealth} health."
-            : $"{c.Name} ({c.Team}) has fallen.");
+        var lines = state.Characters.Select(c => c.Disposition switch
+        {
+            CharacterDisposition.Dead => $"{c.Name} ({c.Team}) has fallen.",
+            CharacterDisposition.Surrendered => $"{c.Name} ({c.Team}) surrendered and is out of the fight.",
+            CharacterDisposition.Escaped => $"{c.Name} ({c.Team}) escaped the encounter alive.",
+            _ => $"{c.Name} ({c.Team}) survives with {c.Health} of {c.MaxHealth} health."
+        });
 
         return $"{terminalCondition}\n{string.Join("\n", lines)}";
     }

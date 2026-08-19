@@ -284,7 +284,9 @@ public sealed class TurnOrchestrationTests
             [
                 DungeonMasterTools.AttackCharacterName, DungeonMasterTools.UseItemName,
                 DungeonMasterTools.OpenContainerName, DungeonMasterTools.TakeItemName,
-                DungeonMasterTools.InspectObjectName, DungeonMasterTools.RejectActionName
+                DungeonMasterTools.InspectObjectName, DungeonMasterTools.OpenExitName,
+                DungeonMasterTools.EscapeEncounterName, DungeonMasterTools.SurrenderName,
+                DungeonMasterTools.RejectActionName
             ],
             dungeonMasterTools);
 

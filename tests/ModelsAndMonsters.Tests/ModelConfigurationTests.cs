@@ -729,9 +729,9 @@ public sealed class ModelConfigurationTests
             Assert.IsNotAssignableFrom<AIFunction>(tool);
         }
 
-        // Characters: ask_dm, take_action, say, end_turn. Dungeon Master: attack_character, use_item,
-        // open_container, take_item, inspect_object, reject_action.
-        Assert.Equal(10, allTools.Count);
+        // Characters: ask_dm, take_action, say, end_turn (4). Dungeon Master: attack_character, use_item,
+        // open_container, take_item, inspect_object, open_exit, escape_encounter, surrender, reject_action (9).
+        Assert.Equal(13, allTools.Count);
     }
 
     [Fact]
@@ -739,7 +739,11 @@ public sealed class ModelConfigurationTests
     {
         var library = PromptLibrary.LoadFromDirectory(Path.Combine(AppContext.BaseDirectory, "Prompts", "Templates"));
 
-        Assert.Contains("dungeon-master.system", library.Versions.Keys);
+        // The Dungeon Master prompt is modular: a shared core plus a rules block per job.
+        Assert.Contains("dungeon-master.core", library.Versions.Keys);
+        Assert.Contains("dungeon-master.rules-adjudicate", library.Versions.Keys);
+        Assert.Contains("dungeon-master.rules-narrate", library.Versions.Keys);
+        Assert.Contains("dungeon-master.rules-answer", library.Versions.Keys);
         Assert.Contains("character.system", library.Versions.Keys);
         Assert.All(library.Versions.Values, v => Assert.StartsWith("sha256:", v, StringComparison.Ordinal));
 

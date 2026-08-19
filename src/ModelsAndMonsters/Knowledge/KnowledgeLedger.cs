@@ -166,6 +166,78 @@ public sealed class KnowledgeLedger
     }
 
     /// <summary>
+    /// A public exit-opened fact: an exit was opened in plain view of the room. Keyed by exit and the world
+    /// version at which it was opened, so one opening yields one fact.
+    /// </summary>
+    public FactResult GetOrAddExitOpenedFact(string exitId, string exitName, int worldVersion)
+    {
+        var id = $"{exitId}-opened-wv{worldVersion}";
+        if (_facts.TryGetValue(id, out var existing))
+        {
+            return new FactResult(existing, WasCreated: false);
+        }
+
+        var fact = new KnowledgeFact
+        {
+            Id = id,
+            SubjectId = exitId,
+            FactType = FactType.ExitOpened,
+            Description = $"The {exitName} has been opened and now stands open.",
+            WorldVersion = worldVersion
+        };
+        _facts[id] = fact;
+        return new FactResult(fact, WasCreated: true);
+    }
+
+    /// <summary>
+    /// A public surrender fact: a character yielded in plain view. Keyed by character and the world version
+    /// at which they surrendered.
+    /// </summary>
+    public FactResult GetOrAddSurrenderFact(string characterId, string characterName, int worldVersion)
+    {
+        var id = $"{characterId}-surrendered-wv{worldVersion}";
+        if (_facts.TryGetValue(id, out var existing))
+        {
+            return new FactResult(existing, WasCreated: false);
+        }
+
+        var fact = new KnowledgeFact
+        {
+            Id = id,
+            SubjectId = characterId,
+            FactType = FactType.CharacterSurrendered,
+            Description = $"{characterName} has surrendered and left the fight.",
+            WorldVersion = worldVersion
+        };
+        _facts[id] = fact;
+        return new FactResult(fact, WasCreated: true);
+    }
+
+    /// <summary>
+    /// A public escape fact: a character left the encounter through an exit in plain view. Keyed by character
+    /// and the world version at which they escaped.
+    /// </summary>
+    public FactResult GetOrAddEscapeFact(string characterId, string characterName, string exitName, int worldVersion)
+    {
+        var id = $"{characterId}-escaped-wv{worldVersion}";
+        if (_facts.TryGetValue(id, out var existing))
+        {
+            return new FactResult(existing, WasCreated: false);
+        }
+
+        var fact = new KnowledgeFact
+        {
+            Id = id,
+            SubjectId = characterId,
+            FactType = FactType.CharacterEscaped,
+            Description = $"{characterName} escaped through the {exitName} and is no longer present.",
+            WorldVersion = worldVersion
+        };
+        _facts[id] = fact;
+        return new FactResult(fact, WasCreated: true);
+    }
+
+    /// <summary>
     /// Records that a character knows a fact. Returns the new record when this is genuinely new knowledge;
     /// null when the character already held it — in which case the caller should tell them they learned
     /// nothing new, and no duplicate record is created and the world version they first observed it at is

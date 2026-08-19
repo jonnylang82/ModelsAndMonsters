@@ -24,4 +24,10 @@ public sealed record Room(
 {
     /// <summary>Persistent world objects present in the room, such as containers.</summary>
     public ImmutableArray<WorldObject> Objects { get; init; } = [];
+
+    /// <summary>
+    /// Ways out of the encounter. Like <see cref="Objects"/> this is init-only rather than a constructor
+    /// parameter, so every existing room construction keeps compiling with no exits. v0.5 seeds exactly one.
+    /// </summary>
+    public ImmutableArray<EncounterExit> Exits { get; init; } = [];
 }

@@ -69,3 +69,37 @@ public sealed record TakeItemAction(string ActorRef, string ContainerRef, string
 
     public override string Describe() => $"TakeItem(actor={ActorRef}, container={ContainerRef}, item={ItemRef})";
 }
+
+/// <summary>
+/// Opens a closed exit so it can be passed through. Uses no randomness. Opening never moves anyone — it
+/// only changes the door from shut to open — and it is a separate act from escaping through it.
+/// </summary>
+public sealed record OpenExitAction(string ActorRef, string ExitRef) : GameAction
+{
+    public override string ActionType => "open_exit";
+
+    public override string Describe() => $"OpenExit(actor={ActorRef}, exit={ExitRef})";
+}
+
+/// <summary>
+/// Passes a character through an already-open exit, removing them from the encounter. Uses no randomness.
+/// There are no escape rolls, no opportunity attacks and no pursuit: an open exit is simply walked through.
+/// </summary>
+public sealed record EscapeEncounterAction(string ActorRef, string ExitRef) : GameAction
+{
+    public override string ActionType => "escape_encounter";
+
+    public override string Describe() => $"EscapeEncounter(actor={ActorRef}, exit={ExitRef})";
+}
+
+/// <summary>
+/// A character yielding and taking no further part in the fight. Uses no randomness and is unilateral: it
+/// needs no opponent's approval, no roll and no prior demand. It does not disarm the character or transfer
+/// any item; it only changes their disposition.
+/// </summary>
+public sealed record SurrenderAction(string ActorRef) : GameAction
+{
+    public override string ActionType => "surrender";
+
+    public override string Describe() => $"Surrender(actor={ActorRef})";
+}
