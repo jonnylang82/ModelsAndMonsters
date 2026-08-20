@@ -60,7 +60,7 @@ public abstract class ModelAgent
     /// </summary>
     /// <param name="maxOutputTokens">
     /// A smaller output budget for this one call, when the task cannot need the agent's configured
-    /// allowance. On Ollama the context window covers input and output together, so an output reserve sized
+    /// allowance. On Ollama the context window covers input and output together, so an output reserve sized            `
     /// for prose is a quarter of the window held back from a task whose whole reply is one tool call. Null
     /// uses the agent's own configured limit.
     /// </param>
@@ -92,7 +92,7 @@ public abstract class ModelAgent
     /// the identical bad reply (measured: a temp-0 IntentParser 500'd three times on the same malformed XML).
     /// A small floor breaks the loop while barely perturbing an agent that is already sampling.
     /// </summary>
-    private const float RetryTemperatureFloor = 0.1f;
+    private static float RetryTemperatureFloor(int attempt) => attempt <= 2 ? 0.4f : 0.8f;
 
     /// <summary>
     /// Sends the request, re-sending on a transient provider failure before giving up. A provider can
@@ -103,10 +103,27 @@ public abstract class ModelAgent
     /// retried failure still shows in the trace as a model error followed by the successful send.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The first attempt uses the agent's exact profile, so a run with no failures still replays identically.
-    /// A retry re-samples: the temperature is floored to <see cref="RetryTemperatureFloor"/> and the seed is
-    /// offset by the attempt number, so the draw genuinely moves rather than repeating the same fault — a
-    /// greedy temp-0 agent with a pinned seed would otherwise reproduce its malformed reply on every retry.
+    /// A retry re-samples: the temperature is floored by <see cref="RetryTemperatureFloor"/> and the seed is
+    /// offset by the attempt number, so the draw genuinely moves rather than repeating the same fault.
+    /// </para>
+    /// <para>
+    /// The floor ESCALATES across attempts (0.4, then 0.8), and one live run is the whole argument for that.
+    /// It contained both outcomes at once. Elara, configured at 0.8, took two 500s and succeeded on the third
+    /// attempt — the mechanism works. The intent parser, configured at 0, was lifted to the old flat floor of
+    /// 0.1 and 500'd three times with the identical provider-side error, because 0.1 is barely off greedy: the
+    /// seed moved but the distribution did not, so the model reproduced the same malformed tool call and the
+    /// run died. A floor near zero is not re-sampling, it only looks like it.
+    /// </para>
+    /// <para>
+    /// Escalating also changes the REQUEST, which matters beyond sampling. Ollama's own tool-call parser is
+    /// what rejects the reply and turns it into a 500 (ollama#14834, still open), and ollama#17825 records
+    /// that re-sending the identical request after such a failure could wedge the server outright — a poisoned
+    /// prompt cache, fixed in ollama#17883. That hang only reproduced with thinking enabled, which is why this
+    /// harness has never seen it: every agent here runs with reasoning off. A retry that draws differently is
+    /// the cheapest way to stay off that path as well as escape the fault.
+    /// </para>
     /// </remarks>
     private async Task<ChatResponse> SendWithTransientRetryAsync(
         AgentConversation conversation,
@@ -128,7 +145,7 @@ public abstract class ModelAgent
             try
             {
                 var resolved = ChatOptionsFactory.Create(profile, tools);
-                using (_client.BeginCall(purpose, resolved.UnsupportedOptionsDropped))
+                using (_client.BeginCall(purpose, resolved.UnsupportedOptionsDropped, attempt))
                 {
                     var response = await _client
                         .GetResponseAsync(conversation.BuildRequestMessages(), resolved.Options, cancellationToken)
@@ -152,17 +169,17 @@ public abstract class ModelAgent
     }
 
     /// <summary>
-    /// The profile a retry attempt uses: the agent's own, but with the temperature raised to at least
-    /// <see cref="RetryTemperatureFloor"/> and the seed offset by the attempt number. Together these ensure a
-    /// re-send draws a different sample — a temperature floor so sampling is not greedy, and a moved seed so
-    /// the draw is not pinned to the same sequence — which is what lets a retry escape a deterministic fault
-    /// such as a malformed tool call. It never lowers an agent's temperature (the floor is a minimum), so an
-    /// agent already sampling above the floor keeps its own temperature and only gets the seed offset.
+    /// The profile a retry attempt uses: the agent's own, but with the temperature raised to at least the
+    /// floor for this attempt and the seed offset by the attempt number. Together these ensure a re-send
+    /// draws a different sample — a temperature floor so sampling is not greedy, and a moved seed so the draw
+    /// is not pinned to the same sequence — which is what lets a retry escape a deterministic fault such as a
+    /// malformed tool call. It never lowers an agent's temperature (the floor is a minimum), so an agent
+    /// already sampling above the floor keeps its own temperature and only gets the seed offset.
     /// </summary>
     private static AgentModelProfile WithRetrySampling(AgentModelProfile profile, int attempt) =>
         profile with
         {
-            Temperature = Math.Max(profile.Temperature ?? 0f, RetryTemperatureFloor),
+            Temperature = Math.Max(profile.Temperature ?? 0f, RetryTemperatureFloor(attempt)),
             Seed = profile.Seed is { } seed ? seed + attempt : null
         };
 
@@ -243,7 +260,7 @@ public abstract class ModelAgent
         && ContextTruncation.WasContextExhausted(
             response.Usage?.InputTokenCount,
             response.Usage?.OutputTokenCount,
-            Profile.ContextWindow,
+            Profile.BindingContextWindow,
             Profile.MaxOutputTokens);
 
     /// <summary>Records the application's answer to a tool call in this agent's history.</summary>

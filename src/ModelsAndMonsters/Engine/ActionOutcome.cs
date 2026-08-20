@@ -1,3 +1,5 @@
+using ModelsAndMonsters.Domain;
+
 namespace ModelsAndMonsters.Engine;
 
 /// <summary>
@@ -36,15 +38,29 @@ public sealed record AttackOutcome : ActionOutcome
     /// <summary>Every status modifier folded into the effective hit chance, in deterministic application order.</summary>
     public IReadOnlyList<RngModifier> HitModifiers { get; init; } = [];
 
-    /// <summary>The glancing roll and chance, null when the attack missed (no glancing roll was made).</summary>
+    /// <summary>The quality roll and the glancing band, null when the attack missed (no quality roll was made).</summary>
     public int? GlancingRoll { get; init; }
     public required int GlancingChance { get; init; }
-    public required bool Glancing { get; init; }
+
+    /// <summary>The size of the critical band, out of 100. 0 when critical hits are configured off.</summary>
+    public int CriticalChance { get; init; }
+
+    /// <summary>
+    /// How well the blow connected, from the one quality draw. <see cref="AttackQuality.Solid"/> on a miss,
+    /// where no quality draw was made at all.
+    /// </summary>
+    public AttackQuality Quality { get; init; } = AttackQuality.Solid;
+
+    /// <summary>True when the one quality draw selected a glancing blow. Derived from <see cref="Quality"/>.</summary>
+    public bool Glancing => Quality == AttackQuality.Glancing;
+
+    /// <summary>True when the one quality draw selected a critical hit. Derived from <see cref="Quality"/>.</summary>
+    public bool Critical => Quality == AttackQuality.Critical;
 
     /// <summary>Damage before any glancing reduction, i.e. <c>max(0, weapon - armour)</c>.</summary>
     public required int BaseDamage { get; init; }
 
-    /// <summary>Damage actually applied: 0 on a miss, halved on a glancing blow.</summary>
+    /// <summary>Damage actually applied: 0 on a miss, halved on a glancing blow, doubled on a critical hit.</summary>
     public required int DamageDealt { get; init; }
     public required int TargetHealthBefore { get; init; }
     public required int TargetHealthAfter { get; init; }
@@ -87,8 +103,15 @@ public sealed record AttackOutcome : ActionOutcome
     /// <summary>True when a guard relationship moved this blow from the intended target onto a guardian.</summary>
     public bool Redirected { get; init; }
 
-    /// <summary>The damage a Defending status turned aside, after armour and glancing. 0 when none applied.</summary>
+    /// <summary>The damage a Defending status turned aside, after armour and the quality multiplier. 0 when none applied.</summary>
     public int DefendReduction { get; init; }
+
+    /// <summary>
+    /// The fear this resolved attack moved, by character - the surviving target frightened by a critical or
+    /// heavy blow, and the attacker steadied by landing a critical one. Empty when morale did not move.
+    /// Carried on the outcome so the narration facts and the report read from the record the engine made.
+    /// </summary>
+    public IReadOnlyList<FearChange> FearChanges { get; init; } = [];
 
     public override string OutcomeType => "attack";
 
@@ -113,7 +136,12 @@ public sealed record AttackOutcome : ActionOutcome
                        $"{TargetName} is unharmed with {TargetHealthAfter}/{TargetMaxHealth} health.{redirect}";
             }
 
-            var quality = Glancing ? "a GLANCING blow (half damage)" : "a solid hit";
+            var quality = Quality switch
+            {
+                AttackQuality.Glancing => "a GLANCING blow (half damage)",
+                AttackQuality.Critical => "a CRITICAL hit (double damage)",
+                _ => "a solid hit"
+            };
             var status = TargetDied
                 ? $"{TargetName} is dead."
                 : $"{TargetName} is alive with {TargetHealthAfter}/{TargetMaxHealth} health.";
@@ -124,6 +152,11 @@ public sealed record AttackOutcome : ActionOutcome
             var applied = StatusApplied is null
                 ? ""
                 : $" The blow left {TargetName} {StatusApplied} — their next attack is less likely to land.";
+            var morale = FearChanges.Count == 0
+                ? ""
+                : " " + string.Join(" ", FearChanges.Select(f => f.Delta > 0
+                    ? $"{f.CharacterName} is visibly shaken by it."
+                    : $"{f.CharacterName} takes heart from it."));
             var loot = TargetDied && DroppedItems.Count > 0
                 ? $" As {TargetName} falls, what they carried — {string.Join(", ", DroppedItems)} — spills from " +
                   $"their body and can be taken from {CorpseContainerName}."
@@ -131,7 +164,7 @@ public sealed record AttackOutcome : ActionOutcome
             return $"{AttackerName} hit {TargetName}{via} with {WeaponName} — {quality} (rolled {HitRoll} against {chance}). " +
                    $"Weapon damage {WeaponDamage} minus armour {TargetArmour} = {BaseDamage}, " +
                    $"{DamageDealt} damage dealt. " +
-                   $"{TargetName} health {TargetHealthBefore} -> {TargetHealthAfter}. {status}{defended}{applied}{injury}{loot}{redirect}";
+                   $"{TargetName} health {TargetHealthBefore} -> {TargetHealthAfter}. {status}{defended}{applied}{injury}{morale}{loot}{redirect}";
         }
     }
 }
@@ -418,13 +451,28 @@ public sealed record RallyOutcome : ActionOutcome
     public required int Modifier { get; init; }
     public required int RemainingUses { get; init; }
 
+    /// <summary>The fear the order shed, if the ally had any. Empty when they were already unafraid.</summary>
+    public IReadOnlyList<FearChange> FearChanges { get; init; } = [];
+
+    /// <summary>True when the order brought a publicly Scared ally back below the threshold.</summary>
+    public bool NoLongerScared { get; init; }
+
     public override string OutcomeType => "rally";
 
-    public override string Summary =>
-        $"{CommanderName} used {AbilityName} on {AllyName}, steadying them. {AllyName}'s next attack is " +
-        $"{Modifier:+#;-#;0} more likely to land; the effect is used up by that attack whether it lands or " +
-        $"misses, and lapses at the end of {AllyName}'s next turn if unused. No dice were rolled. " +
-        $"{CommanderName} has {RemainingUses} use(s) of {AbilityName} left this encounter.";
+    public override string Summary
+    {
+        get
+        {
+            var steadied = FearChanges.Any(f => !f.Absorbed)
+                ? $" {AllyName} also takes heart and is less afraid than they were" +
+                  (NoLongerScared ? $", and no longer looks afraid at all." : ".")
+                : "";
+            return $"{CommanderName} used {AbilityName} on {AllyName}, steadying them. {AllyName}'s next attack is " +
+                   $"{Modifier:+#;-#;0} more likely to land; the effect is used up by that attack whether it lands or " +
+                   $"misses, and lapses at the end of {AllyName}'s next turn if unused.{steadied} No dice were rolled. " +
+                   $"{CommanderName} has {RemainingUses} use(s) of {AbilityName} left this encounter.";
+        }
+    }
 }
 
 /// <summary>
@@ -546,6 +594,91 @@ public sealed record TakeItemOutcome : ActionOutcome
                 ? $"The {ContainerName} is now empty."
                 : $"Still inside the {ContainerName}: {string.Join(", ", RemainingContents)}.";
             return $"{ActorName} took the {ItemName} from the {ContainerName} and now carries it. {remaining}";
+        }
+    }
+}
+
+/// <summary>
+/// The result of one attempt to frighten an opponent. Public: everyone present heard the threat and saw
+/// whether it landed. It carries the whole randomness record - base chance, every modifier and its
+/// authoritative source, the effective chance and the raw roll - so the attempt is fully reconstructable.
+/// </summary>
+/// <remarks>
+/// A success raises the target's fear by one, and does nothing else at all. It never forces a surrender,
+/// an escape, a hand-over, a disarm or a skipped turn: what the target does about being frightened stays
+/// entirely their own choice. The <see cref="Summary"/> deliberately states that the fear moved without
+/// naming the number, because the number is the target's own knowledge.
+/// </remarks>
+public sealed record IntimidateOutcome : ActionOutcome
+{
+    public required string ActorId { get; init; }
+    public required string ActorName { get; init; }
+    public required string TargetId { get; init; }
+    public required string TargetName { get; init; }
+
+    /// <summary>The base chance out of 100 before any modifier.</summary>
+    public required int BaseChance { get; init; }
+
+    /// <summary>Every modifier applied, with its authoritative source, in deterministic order.</summary>
+    public required IReadOnlyList<RngModifier> Modifiers { get; init; }
+
+    /// <summary>The effective chance the raw roll was compared against, after modifiers and clamping.</summary>
+    public required int EffectiveChance { get; init; }
+
+    public required int Roll { get; init; }
+
+    public required bool Succeeded { get; init; }
+
+    /// <summary>The public-channel id of the threat spoken on the same turn. Always present: the action requires one.</summary>
+    public int? AssociatedSpeechEventId { get; init; }
+
+    /// <summary>The fear change a successful attempt caused. Empty on a failure, which changes nothing.</summary>
+    public IReadOnlyList<FearChange> FearChanges { get; init; } = [];
+
+    public override string OutcomeType => "intimidate_character";
+
+    public override string Summary =>
+        Succeeded
+            ? $"{ActorName} threatened {TargetName} openly, and it told: {TargetName} is visibly more afraid " +
+              $"than they were. NOTHING else changed - {TargetName} keeps their weapon, their belongings and " +
+              $"their turn, is not disarmed, has not yielded and has not fled. What they do about it is theirs " +
+              $"to decide. Everyone present heard the threat and saw it tell."
+            : $"{ActorName} threatened {TargetName} openly, and it did not tell: {TargetName} is no more afraid " +
+              $"than before. Nothing changed at all. Everyone present heard the threat and saw it fail.";
+}
+
+/// <summary>
+/// The result of one character spending their whole turn steadying an ally. Public: everyone present hears
+/// the encouragement and sees the ally take heart. No randomness is consulted at all.
+/// </summary>
+public sealed record SteadyAllyOutcome : ActionOutcome
+{
+    public required string ActorId { get; init; }
+    public required string ActorName { get; init; }
+    public required string TargetId { get; init; }
+    public required string TargetName { get; init; }
+
+    /// <summary>The public-channel id of the words of encouragement. Always present: the action requires one.</summary>
+    public int? AssociatedSpeechEventId { get; init; }
+
+    /// <summary>The fear the steadying removed.</summary>
+    public IReadOnlyList<FearChange> FearChanges { get; init; } = [];
+
+    /// <summary>True when the ally was publicly Scared and this brought them back below the threshold.</summary>
+    public bool NoLongerScared { get; init; }
+
+    public override string OutcomeType => "steady_ally";
+
+    public override string Summary
+    {
+        get
+        {
+            var recovered = NoLongerScared
+                ? $" {TargetName} has their nerve back and no longer looks afraid."
+                : "";
+            return $"{ActorName} spent the whole turn steadying {TargetName}, who takes heart and is less " +
+                   $"afraid than they were.{recovered} No dice were rolled. Nothing else changed: no damage, " +
+                   $"no items, no odds altered, and {TargetName} still chooses their own actions.";
         }
     }
 }

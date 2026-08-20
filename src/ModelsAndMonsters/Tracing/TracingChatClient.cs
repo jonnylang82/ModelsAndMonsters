@@ -37,12 +37,18 @@ public sealed class TracingChatClient : DelegatingChatClient
     }
 
     /// <summary>Declares the purpose of the next call(s) made through this client.</summary>
-    public IDisposable BeginCall(string purpose, ImmutableArray<string> unsupportedOptionsDropped = default)
+    /// <param name="attempt">
+    /// Which transient-retry attempt this is, counting from 1. Recorded because a retry is otherwise
+    /// invisible in the trace except as an unexplained shift in the sampling options: a reader had to know
+    /// that the seed is offset by the attempt number to tell a re-send from a fresh call.
+    /// </param>
+    public IDisposable BeginCall(string purpose, ImmutableArray<string> unsupportedOptionsDropped = default, int attempt = 1)
     {
         var previous = _current;
         _current = new CallScopeState(
             purpose,
-            unsupportedOptionsDropped.IsDefault ? [] : unsupportedOptionsDropped);
+            unsupportedOptionsDropped.IsDefault ? [] : unsupportedOptionsDropped,
+            attempt);
         return new CallScope(this, previous);
     }
 
@@ -79,6 +85,7 @@ public sealed class TracingChatClient : DelegatingChatClient
                 ModelId = _profile.ModelId,
                 Purpose = scope.Purpose,
                 CallId = callId,
+                Attempt = scope.Attempt,
                 ExceptionType = ex.GetType().FullName ?? ex.GetType().Name,
                 Message = ex.Message,
                 StackTrace = ex.StackTrace,
@@ -110,6 +117,7 @@ public sealed class TracingChatClient : DelegatingChatClient
             Messages = traced,
             NewlyInjected = newlyInjected,
             RequestedOptions = ChatTraceMapper.MapOptions(options, scope.UnsupportedOptionsDropped, _profile.ContextWindow, _profile.Thinking, _profile.Effort?.ToString()),
+            Attempt = scope.Attempt,
             Tools = ChatTraceMapper.MapTools(options?.Tools)
         }, _profile.AgentName);
     }
@@ -222,7 +230,8 @@ public sealed class TracingChatClient : DelegatingChatClient
         }, _profile.AgentName);
     }
 
-    private readonly record struct CallScopeState(string Purpose, IReadOnlyList<string> UnsupportedOptionsDropped)
+    private readonly record struct CallScopeState(
+        string Purpose, IReadOnlyList<string> UnsupportedOptionsDropped, int Attempt = 1)
     {
         public static readonly CallScopeState Unspecified = new("unspecified", []);
     }

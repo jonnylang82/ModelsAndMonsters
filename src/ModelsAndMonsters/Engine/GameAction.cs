@@ -189,3 +189,45 @@ public sealed record StealItemAction(string ThiefRef, string TargetRef, string I
 
     public override string Describe() => $"StealItem(thief={ThiefRef}, target={TargetRef}, item={ItemRef})";
 }
+
+/// <summary>
+/// The current actor trying to frighten one active opponent with an open threat. Exactly one seeded draw
+/// decides it, against a base chance modified only by the authoritative state — never by what was said.
+/// </summary>
+/// <remarks>
+/// The threat itself is ordinary structured speech, already delivered on the public channel this turn and
+/// carried here only as <paramref name="AssociatedSpeechEventId"/>; <paramref name="SpeechAddressedToId"/> is
+/// the addressee the speaker declared, when they declared one, so a threat aimed at somebody else can be
+/// refused rather than quietly re-pointed. Success raises the target's fear by one and does nothing else:
+/// it never forces a surrender, an escape, a hand-over, a disarm or a skipped turn.
+/// </remarks>
+public sealed record IntimidateCharacterAction(
+    string ActorRef,
+    string TargetRef,
+    int? AssociatedSpeechEventId = null,
+    string? SpeechAddressedToId = null) : GameAction
+{
+    public override string ActionType => "intimidate_character";
+
+    public override string Describe() => $"IntimidateCharacter(actor={ActorRef}, target={TargetRef})";
+}
+
+/// <summary>
+/// The current actor spending their whole turn steadying one active ally, reducing that ally's fear by one.
+/// Uses no randomness at all: reassurance is not a gamble in v0.8.
+/// </summary>
+/// <remarks>
+/// As with intimidation, the words of encouragement are ordinary structured speech carried only by id. The
+/// engine validates that an utterance exists and that its declared addressee, when there is one, is the ally
+/// being steadied — never what the words actually say.
+/// </remarks>
+public sealed record SteadyAllyAction(
+    string ActorRef,
+    string TargetRef,
+    int? AssociatedSpeechEventId = null,
+    string? SpeechAddressedToId = null) : GameAction
+{
+    public override string ActionType => "steady_ally";
+
+    public override string Describe() => $"SteadyAlly(actor={ActorRef}, target={TargetRef})";
+}

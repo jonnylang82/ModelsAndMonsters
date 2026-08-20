@@ -63,6 +63,20 @@ public sealed class TurnCoordinator
     /// </summary>
     private NarrationEntry? _speechThisTurn;
 
+    /// <summary>
+    /// The character id the acting character DECLARED its speech was aimed at this turn, resolved against the
+    /// snapshot, or null when it named nobody. Reset at the start of every turn alongside
+    /// <see cref="_speechThisTurn"/>.
+    /// </summary>
+    /// <remarks>
+    /// This is the whole of "who was that said to". It comes from the speaker's own structured
+    /// <c>addressed_to</c> field and is never read out of the words: a threat and a taunt look identical to
+    /// any parser worth having, and inferring the addressee from prose is precisely the class of heuristic
+    /// this project keeps removing. When it is null the Dungeon Master's binding stands unchallenged; when it
+    /// is set and disagrees with the binding, the engine refuses rather than quietly re-pointing the action.
+    /// </remarks>
+    private string? _speechAddressedToThisTurn;
+
     public TurnCoordinator(
         IGameEngine engine,
         DungeonMasterAgent dungeonMaster,
@@ -189,6 +203,7 @@ public sealed class TurnCoordinator
         ApplyUpkeep(_engine.BeginActorTurn(character.CharacterId, round, turn), "turn-start", character.Name);
 
         _speechThisTurn = null;
+        _speechAddressedToThisTurn = null;
         self = _engine.State.RequireById(character.CharacterId);
 
         var selfState = _formatter.FormatCharacterSelfState(self, _engine.State);
@@ -222,9 +237,29 @@ public sealed class TurnCoordinator
                 : string.Join("\n\n", pendingNarration.Select(n => n.Text))
         }));
 
-        // Where this character's history stands now, with the turn's context injected but before any reply.
-        // When the turn resolves, everything after this mark is compacted back to the clean calls, so the
-        // failed prose replies and nudges a turn accumulates do not pile up and fill the context window later.
+        // Now that the turn's context is in the history, check whether the request we are ABOUT TO SEND fits,
+        // and fold older turns into the running summary if it does not.
+        //
+        // This runs at turn START rather than turn end on purpose. Summarising between turns measures the
+        // history alone, and then the next turn appends a fresh context — self-state, knowledge, pending
+        // narration — on top of a history that was just declared to fit. A live run caught exactly that: Elara
+        // was trimmed to 4,633 estimated tokens against a 4,781 budget, which with measured overhead came to
+        // 6,288 real against 6,436 allowed — and then 1,679 tokens of turn context arrived AFTER the budget
+        // had been enforced, for a request of 7,967 that left 225 tokens of window and truncated her reply.
+        // The arithmetic was right and applied one step too early.
+        //
+        // The trim boundary falls on the most recent user message, which is the context just injected, so the
+        // current turn is always kept verbatim and only genuinely older turns are folded.
+        if (_summariser is not null && _limits.SummariseHistory)
+        {
+            await MaybeSummariseHistoryAsync(character, cancellationToken).ConfigureAwait(false);
+        }
+
+        // Where this character's history stands now, with the turn's context injected and any summarisation
+        // already applied, before any reply. When the turn resolves, everything after this mark is compacted
+        // back to the clean calls, so the failed prose replies and nudges a turn accumulates do not pile up
+        // and fill the context window later. Taken AFTER summarising, because folding older turns renumbers
+        // the history and a mark taken before it would point at the wrong place.
         var historyMark = character.MarkHistory();
 
         _trace.Emit(TraceEventType.TurnStarted, new TurnStartedPayload
@@ -273,17 +308,23 @@ public sealed class TurnCoordinator
                     await ReclaimContextRoomAsync(character, historyMark, cancellationToken).ConfigureAwait(false);
                 }
 
-                if (!truncated && _intentParser is not null && _limits.UseIntentParser)
+                // Prose-fallback: read the reply into the say/ask/act calls it implies and dispatch them as
+                // if the character had made them — one reply can carry a spoken line AND an action, so the
+                // turn resolves in one pass instead of a nudge loop. Null means the parser itself was
+                // unavailable (its own model call failed), NOT that it found nothing.
+                var parsed = !truncated && _intentParser is not null && _limits.UseIntentParser
+                    ? await ParseProseIntoCallsAsync(character, response, cancellationToken).ConfigureAwait(false)
+                    : null;
+
+                if (parsed is not null)
                 {
-                    // Prose-fallback: read the reply into the say/ask/act calls it implies and dispatch them
-                    // as if the character had made them — one reply can carry a spoken line AND an action, so
-                    // the turn resolves in one pass instead of a nudge loop. Always yields at least one call.
-                    calls = await ParseProseIntoCallsAsync(character, response, cancellationToken).ConfigureAwait(false);
+                    calls = parsed;
                 }
                 else
                 {
-                    // Parser off, or a truncated reply: record a prose speech attempt and nudge, recover a
-                    // prose tool call, or nudge for a clean one. Null means the character was nudged — ask again.
+                    // Parser off, a truncated reply, or a parser that failed: record a prose speech attempt
+                    // and nudge, recover a prose tool call, or nudge for a clean one. Null means the character
+                    // was nudged — ask again.
                     var recovered = TryRecoverOrNudge(character, response, truncated, contextExhausted);
                     if (recovered is null)
                     {
@@ -293,6 +334,14 @@ public sealed class TurnCoordinator
                     calls = [recovered];
                 }
             }
+
+            // Speech first, whatever order the reply put it in. This is the same rule that already governs
+            // an `utterances` field — a warning only counts if it lands before the blow it warns about — and
+            // it matters mechanically now: threatening and steadying are DEFINED as speech aimed at one
+            // person, so a `say` dispatched after the `take_action` it belongs with would leave the engine
+            // seeing an action with nothing spoken and refuse it. The intent parser is where this actually
+            // bites, since it emits the calls a prose reply implies in whatever order it read them.
+            calls = SpeechFirst(calls);
 
             var turnEnded = false;
 
@@ -371,8 +420,8 @@ public sealed class TurnCoordinator
                     {
                         if (speechActs >= _limits.MaxSpeechActsPerTurn)
                         {
-                            EmitLimit(nameof(HarnessOptions.MaxSpeechActsPerTurn), _limits.MaxSpeechActsPerTurn,
-                                $"{character.Name} had already spoken this turn and was not heard again.");
+                            EmitSpeechNotHeard(character, ToolArguments.GetString(call, CharacterTools.MessageParameter),
+                                speechActs);
                             DispatchAndRecord(character, call,
                                 "You have already spoken this turn. Act, ask, or end your turn.",
                                 "refused-speech-limit");
@@ -437,14 +486,10 @@ public sealed class TurnCoordinator
 
         // The turn is over: shed the failed prose replies and nudges it took to get here, keeping the clean
         // tool calls and their results. The full exchange, including every discarded attempt, stays in the trace.
+        // Summarisation is NOT done here — it happens at the start of the NEXT turn, once that turn's context
+        // has been injected, so the budget is measured against the request that will actually be sent rather
+        // than against a history the next turn is about to add nearly two thousand tokens to.
         character.CompactTurnHistory(historyMark);
-
-        // Then, if the character's history has grown past budget, fold its older turns into a running summary
-        // so a long fight does not fill the context window with legitimate history the prune cannot touch.
-        if (_summariser is not null && _limits.SummariseHistory)
-        {
-            await MaybeSummariseHistoryAsync(character, cancellationToken).ConfigureAwait(false);
-        }
 
         var result = new TurnResult
         {
@@ -706,8 +751,16 @@ public sealed class TurnCoordinator
     /// Delivers one spoken line to the room. Shared by the <c>say</c> tool and by structured
     /// <c>utterances</c> declared alongside an action, so both reach the world by exactly one path.
     /// </summary>
-    private void DeliverSpeech(CharacterAgent character, string spoken, int round, int turn, int speechIndex)
+    private void DeliverSpeech(
+        CharacterAgent character, string spoken, int round, int turn, int speechIndex, string? addressedToRef = null)
     {
+        // The declared addressee is resolved against the snapshot here and nowhere else. An unresolvable
+        // name is treated as no addressee at all rather than as a refusal: a character calling somebody by a
+        // name the world does not know has still spoken, and the room still hears it.
+        var addressee = string.IsNullOrWhiteSpace(addressedToRef)
+            ? null
+            : _engine.State.Resolve(addressedToRef)?.Id;
+
         // The stored public-channel text already carries attribution, so recipients read the speaker's
         // exact words rather than a paraphrase, and delivery reuses the narration path unchanged.
         var entry = _narrationLog.RecordSpeech(character.CharacterId, $"{character.Name} says:\n\"{spoken}\"");
@@ -718,6 +771,7 @@ public sealed class TurnCoordinator
         // Remembered for this turn only, so a surrender offer made after speaking can point at the plea,
         // argument or threat that carried it. The speech is never the terms — only the argument for them.
         _speechThisTurn = entry;
+        _speechAddressedToThisTurn = addressee;
 
         var self = _engine.State.FindById(character.CharacterId);
         var recipients = LivingRecipientsExcept(character.CharacterId);
@@ -735,7 +789,9 @@ public sealed class TurnCoordinator
             SpeechIndexWithinTurn = speechIndex,
             Recipients = recipients,
             DeliveryMechanism = "public-channel (delivered at each recipient's next turn)",
-            NarrationId = entry.Id
+            NarrationId = entry.Id,
+            AddressedToId = addressee,
+            AddressedToName = addressee is null ? null : _engine.State.FindById(addressee)?.Name
         });
     }
 
@@ -778,10 +834,11 @@ public sealed class TurnCoordinator
 
         if (speechActsSoFar >= _limits.MaxSpeechActsPerTurn)
         {
-            EmitLimit(nameof(HarnessOptions.MaxSpeechActsPerTurn), _limits.MaxSpeechActsPerTurn,
-                $"{character.Name} had already spoken this turn and was not heard again.");
+            EmitSpeechNotHeard(character, string.Join(" ", lines), speechActsSoFar);
             return 0;
         }
+
+        var addressedTo = ToolArguments.GetString(call, CharacterTools.AddressedToParameter);
 
         var spoken = string.Join(" ", lines);
         if (spoken.Length > _limits.MaxSpeechCharacters)
@@ -796,7 +853,7 @@ public sealed class TurnCoordinator
             return 0;
         }
 
-        DeliverSpeech(character, spoken, round, turn, speechActsSoFar + 1);
+        DeliverSpeech(character, spoken, round, turn, speechActsSoFar + 1, addressedTo);
         return 1;
     }
 
@@ -977,7 +1034,8 @@ public sealed class TurnCoordinator
                 or DungeonMasterTools.AcceptSurrenderName or DungeonMasterTools.UseAbilityName
                 or DungeonMasterTools.DefendName
                 or DungeonMasterTools.GiveItemName or DungeonMasterTools.DropItemName
-                or DungeonMasterTools.StealItemName =>
+                or DungeonMasterTools.StealItemName or DungeonMasterTools.IntimidateCharacterName
+                or DungeonMasterTools.SteadyAllyName =>
                 await HandleEngineActionAsync(character, intent, primary, cancellationToken).ConfigureAwait(false),
             _ => HandleUnknownDungeonMasterTool(character, intent, primary)
         };
@@ -1274,6 +1332,11 @@ public sealed class TurnCoordinator
         EmitStatusEvents(engineResult.StatusEvents, action.ActionType);
         EmitOfferTransitions(engineResult.OfferTransitions);
 
+        // Every fear change the action caused, whatever caused it — a critical blow, a heavy one, a threat
+        // that told, an ally's word, or the odds turning. Emitted here, once, for every action type, so no
+        // handler can move morale without the record showing it.
+        EmitFearChanges(engineResult, action.ActionType);
+
         // An ability attempt is recorded whether it was accepted or refused, with the charges either side, so
         // "a refused use spends no charge" is visible rather than asserted.
         EmitAbilityUsed(character, action, engineResult, abilityChargesBefore);
@@ -1332,6 +1395,8 @@ public sealed class TurnCoordinator
             GiveItemOutcome give => await DeliverGiveAsync(character, give, cancellationToken).ConfigureAwait(false),
             DropItemOutcome drop => await DeliverDropAsync(character, drop, cancellationToken).ConfigureAwait(false),
             StealItemOutcome steal => await DeliverStealAsync(character, steal, cancellationToken).ConfigureAwait(false),
+            IntimidateOutcome intimidate => await DeliverIntimidationAsync(character, intimidate, engineResult, cancellationToken).ConfigureAwait(false),
+            SteadyAllyOutcome steady => await DeliverSteadyAsync(character, steady, engineResult, cancellationToken).ConfigureAwait(false),
             _ => await DeliverCombatOutcomeAsync(character, engineResult, cancellationToken).ConfigureAwait(false)
         };
 
@@ -2259,6 +2324,22 @@ public sealed class TurnCoordinator
                     ResolveActingCharacter(call, DungeonMasterTools.ActorParameter, character),
                     ToolArguments.GetRequiredString(call, DungeonMasterTools.ItemParameter));
 
+            case DungeonMasterTools.IntimidateCharacterName:
+                return new IntimidateCharacterAction(
+                    ResolveActingCharacter(call, DungeonMasterTools.ActorParameter, character),
+                    ToolArguments.GetRequiredString(call, DungeonMasterTools.TargetParameter),
+                    // Both of these are harness facts, not Dungeon Master arguments: what this character
+                    // actually said aloud on this turn, and who they declared they said it to.
+                    _speechThisTurn?.Id,
+                    _speechAddressedToThisTurn);
+
+            case DungeonMasterTools.SteadyAllyName:
+                return new SteadyAllyAction(
+                    ResolveActingCharacter(call, DungeonMasterTools.ActorParameter, character),
+                    ToolArguments.GetRequiredString(call, DungeonMasterTools.TargetParameter),
+                    _speechThisTurn?.Id,
+                    _speechAddressedToThisTurn);
+
             case DungeonMasterTools.StealItemName:
                 return new StealItemAction(
                     ResolveActingCharacter(call, DungeonMasterTools.ThiefParameter, character),
@@ -2538,7 +2619,7 @@ public sealed class TurnCoordinator
                     ? contextExhausted
                         ? $"Character's reply was cut off because the context window was already full " +
                           $"(input {response.Usage?.InputTokenCount} + output {response.Usage?.OutputTokenCount} " +
-                          $"filled a {character.Profile.ContextWindow}-token window). The request is too large, " +
+                          $"filled a {character.Profile.BindingContextWindow}-token window). The request is too large, " +
                           "not the output budget too small."
                         : "Character's reply was truncated at the output-token limit before any tool call was produced."
                     // Naming the finish reason covers the other ways a reply can end early, such as a
@@ -2573,11 +2654,50 @@ public sealed class TurnCoordinator
     /// callable, the whole reply is treated as a single take_action so the turn still progresses. Always
     /// returns at least one call.
     /// </summary>
-    private async Task<IReadOnlyList<FunctionCallContent>> ParseProseIntoCallsAsync(
+    /// <summary>
+    /// Reads a prose reply into the tool calls it implies, or returns null when the parser itself could not
+    /// be reached — leaving the caller to fall back to the nudge path the harness used before the parser
+    /// existed.
+    /// </summary>
+    /// <remarks>
+    /// The null case is the fix for a run that died at round 5. The intent parser is a CONVENIENCE: it exists
+    /// to salvage a reply the character malformed, and everything it does was survivable before it was added.
+    /// It had no failure path at all, so when its model call threw the exception unwound through the turn, the
+    /// round loop and the run. What threw was not even the parser's fault — Ollama's own tool-call parser
+    /// rejected qwen's XML and returned 500 (ollama#14834, open), three times over, because a temperature-0
+    /// agent re-sent at the old 0.1 retry floor draws essentially the same reply every time.
+    ///
+    /// Both halves of that are now fixed, and this is the half that matters: an optional component must not be
+    /// able to end a run. A character whose prose could not be parsed is exactly a character who replied in
+    /// prose before the parser was written, and the harness already knows how to handle one.
+    /// </remarks>
+    private async Task<IReadOnlyList<FunctionCallContent>?> ParseProseIntoCallsAsync(
         CharacterAgent character, ChatResponse response, CancellationToken cancellationToken)
     {
         var prose = ModelText.Clean(response);
-        var parsed = await _intentParser!.ParseAsync(prose, cancellationToken).ConfigureAwait(false);
+
+        IReadOnlyList<FunctionCallContent> parsed;
+        try
+        {
+            parsed = await _intentParser!.ParseAsync(prose, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The individual model failures are already traced by the client; this records the harness
+            // decision that followed, so the fall-back to nudging reads as a choice rather than a gap.
+            _trace.Emit(TraceEventType.ToolCallError, new ToolCallErrorPayload
+            {
+                AgentName = IntentParser.AgentIdentifier,
+                ToolName = "(none)",
+                Error = $"The intent parser could not be reached ({ex.GetType().Name}: {ex.Message}). " +
+                        $"{character.Name}'s prose was not parsed; the turn continues on the nudge path.",
+                ExceptionType = ex.GetType().Name
+            }, IntentParser.AgentIdentifier);
+
+            _console.Notice(
+                $"The intent parser failed; {character.Name} was nudged to call a tool instead.");
+            return null;
+        }
 
         // Speak and ask before the action that ends the turn, whatever order the parser emitted them in.
         var ordered = parsed
@@ -3406,6 +3526,54 @@ public sealed class TurnCoordinator
                 $"Nothing can be stolen from the dead; looting a body is {DungeonMasterTools.TakeItemName} from it.");
         }
 
+        // Withdraw a threat the actor has already spent on everyone available, and a steadying nobody needs.
+        // The rulebook is stateless and cannot know either; leaving the affordance up invites a model to
+        // burn its turn on an attempt the engine can only refuse.
+        if (names.Contains(DungeonMasterTools.IntimidateCharacterName)
+            && !_engine.State.RemainingIntimidationTargets(character.CharacterId).Any())
+        {
+            widened.RemoveAll(t => string.Equals(t.Name, DungeonMasterTools.IntimidateCharacterName, StringComparison.OrdinalIgnoreCase));
+            names.Remove(DungeonMasterTools.IntimidateCharacterName);
+            notes.Add(
+                $"STATE THE RULEBOOK COULD NOT SEE: {character.Name} has already tried to frighten every enemy " +
+                "still fighting, and that card cannot be played twice on the same foe. Threatening is no longer " +
+                "available; treat words alone as speech.");
+        }
+
+        if (names.Contains(DungeonMasterTools.SteadyAllyName)
+            && !_engine.State.RemainingSteadyTargets(character.CharacterId).Any())
+        {
+            widened.RemoveAll(t => string.Equals(t.Name, DungeonMasterTools.SteadyAllyName, StringComparison.OrdinalIgnoreCase));
+            names.Remove(DungeonMasterTools.SteadyAllyName);
+            notes.Add(
+                $"STATE THE RULEBOOK COULD NOT SEE: none of {character.Name}'s companions has lost their nerve, " +
+                "so there is nobody to steady. Treat words of encouragement as ordinary speech.");
+        }
+
+        // Both required actions need words actually spoken aloud this turn. Without them the engine refuses
+        // before any draw, so the affordance is withdrawn rather than dangled.
+        if (_speechThisTurn is null)
+        {
+            foreach (var requiresSpeech in new[] { DungeonMasterTools.IntimidateCharacterName, DungeonMasterTools.SteadyAllyName })
+            {
+                if (!names.Contains(requiresSpeech))
+                {
+                    continue;
+                }
+
+                widened.RemoveAll(t => string.Equals(t.Name, requiresSpeech, StringComparison.OrdinalIgnoreCase));
+                names.Remove(requiresSpeech);
+                notes.Add(
+                    $"STATE THE RULEBOOK COULD NOT SEE: {character.Name} said nothing aloud this turn, and " +
+                    $"{requiresSpeech} is words spoken to somebody. It is not available; rule on the deed instead.");
+            }
+
+            if (widened.Count == 0)
+            {
+                widened.Add(DungeonMasterTools.RejectAction);
+            }
+        }
+
         return notes.Count == 0 ? (tools, null) : (widened, string.Join(Environment.NewLine, notes));
     }
 
@@ -3610,6 +3778,208 @@ public sealed class TurnCoordinator
             >= 0.20 => "badly wounded",
             _ => "barely standing"
         };
+    }
+
+    /// <summary>
+    /// An attempt to frighten an opponent. Public: everyone present heard the threat and can see whether it
+    /// told, so the room learns it as a public fact. The threat itself was already spoken on the public
+    /// channel this turn; this narrates only what it did.
+    /// </summary>
+    private async Task<string> DeliverIntimidationAsync(
+        CharacterAgent character, IntimidateOutcome outcome, EngineResult engineResult, CancellationToken cancellationToken)
+    {
+        var stateAfterText = WorldStateFormatter.FormatAuthoritativeState(_engine.State);
+        var narration = await _dungeonMaster
+            .NarratePublicEventAsync(character.Name, outcome.Summary, stateAfterText, cancellationToken)
+            .ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(narration))
+        {
+            narration = outcome.Summary;
+        }
+
+        var worldVersion = _engine.State.Version;
+        var recipients = LivingRecipients();
+        var fact = _knowledge.GetOrAddIntimidationFact(
+            outcome.ActorId, outcome.ActorName, outcome.TargetId, outcome.TargetName, outcome.Succeeded, worldVersion);
+        TraceFactCreatedIfNew(fact, KnowledgeSource.PublicEvent, "intimidate_character", character.Name);
+        DeliverPublicFact(fact.Fact, recipients, worldVersion, "intimidate_character");
+
+        var change = outcome.FearChanges.FirstOrDefault(f => Same(f.CharacterId, outcome.TargetId));
+        var attempt = _engine.State.IntimidationAttempts.LastOrDefault();
+
+        _trace.Emit(TraceEventType.IntimidationAttempted, new IntimidationAttemptedPayload
+        {
+            AttemptId = attempt?.Id ?? "intimidation-unknown",
+            ActorId = outcome.ActorId,
+            ActorName = outcome.ActorName,
+            TargetId = outcome.TargetId,
+            TargetName = outcome.TargetName,
+            AssociatedSpeechEventId = outcome.AssociatedSpeechEventId,
+            AssociatedSpeech = SpeechTextFor(outcome.AssociatedSpeechEventId),
+            SpeechAddressedToId = _speechAddressedToThisTurn,
+            BaseChance = outcome.BaseChance,
+            Modifiers = [.. outcome.Modifiers.Select(m => m.Note)],
+            ModifierSources = outcome.Modifiers,
+            EffectiveChance = outcome.EffectiveChance,
+            Roll = outcome.Roll,
+            Succeeded = outcome.Succeeded,
+            TargetFearBefore = change?.Before ?? engineResult.StateBefore.RequireById(outcome.TargetId).Fear,
+            TargetFearAfter = _engine.State.RequireById(outcome.TargetId).Fear,
+            ScaredTransition = (change?.Transition ?? ScaredTransition.None).ToString(),
+            Round = _trace.Round,
+            Turn = _trace.Turn,
+            WorldVersionBefore = engineResult.StateBefore.Version,
+            WorldVersionAfter = engineResult.StateAfter.Version,
+            PublicRecipients = recipients
+        }, character.Name);
+
+        RecordPublicNarration("intimidation", stateAfterText, outcome.Summary, narration, character, [fact.Fact.Id]);
+        _console.DungeonMaster(narration);
+        return narration;
+    }
+
+    /// <summary>
+    /// One character steadying an ally. Public: the room hears the words and can see the ally take heart.
+    /// No knowledge fact is minted for the steadying itself — what everyone can observe is the ally no longer
+    /// LOOKING afraid, which is the Scared transition, and that is minted by the morale trace below.
+    /// </summary>
+    private async Task<string> DeliverSteadyAsync(
+        CharacterAgent character, SteadyAllyOutcome outcome, EngineResult engineResult, CancellationToken cancellationToken)
+    {
+        var stateAfterText = WorldStateFormatter.FormatAuthoritativeState(_engine.State);
+        var narration = await _dungeonMaster
+            .NarratePublicEventAsync(character.Name, outcome.Summary, stateAfterText, cancellationToken)
+            .ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(narration))
+        {
+            narration = outcome.Summary;
+        }
+
+        var change = outcome.FearChanges.FirstOrDefault(f => Same(f.CharacterId, outcome.TargetId));
+
+        _trace.Emit(TraceEventType.AllySteadied, new AllySteadiedPayload
+        {
+            ActorId = outcome.ActorId,
+            ActorName = outcome.ActorName,
+            TargetId = outcome.TargetId,
+            TargetName = outcome.TargetName,
+            AssociatedSpeechEventId = outcome.AssociatedSpeechEventId,
+            AssociatedSpeech = SpeechTextFor(outcome.AssociatedSpeechEventId),
+            SpeechAddressedToId = _speechAddressedToThisTurn,
+            TargetFearBefore = change?.Before ?? engineResult.StateBefore.RequireById(outcome.TargetId).Fear,
+            TargetFearAfter = _engine.State.RequireById(outcome.TargetId).Fear,
+            NoEffect = change is null || change.Absorbed,
+            ScaredTransition = (change?.Transition ?? ScaredTransition.None).ToString(),
+            Round = _trace.Round,
+            Turn = _trace.Turn,
+            WorldVersionBefore = engineResult.StateBefore.Version,
+            WorldVersionAfter = engineResult.StateAfter.Version,
+            PublicRecipients = LivingRecipients()
+        }, character.Name);
+
+        RecordPublicNarration("ally-steadied", stateAfterText, outcome.Summary, narration, character);
+        _console.DungeonMaster(narration);
+        return narration;
+    }
+
+    /// <summary>
+    /// Traces every fear change an accepted action caused, and — for a change that CROSSED the public
+    /// threshold — records the visible consequence as a public fact everyone present learns.
+    /// </summary>
+    /// <remarks>
+    /// The split is the whole information boundary in one method. The number moving is traced (it is an
+    /// experiment artefact) but reaches nobody in the world; the threshold being crossed is what a face
+    /// shows, and only that becomes knowledge anyone else holds. A change that does not cross it produces no
+    /// public fact at all, which is what keeps opponents from tracking the value by watching for events.
+    /// </remarks>
+    private void EmitFearChanges(EngineResult engineResult, string actionType)
+    {
+        foreach (var change in engineResult.FearChanges)
+        {
+            var crossed = change.Transition != ScaredTransition.None;
+            var recipients = crossed ? LivingRecipients() : [];
+            var worldVersion = engineResult.StateAfter.Version;
+
+            _trace.Emit(TraceEventType.FearChanged, new FearChangedPayload
+            {
+                CharacterId = change.CharacterId,
+                CharacterName = change.CharacterName,
+                Team = _engine.State.FindById(change.CharacterId)?.Team ?? "",
+                Cause = change.Cause.ToString(),
+                CauseDetail = change.CauseDetail,
+                Delta = change.Delta,
+                FearBefore = change.Before,
+                FearAfter = change.After,
+                Absorbed = change.Absorbed,
+                ScaredTransition = change.Transition.ToString(),
+                ScaredAfter = FearRules.IsScared(change.After),
+                SourceCharacterId = change.SourceCharacterId,
+                SourceCharacterName = change.SourceCharacterName,
+                RelatedActionType = change.RelatedActionType ?? actionType,
+                RngConsulted = change.Cause == FearChangeCause.Intimidated,
+                Round = _trace.Round,
+                Turn = _trace.Turn,
+                WorldVersion = worldVersion,
+                PublicRecipients = recipients
+            }, change.CharacterName);
+
+            if (!crossed)
+            {
+                continue;
+            }
+
+            var scared = change.Transition == ScaredTransition.BecameScared;
+            var fact = _knowledge.GetOrAddMoraleFact(change.CharacterId, change.CharacterName, scared, worldVersion);
+            TraceFactCreatedIfNew(fact, KnowledgeSource.PublicEvent, actionType, change.CharacterName);
+            DeliverPublicFact(fact.Fact, recipients, worldVersion, $"{actionType} (morale)");
+
+            _console.Notice(fact.Fact.Description);
+        }
+    }
+
+    /// <summary>
+    /// Reorders one reply's calls so any <c>say</c> comes first, keeping everything else in the order it
+    /// arrived. A stable partition, not a sort: nothing else about the reply's sequence changes.
+    /// </summary>
+    private static IReadOnlyList<FunctionCallContent> SpeechFirst(IReadOnlyList<FunctionCallContent> calls)
+    {
+        if (calls.Count < 2 || !calls.Any(c => c.Name == CharacterTools.SayName))
+        {
+            return calls;
+        }
+
+        return
+        [
+            .. calls.Where(c => c.Name == CharacterTools.SayName),
+            .. calls.Where(c => c.Name != CharacterTools.SayName)
+        ];
+    }
+
+    private static bool Same(string? left, string? right) =>
+        string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Records words a character was not heard saying, because it had already spoken this turn.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately NOT a harness limit. The once-per-turn rule is part of the fiction — a character gets so
+    /// many breaths in a turn — while a harness limit exists to stop a broken model running away with a run.
+    /// Filing this under the latter made a good run read as a troubled one: three of a live run's four
+    /// "harness limits" were this rule working correctly, which is exactly the sort of thing that sends a
+    /// reader looking for a bug that is not there.
+    /// </remarks>
+    private void EmitSpeechNotHeard(CharacterAgent character, string? unheard, int spokenAlready)
+    {
+        _trace.Emit(TraceEventType.SpeechNotHeard, new SpeechNotHeardPayload
+        {
+            CharacterId = character.CharacterId,
+            CharacterName = character.Name,
+            Unheard = unheard?.Trim() ?? "",
+            SpeechActsAlready = spokenAlready,
+            Allowance = _limits.MaxSpeechActsPerTurn
+        }, character.Name);
+
+        _console.Notice($"{character.Name} had already spoken this turn and was not heard again.");
     }
 
     private void EmitLimit(string limit, int value, string effect) =>

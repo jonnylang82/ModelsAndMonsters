@@ -153,6 +153,26 @@ public static class InWorldRefusal
                     ? "Somebody already stands over them; there is no room for a second."
                     : $"Somebody already stands over {subject}; there is no room for a second.",
 
+            // Threats and reassurance.
+            EngineRejectionReason.TargetIsNotAnOpponent =>
+                subject is null
+                    ? "They fight at your side; there is nothing to frighten them with."
+                    : $"{subject} fights at your side; there is nothing to frighten them with.",
+            EngineRejectionReason.TargetIsNotAnAlly =>
+                subject is null
+                    ? "They are no companion of yours; nothing you say will steady them."
+                    : $"{subject} is no companion of yours; nothing you say will steady them.",
+            EngineRejectionReason.AlreadyAttemptedIntimidation =>
+                subject is null
+                    ? "You have already tried to put the fear into them once, and they have your measure now."
+                    : $"You have already tried to put the fear into {subject} once, and they have your measure now.",
+            EngineRejectionReason.IntimidationRequiresSpeech =>
+                "You said nothing aloud, and a look alone carries no weight across a fight.",
+            EngineRejectionReason.SpeechAddressedToSomebodyElse =>
+                subject is null
+                    ? "Your words were meant for somebody else, and they landed elsewhere."
+                    : $"Your words were meant for somebody else, not {subject}.",
+
             _ => Generic
         };
     }
@@ -169,7 +189,9 @@ public static class InWorldRefusal
                 or EngineRejectionReason.TargetNotPresent or EngineRejectionReason.UnknownRecipient
                 or EngineRejectionReason.RecipientNotPresent or EngineRejectionReason.TargetAlreadyAtFullHealth
                 or EngineRejectionReason.TargetAlreadyGuarded or EngineRejectionReason.AbilityTargetNotAllowed
-                or EngineRejectionReason.AbilityTargetNotAvailable => CharacterName(action, state),
+                or EngineRejectionReason.AbilityTargetNotAvailable or EngineRejectionReason.TargetIsNotAnOpponent
+                or EngineRejectionReason.TargetIsNotAnAlly or EngineRejectionReason.AlreadyAttemptedIntimidation
+                or EngineRejectionReason.SpeechAddressedToSomebodyElse => CharacterName(action, state),
 
             EngineRejectionReason.ItemNotPossessed or EngineRejectionReason.ItemHasNoSupportedEffect
                 or EngineRejectionReason.ItemNotInContainer or EngineRejectionReason.OfferedItemNotOwned
@@ -193,6 +215,8 @@ public static class InWorldRefusal
             StealItemAction steal => steal.TargetRef,
             GiveItemAction give => give.RecipientRef,
             UseAbilityAction ability => ability.TargetRef,
+            IntimidateCharacterAction intimidate => intimidate.TargetRef,
+            SteadyAllyAction steady => steady.TargetRef,
             _ => null
         };
 

@@ -39,6 +39,41 @@ public sealed record Character
     public required int Armour { get; init; }
 
     /// <summary>
+    /// Encounter-scoped morale, 0–5. Authoritative engine state: only the engine moves it, always through one
+    /// clamped change with a recorded cause, and no model output can touch it. The exact number belongs to
+    /// this character, the harness, the trace and the report; opponents see only the public
+    /// <see cref="StatusEffectKind.Scared"/> status once it reaches <see cref="FearRules.ScaredThreshold"/>.
+    /// </summary>
+    public int Fear
+    {
+        get => _fear;
+        init => _fear = FearRules.Clamp(value);
+    }
+
+    private readonly int _fear;
+
+    /// <summary>
+    /// Visibly scared right now: at or above the threshold AND still in the fight. Derived, never stored.
+    /// </summary>
+    /// <remarks>
+    /// The presence of <see cref="CanAct"/> here is what keeps this in step with the public
+    /// <see cref="StatusEffectKind.Scared"/> status, which the engine sweeps away when a character dies,
+    /// yields or flees. Without it, somebody who surrendered at fear 4 would report as scared with nothing
+    /// on them to show it — the derived flag and its own public shadow disagreeing, which is precisely the
+    /// contradiction <see cref="CharacterDisposition"/> exists to prevent. Their <see cref="Fear"/> is
+    /// untouched: the report and the final state keep the nerve they left the fight with.
+    /// </remarks>
+    public bool IsScared => CanAct && FearRules.IsScared(Fear);
+
+    /// <summary>
+    /// Whether this character was outnumbered among the ACTIVE combatants the last time the engine looked.
+    /// A latch, not a live calculation: fear rises on the transition from false to true, so the engine has to
+    /// remember what it last saw. Seeded from the opening state, so a character who starts outnumbered does
+    /// not begin the fight already frightened by it.
+    /// </summary>
+    public bool IsOutnumbered { get; init; }
+
+    /// <summary>
     /// Chance out of 100 that this character's attacks land. Defaults to 100 (never misses) so code and
     /// tests that do not care about the roll keep the old always-hit behaviour; scenarios set it lower.
     /// It is a hidden mechanical stat — never shown to characters or narrated as a number.
@@ -105,24 +140,22 @@ public sealed record Character
         other is not null && string.Equals(Team, other.Team, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Finds an inventory item by id, qualified display name, or plain name, case-insensitively. The
-    /// qualified name is tried before the plain one so that when a character carries two items sharing a
-    /// name, naming the qualified one ("Small Purse of Gold Coins (Rowan's)") picks exactly that item
-    /// instead of whichever happens to sit first.
+    /// Resolves an inventory item reference, reporting ambiguity rather than guessing — the same discipline
+    /// the engine applies to characters, objects, exits and container contents. See
+    /// <see cref="ItemReference.Resolve"/> for the matching order.
     /// </summary>
-    public InventoryItem? FindItem(string idOrName)
-    {
-        if (string.IsNullOrWhiteSpace(idOrName))
-        {
-            return null;
-        }
+    public ItemResolution ResolveItem(string? idOrName) => ItemReference.Resolve(Inventory, idOrName);
 
-        var needle = idOrName.Trim();
-        return Inventory.FirstOrDefault(i => string.Equals(i.Id, needle, StringComparison.OrdinalIgnoreCase))
-            ?? Inventory.FirstOrDefault(i => string.Equals(i.DisplayName, needle, StringComparison.OrdinalIgnoreCase))
-            ?? Inventory.FirstOrDefault(i => string.Equals(i.Name, needle, StringComparison.OrdinalIgnoreCase))
-            ?? Inventory.FirstOrDefault(i => i.MatchesReference(needle));
-    }
+    /// <summary>
+    /// Finds an inventory item by reference, or null when the reference names none — or names more than one.
+    /// </summary>
+    /// <remarks>
+    /// For callers that only need the item and have no way to refuse. An ambiguous reference yields null
+    /// here rather than a first match, so nothing downstream can act on a purse the reference did not
+    /// single out; callers that must explain themselves should use <see cref="ResolveItem"/> and refuse the
+    /// ambiguity in their own words.
+    /// </remarks>
+    public InventoryItem? FindItem(string idOrName) => ResolveItem(idOrName).Item;
 
     /// <summary>True when the character is currently carrying a weapon with the given name.</summary>
     public bool HasWeaponNamed(string weaponName) =>

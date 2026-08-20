@@ -34,6 +34,13 @@ public sealed record GameState
     /// <summary>The durable record of each accepted surrender, in the order they were accepted.</summary>
     public ImmutableArray<SurrenderAgreement> SurrenderAgreements { get; init; } = [];
 
+    /// <summary>
+    /// Every intimidation attempt made in the encounter, successful or not, in the order they were made.
+    /// Authoritative state rather than a trace-only record, because the one-attempt-per-pair rule is enforced
+    /// from it: a failed threat is spent exactly as surely as a successful one.
+    /// </summary>
+    public ImmutableArray<IntimidationAttempt> IntimidationAttempts { get; init; } = [];
+
     public Character? FindById(string id) =>
         Characters.FirstOrDefault(c => string.Equals(c.Id, id, StringComparison.OrdinalIgnoreCase));
 
@@ -261,6 +268,52 @@ public sealed record GameState
     public GameState WithAgreement(SurrenderAgreement agreement) =>
         this with { SurrenderAgreements = SurrenderAgreements.Add(agreement) };
 
+    // -----------------------------------------------------------------------------------------------
+    // Morale
+    // -----------------------------------------------------------------------------------------------
+
+    /// <summary>Returns a new state with the intimidation attempt appended.</summary>
+    public GameState WithIntimidationAttempt(IntimidationAttempt attempt) =>
+        this with { IntimidationAttempts = IntimidationAttempts.Add(attempt) };
+
+    /// <summary>True when this actor has already tried to frighten this target once in the encounter.</summary>
+    public bool HasAttemptedIntimidation(string actorId, string targetId) =>
+        IntimidationAttempts.Any(a =>
+            string.Equals(a.ActorId, actorId, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(a.TargetId, targetId, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// The active opponents this actor could still try to frighten. Used to withdraw the affordance once
+    /// there is nobody left to try it on, so a model is never shown an action it can only be refused for.
+    /// </summary>
+    public IEnumerable<Character> RemainingIntimidationTargets(string actorId)
+    {
+        var actor = FindById(actorId);
+        return actor is null
+            ? []
+            : Characters.Where(c =>
+                c.IsCombatTarget &&
+                !string.Equals(c.Id, actorId, StringComparison.OrdinalIgnoreCase) &&
+                !actor.IsAllyOf(c) &&
+                !HasAttemptedIntimidation(actorId, c.Id));
+    }
+
+    /// <summary>
+    /// The active allies this actor could steady — those with fear left to shed. An ally already unafraid is
+    /// excluded, because steadying them would spend a whole turn to change nothing.
+    /// </summary>
+    public IEnumerable<Character> RemainingSteadyTargets(string actorId)
+    {
+        var actor = FindById(actorId);
+        return actor is null
+            ? []
+            : Characters.Where(c =>
+                c.CanAct && c.IsPresent &&
+                !string.Equals(c.Id, actorId, StringComparison.OrdinalIgnoreCase) &&
+                actor.IsAllyOf(c) &&
+                c.Fear > FearRules.Minimum);
+    }
+
     /// <summary>Returns a new state with <paramref name="updated"/> replacing the exit of the same id in the room.</summary>
     public GameState WithExit(EncounterExit updated)
     {
@@ -296,4 +349,39 @@ public readonly record struct ObjectResolution(WorldObject? Object, bool Ambiguo
 public readonly record struct ExitResolution(EncounterExit? Exit, bool Ambiguous)
 {
     public bool Found => Exit is not null;
+}
+
+/// <summary>
+/// One recorded attempt to frighten an opponent, with its whole randomness record.
+/// </summary>
+/// <remarks>
+/// Kept in the authoritative state, not only in the trace, because the rule that an actor may try this once
+/// per target per encounter has to be enforceable from the snapshot alone. A failure is recorded exactly like
+/// a success for the same reason: the chance is spent either way, which is what stops the action becoming a
+/// free re-roll a model can grind at.
+/// </remarks>
+public sealed record IntimidationAttempt
+{
+    public required string Id { get; init; }
+
+    public required string ActorId { get; init; }
+
+    public required string TargetId { get; init; }
+
+    public required int Round { get; init; }
+
+    public required int Turn { get; init; }
+
+    /// <summary>The base chance out of 100 before any state-derived modifier.</summary>
+    public required int BaseChance { get; init; }
+
+    /// <summary>The effective chance after modifiers and clamping — what the raw roll was compared against.</summary>
+    public required int EffectiveChance { get; init; }
+
+    public required int Roll { get; init; }
+
+    public required bool Succeeded { get; init; }
+
+    /// <summary>The public-channel id of the threat that carried it. The words are roleplay and change no odds.</summary>
+    public int? AssociatedSpeechEventId { get; init; }
 }

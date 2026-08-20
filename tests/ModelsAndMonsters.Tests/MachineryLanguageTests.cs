@@ -38,6 +38,15 @@ public sealed class MachineryLanguageTests
     [InlineData("Use accept_surrender to take those terms.")]
     [InlineData("You should call take_action instead.")]
     [InlineData("That is a steal_item, not a take_item.")]
+    // v0.8: the machine's own morale and quality vocabulary.
+    [InlineData("Use intimidate_character on the captain.")]
+    [InlineData("That would be a steady_ally, not speech.")]
+    [InlineData("Your fear score is now three.")]
+    [InlineData("His fear level rises by one.")]
+    [InlineData("The Scared status is now on you.")]
+    [InlineData("The quality roll came up critical.")]
+    [InlineData("That blow deals double damage.")]
+    [InlineData("It was resolved as intimidation-2.")]
     public void Unmistakable_machine_vocabulary_is_caught(string text) =>
         Assert.True(MachineryLanguage.IsLeak(text));
 
@@ -77,6 +86,13 @@ public sealed class MachineryLanguageTests
     [InlineData("Rowan puts himself between the goblins and Elara.")]
     [InlineData("He keeps his grip on it even as the blow lands.")]
     [InlineData("You keep it close, and that is all you need to know.")]
+    // v0.8: fear is an ordinary word and a critical blow is a thing a person can see. Neither is banned —
+    // banning them would push morale narration into worse phrasings to say the same thing.
+    [InlineData("Fear takes him, and his grip on the sabre goes loose.")]
+    [InlineData("He is afraid, and he is not hiding it well.")]
+    [InlineData("The blow lands critical and opens him from shoulder to ribs.")]
+    [InlineData("Something goes out of her, and her eyes go to the door.")]
+    [InlineData("Rowan catches her eye and tells her to hold; she steadies.")]
     [InlineData("")]
     [InlineData(null)]
     public void In_world_lines_are_not_flagged(string? text) =>

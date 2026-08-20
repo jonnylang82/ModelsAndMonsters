@@ -61,6 +61,15 @@ public enum TraceEventType
     UnstructuredSpeechAttempt,
 
     /// <summary>
+    /// A character had already used its voice this turn, so a further line was not delivered. This is a
+    /// RULE OF THE WORLD — a character gets so many breaths in a turn — and not a guard against a
+    /// misbehaving model, which is why it is not a <see cref="HarnessLimitReached"/>. Recording it as one
+    /// made a well-behaved run look badly behaved: three of a live run's four "harness limits" were this,
+    /// working exactly as designed.
+    /// </summary>
+    SpeechNotHeard,
+
+    /// <summary>
     /// A prose reply that carried no tool call was read by the stateless intent parser into the say / ask /
     /// take_action calls it implied. Recorded with the raw prose so the parser's reading stays auditable
     /// against what the character actually wrote.
@@ -213,6 +222,22 @@ public enum TraceEventType
     /// targets so it is provable that no second attack roll was made.
     /// </summary>
     AttackRedirected,
+
+    /// <summary>
+    /// One character's fear moved, with its cause, the value either side of the clamp, and any crossing of
+    /// the public Scared threshold. Emitted for every change including a deterministic one, so morale is
+    /// never a number that moves for reasons the record cannot show.
+    /// </summary>
+    FearChanged,
+
+    /// <summary>
+    /// One attempt to frighten an opponent: the whole modifier derivation, the raw roll, the outcome, and the
+    /// fear it moved. Companion to the <see cref="RngDraw"/> the same attempt produced.
+    /// </summary>
+    IntimidationAttempted,
+
+    /// <summary>One character spending their turn steadying an ally, with the fear it shed. No randomness.</summary>
+    AllySteadied,
 
     /// <summary>
     /// The deterministic <c>AnswerFacts</c> projection built for one character's question: what the Dungeon

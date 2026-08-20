@@ -39,13 +39,25 @@ public sealed class AgentConversation
 
     /// <summary>
     /// Compacts this turn's history, from <paramref name="mark"/> onward, down to what is worth carrying
-    /// forward: the assistant messages that carried a tool call, and the tool results that answered them.
+    /// forward: the tool calls themselves, and the tool results that answered them.
     /// The prose replies that produced no call and the nudges that followed them are dropped — they were
     /// scaffolding to coax out a clean action, and once the turn has resolved they are dead weight that only
     /// eats the context window on later turns. Everything before <paramref name="mark"/> (the system prompt,
     /// prior turns, this turn's injected context) is untouched, and every retained call keeps its matching
     /// result, so the history stays valid to send. The original prose remains in the trace.
     /// </summary>
+    /// <remarks>
+    /// The prose a model writes ALONGSIDE its tool call is dropped too, which it did not used to be. Models
+    /// with reasoning off think on the page: they reach the call through a paragraph of deliberation, and
+    /// providers put that text and the call in one assistant message. Keeping the message whole because it
+    /// "carries a tool call" therefore kept the deliberation as well — a median of 310 characters per turn in
+    /// one live run, on every turn, accumulating in a history the summariser then has to pay to compress.
+    ///
+    /// It is dropped rather than suppressed at the source on purpose. That paragraph is how a non-reasoning
+    /// model reaches its decision, and forbidding it in the prompt would be asking the model to think less.
+    /// It has already done its work by the time the call is made; what it must not do is ride along for the
+    /// rest of the run.
+    /// </remarks>
     public void CompactTurn(int mark)
     {
         if (mark < 0 || mark >= _messages.Count)
@@ -57,11 +69,23 @@ public sealed class AgentConversation
         for (var i = mark; i < _messages.Count; i++)
         {
             var message = _messages[i];
-            var carriesToolCall = message.Contents.OfType<FunctionCallContent>().Any();
-            if (carriesToolCall || message.Role == ChatRole.Tool)
+            if (message.Role == ChatRole.Tool)
             {
                 kept.Add(message);
+                continue;
             }
+
+            var calls = message.Contents.OfType<FunctionCallContent>().ToList();
+            if (calls.Count == 0)
+            {
+                continue;
+            }
+
+            // Keep the calls, shed anything else the message carried. Rebuilt only when there IS something
+            // else, so an already-clean reply is retained exactly as it arrived.
+            kept.Add(calls.Count == message.Contents.Count
+                ? message
+                : new ChatMessage(message.Role, [.. calls]) { AuthorName = message.AuthorName });
         }
 
         _messages.Clear();

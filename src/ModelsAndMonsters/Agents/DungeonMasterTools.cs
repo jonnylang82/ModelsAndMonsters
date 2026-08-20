@@ -26,6 +26,8 @@ public static class DungeonMasterTools
     public const string GiveItemName = "give_item";
     public const string DropItemName = "drop_item";
     public const string StealItemName = "steal_item";
+    public const string IntimidateCharacterName = "intimidate_character";
+    public const string SteadyAllyName = "steady_ally";
     public const string RejectActionName = "reject_action";
 
     public const string AttackerParameter = "attacker";
@@ -270,6 +272,36 @@ public static class DungeonMasterTools
         """),
         returnJsonSchema: null);
 
+    public static readonly AIFunctionDeclaration IntimidateCharacter = AIFunctionFactory.CreateDeclaration(
+        IntimidateCharacterName,
+        "Resolve the ACTING character openly threatening ONE enemy still fighting, to frighten them. Use only when the character SPOKE a threat aloud on this turn and no blow was struck: a threat that comes with a blow is the attack, not this. Success only makes the target more afraid; it never disarms them, never takes anything from them, never makes them yield or flee, and never costs them a turn. Each character may try this on each enemy once in the whole fight.",
+        ToolSchema.Parse($$"""
+        {
+          "type": "object",
+          "properties": {
+            "{{ActorParameter}}":  { "type": "string", "description": "Name of the character making the threat - always the character whose intent you are adjudicating - exactly as given in the authoritative state." },
+            "{{TargetParameter}}": { "type": "string", "description": "Name of the ONE opposing character being threatened, exactly as given in the authoritative state. It must be the same person the spoken threat was addressed to." }
+          },
+          "required": ["{{ActorParameter}}", "{{TargetParameter}}"]
+        }
+        """),
+        returnJsonSchema: null);
+
+    public static readonly AIFunctionDeclaration SteadyAlly = AIFunctionFactory.CreateDeclaration(
+        SteadyAllyName,
+        "Resolve the ACTING character spending their whole turn steadying ONE companion who has lost their nerve - a word of reassurance, encouragement or an order to hold. Use only when the character SPOKE to that companion aloud on this turn and did nothing else: it cannot be combined with a blow, a movement, an item or an ability. It makes the companion less afraid and nothing more; it heals nothing and changes no odds.",
+        ToolSchema.Parse($$"""
+        {
+          "type": "object",
+          "properties": {
+            "{{ActorParameter}}":  { "type": "string", "description": "Name of the character doing the steadying - always the character whose intent you are adjudicating - exactly as given in the authoritative state." },
+            "{{TargetParameter}}": { "type": "string", "description": "Name of the ONE companion being steadied, exactly as given in the authoritative state. Never the acting character themselves, and it must be the same person the spoken words were addressed to." }
+          },
+          "required": ["{{ActorParameter}}", "{{TargetParameter}}"]
+        }
+        """),
+        returnJsonSchema: null);
+
     public static readonly AIFunctionDeclaration RejectAction = AIFunctionFactory.CreateDeclaration(
         RejectActionName,
         "Refuse the stated intent because it cannot happen. A last resort: use it only when NONE of the other actions offered to you fits the primary physical deed the character described. Nothing whatsoever happens in the world when you call this.",
@@ -295,7 +327,8 @@ public static class DungeonMasterTools
     public static readonly IReadOnlyList<AITool> All =
     [
         AttackCharacter, UseItem, OpenContainer, TakeItem, InspectObject, OpenExit, EscapeEncounter,
-        OfferSurrender, AcceptSurrender, UseAbility, Defend, GiveItem, DropItem, StealItem, RejectAction
+        OfferSurrender, AcceptSurrender, UseAbility, Defend, GiveItem, DropItem, StealItem,
+        IntimidateCharacter, SteadyAlly, RejectAction
     ];
 
     /// <summary>
@@ -318,6 +351,8 @@ public static class DungeonMasterTools
             [DefendName] = Defend,
             [GiveItemName] = GiveItem,
             [DropItemName] = DropItem,
-            [StealItemName] = StealItem
+            [StealItemName] = StealItem,
+            [IntimidateCharacterName] = IntimidateCharacter,
+            [SteadyAllyName] = SteadyAlly
         };
 }

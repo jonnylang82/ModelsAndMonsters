@@ -35,17 +35,69 @@ public sealed class DungeonMasterAgent : ModelAgent
     public const string AgentIdentifier = "DungeonMaster";
 
     /// <summary>
-    /// The output budget for an adjudication, which is far smaller than the agent's configured allowance.
+    /// The output budget for an adjudication when the context window is shared between input and output —
+    /// far smaller than the agent's configured allowance. See <see cref="AdjudicationOutputBudget"/> for when
+    /// it applies at all.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// An adjudication's entire reply is one structured tool call — a handful of short arguments, well under
     /// a hundred tokens even for an offer of surrender with an item list. The DM's configured
     /// <c>MaxOutputTokens</c> is sized for narration prose, and on Ollama the context window covers input and
     /// output together, so leaving it at that figure holds back a fifth of the window from the one call that
-    /// carries the largest input. Capping it here is free: it removes nothing from the request and cannot
-    /// truncate a reply that was never going to be that long. Narration keeps the full allowance.
+    /// carries the largest input. Narration keeps the full allowance.
+    /// </para>
+    /// <para>
+    /// This cap CAN be hit, and the earlier claim here that it could not was wrong. It is hit whenever the
+    /// model deliberates in prose instead of calling a tool: a live run spent all 400 tokens on 1,642
+    /// characters of visible reasoning ("But which purse? The intent doesn't specify") and produced no tool
+    /// call at all, with 1,500 tokens of window still free. On a SHARED window raising the cap does not help
+    /// — a model thinking out loud fills whatever it is given, and the extra headroom comes straight out of
+    /// the request that already carries the largest input. So there the cap stays and the truncation is
+    /// handled rather than avoided: <see cref="ProposeActionAsync"/> turns a toolless truncated reply into a
+    /// tool error and re-asks, which recovers in a few dozen tokens. That live occurrence resolved on the
+    /// retry.
+    /// </para>
+    /// <para>
+    /// Where the window is NOT shared the same reasoning does not hold, which is why this figure is applied
+    /// through <see cref="AdjudicationOutputBudget"/> rather than directly. gpt-5.4 has never come near it —
+    /// its largest observed adjudication reply is 122 tokens — so for most hosted models this changes
+    /// nothing either way.
+    /// </para>
     /// </remarks>
     private const int AdjudicationOutputTokens = 400;
+
+    /// <summary>
+    /// The output budget this adjudication actually runs under: the tight cap where the model's context
+    /// window covers input and output TOGETHER, and the agent's own configured allowance where it does not.
+    /// Null means "use the profile's <c>MaxOutputTokens</c> unchanged".
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The cap only ever had one justification, and it is arithmetic: on Ollama, <c>num_ctx</c> covers the
+    /// prompt and the reply together, so reserving 1,700 tokens for a reply that needs a hundred takes 1,700
+    /// tokens away from the request — on the one call that carries the largest input. A hosted provider
+    /// budgets output separately from its (far larger) input window, so there the reservation costs the
+    /// request nothing at all and the cap is paying for a problem that does not exist. It is the same
+    /// asymmetry as <see cref="AI.AgentModelProfile.BindingContextWindow"/>, and it reads the same signal.
+    /// </para>
+    /// <para>
+    /// The cap did acquire a second, incidental use: it caught models that deliberate in prose instead of
+    /// calling a tool, which the retry path then recovered. That is worth keeping where the arithmetic
+    /// demands the cap anyway, but it is a poor reason to impose it elsewhere — a model whose reasoning is
+    /// cut off mid-sentence is more likely to rule badly, not less. Two live Haiku runs truncated three
+    /// adjudications between them, each one part-way through checking preconditions it had every right to
+    /// check.
+    /// </para>
+    /// <para>
+    /// Lifting it on hosted providers is not free: deliberation costs output tokens and latency, and
+    /// adjudication is already the second-largest latency line in a run. What it buys is a ruling made on
+    /// finished reasoning rather than interrupted reasoning. Deliberation stays visible either way — a high
+    /// output count on <c>dm.adjudicate</c> says it plainly.
+    /// </para>
+    /// </remarks>
+    private int? AdjudicationOutputBudget =>
+        Profile.BindingContextWindow is null ? null : AdjudicationOutputTokens;
 
     private readonly PromptLibrary _prompts;
     private readonly bool _useProjections;
@@ -306,7 +358,7 @@ public sealed class DungeonMasterAgent : ModelAgent
                 : ruleGuidance
         }));
 
-        return CallModelAsync(conversation, "dm.adjudicate", _adjudicationTools, cancellationToken, AdjudicationOutputTokens);
+        return CallModelAsync(conversation, "dm.adjudicate", _adjudicationTools, cancellationToken, AdjudicationOutputBudget);
     }
 
     /// <summary>Re-asks for a tool call after the DM replied with prose instead, re-exposing the same tool surface.</summary>
@@ -318,7 +370,7 @@ public sealed class DungeonMasterAgent : ModelAgent
         }));
 
         return CallModelAsync(AdjudicationContext(), "dm.adjudicate.retry",
-            _adjudicationTools ?? DungeonMasterTools.All, cancellationToken, AdjudicationOutputTokens);
+            _adjudicationTools ?? DungeonMasterTools.All, cancellationToken, AdjudicationOutputBudget);
     }
 
     /// <summary>

@@ -149,3 +149,25 @@ button.ghost { background: transparent; color: var(--muted); border: 1px solid v
 .line.status { color: var(--muted); font-size: 12px; }
 .line.redirect { color: var(--heroes); font-size: 13px; }
 .line .sub { color: var(--muted); font-size: 11px; }
+
+/* Morale (v0.8). Mechanical detail stays readable but secondary: the nerve meter is small and quiet
+   until it matters, and the transcript lines carry their numbers in the muted sub-line. */
+.fear { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 11px; color: var(--muted); }
+.fear-label { text-transform: uppercase; letter-spacing: 0.06em; }
+.pips { display: inline-flex; gap: 3px; }
+.pips i { width: 8px; height: 8px; border-radius: 2px; background: #2a2e38; border: 1px solid #3a3f4b; }
+.pips i.on { background: #cf8a4a; border-color: #e0a15f; }
+.fear.scared .pips i.on { background: #d8574a; border-color: #ef7264; }
+.fear.scared { color: #e8968c; }
+.fear-count { opacity: 0.75; }
+.fear-note { margin-left: auto; font-style: italic; opacity: 0.8; }
+.badge.scared { color: #e8968c; border-color: #b8544a; }
+
+.line.combat.critical { color: #ffb3a7; font-weight: 600; }
+.line.combat.glancing { opacity: 0.8; }
+.line.fear { color: #d8a06a; font-size: 12px; }
+.line.fear.broke { color: #e8776a; font-weight: 600; }
+.line.fear.steadied { color: #7fc08c; }
+.line.threat { color: #d8a06a; font-size: 13px; }
+.line.threat.told { color: #e8968c; }
+.line.steady { color: #8fc79a; font-size: 13px; }

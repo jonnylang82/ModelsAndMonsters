@@ -184,6 +184,14 @@ public static class ContextTruncation
         && cap > 0
         && output >= cap - OutputBudgetSlackTokens;
 
+    /// <summary>
+    /// The harness's own characters-to-tokens estimate, exposed so an offline measurement can size a request
+    /// the same way the live truncation guard does. It is an estimate, not a tokeniser: a figure derived from
+    /// it is comparable with another figure derived from it, and roughly comparable with a provider's report.
+    /// </summary>
+    public static int EstimateTokensForCharacters(int characters) =>
+        characters <= 0 ? 0 : (int)Math.Ceiling(characters / CharactersPerToken);
+
     private static int EstimateMessageTokens(ChatMessage message)
     {
         var characters = 0;

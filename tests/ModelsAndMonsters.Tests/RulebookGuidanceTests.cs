@@ -30,6 +30,97 @@ public sealed class RulebookGuidanceTests
         Assert.Equal(["steal_item"], validation.Guidance.CandidateActions);
     }
 
+    // ------------------------------------------------------------------------------------------
+    // The candidate action and its citation must correspond (v0.8)
+    // ------------------------------------------------------------------------------------------
+
+    [Fact]
+    public void Guidance_naming_an_action_no_cited_rule_governs_is_rejected()
+    {
+        // The exact shape a live probe produced: a real engine tool, and a real card at a real version, but
+        // a card whose action is attack_character. Both halves passed independently before v0.8, and the
+        // Dungeon Master was handed give_item as its only tool on the strength of it.
+        var attack = Catalog.Find("combat.attack")!;
+
+        var validation = Validator.Validate(Supported("give_item", "combat.attack", attack.Version));
+
+        Assert.False(validation.IsValid);
+        Assert.Contains("give_item", validation.Reason!, StringComparison.Ordinal);
+        Assert.Contains("cited no rule that governs it", validation.Reason!, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(validation.Guidance.CandidateActions);
+    }
+
+    [Fact]
+    public void An_unsupported_candidate_is_dropped_while_a_supported_one_survives()
+    {
+        // Genuinely ambiguous guidance citing two rules, plus one action neither of them governs.
+        var attack = Catalog.Find("combat.attack")!;
+        var dirty = Catalog.Find("ability.dirty-strike")!;
+
+        var validation = Validator.Validate(new RuleGuidance
+        {
+            Supported = true,
+            CandidateActions = ["attack_character", "give_item", "use_ability"],
+            CitedRules = [new CitedRule("combat.attack", attack.Version), new CitedRule("ability.dirty-strike", dirty.Version)]
+        });
+
+        Assert.True(validation.IsValid);
+        Assert.Equal(["attack_character", "use_ability"], validation.Guidance.CandidateActions);
+    }
+
+    [Fact]
+    public void A_background_card_alone_supports_no_action_because_it_governs_none()
+    {
+        // Morale is context every action resolves under, not an action. Citing only it cannot license one.
+        var morale = Catalog.Find("combat.morale")!;
+
+        var validation = Validator.Validate(Supported("intimidate_character", "combat.morale", morale.Version));
+
+        Assert.False(validation.IsValid);
+        Assert.Contains("cited no rule that governs it", validation.Reason!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // A citation must be of a card that was actually supplied (v0.8)
+    // ------------------------------------------------------------------------------------------
+
+    [Fact]
+    public void A_citation_of_a_card_that_was_not_supplied_is_dropped()
+    {
+        // Under the whole-rulebook path every card is supplied, so this gap was invisible until a selection
+        // strategy sent a subset — and then the resolver cited a card it had never been shown.
+        var steal = Catalog.Find("inventory.steal")!;
+        var supplied = new[] { Catalog.Find("combat.attack")!, Catalog.RejectCard };
+
+        var validation = Validator.Validate(Supported("steal_item", "inventory.steal", steal.Version), supplied);
+
+        Assert.False(validation.IsValid);
+        Assert.Contains("was supplied", validation.Reason!, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(validation.Guidance.CitedRules);
+    }
+
+    [Fact]
+    public void A_citation_of_a_card_that_was_supplied_still_passes()
+    {
+        var steal = Catalog.Find("inventory.steal")!;
+        var supplied = new[] { Catalog.Find("inventory.steal")!, Catalog.RejectCard };
+
+        var validation = Validator.Validate(Supported("steal_item", "inventory.steal", steal.Version), supplied);
+
+        Assert.True(validation.IsValid);
+        Assert.Equal(["steal_item"], validation.Guidance.CandidateActions);
+    }
+
+    [Fact]
+    public void Not_knowing_what_was_supplied_falls_back_to_the_catalog_check_alone()
+    {
+        // Null means "not known", not "nothing was sent" — a caller without that information must not have
+        // every citation silently dropped underneath it.
+        var steal = Catalog.Find("inventory.steal")!;
+
+        Assert.True(Validator.Validate(Supported("steal_item", "inventory.steal", steal.Version), suppliedCards: null).IsValid);
+    }
+
     [Fact]
     public void Guidance_citing_a_rule_that_does_not_exist_is_rejected_as_malformed()
     {

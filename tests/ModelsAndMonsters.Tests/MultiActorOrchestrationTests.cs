@@ -261,7 +261,7 @@ public sealed class MultiActorOrchestrationTests
         Assert.Equal(1, hit.SequenceAfter);
 
         var glancing = draws[1];
-        Assert.Equal("attack.glancing-check", glancing.Purpose);
+        Assert.Equal("attack.quality-check", glancing.Purpose);
         Assert.Equal(1, glancing.SequenceBefore);
         Assert.Equal(2, glancing.SequenceAfter);
         Assert.False(string.IsNullOrWhiteSpace(glancing.Comparison));

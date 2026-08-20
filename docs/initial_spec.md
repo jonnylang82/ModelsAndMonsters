@@ -1,7 +1,7 @@
 # Models & Monsters
 
-> **Codename:** Models & Monsters  
-> **Status:** Tech demo / proof of concept  
+> **Codename:** Models & Monsters
+> **Status:** Tech demo / proof of concept
 > **Initial scope:** v0.1
 
 ## Concept
@@ -690,27 +690,27 @@ Once the minimal loop works, complexity can be introduced gradually.
 
 Possible additions include:
 
-- Multiple heroes
-- Multiple monsters
-- Items
-- Containers
-- Chests
-- Doors
+- Multiple heroes ✅
+- Multiple monsters ✅
+- Items ✅
+- Containers ✅
+- Chests ✅
+- Doors ✅
 - Environmental objects
-- Abilities and spells
-- Status effects
-- Character-to-character communication
-- Hidden information
-- Character-specific knowledge
-- Object interaction
-- Persuasion and intimidation
-- Fleeing and surrender
-- Seeded random outcomes
+- Abilities and spells ✅
+- Status effects ✅
+- Character-to-character communication ✅
+- Hidden information ✅
+- Character-specific knowledge ✅
+- Object interaction ✅
+- Persuasion and intimidation ✅
+- Fleeing and surrender ✅
+- Seeded random outcomes ✅
 - More than one room
 - Persistent campaigns
 - Human-controlled characters
-- Different models for different characters
-- Model and parameter comparisons
+- Different models for different characters ✅
+- Model and parameter comparisons ✅
 
 Randomness should preferably be **seeded** when introduced so equivalent experiments can be reproduced.
 

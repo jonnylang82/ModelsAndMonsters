@@ -302,7 +302,8 @@ public sealed class TurnOrchestrationTests
                 DungeonMasterTools.AcceptSurrenderName, DungeonMasterTools.UseAbilityName,
                 DungeonMasterTools.DefendName,
                 DungeonMasterTools.GiveItemName, DungeonMasterTools.DropItemName,
-                DungeonMasterTools.StealItemName, DungeonMasterTools.RejectActionName
+                DungeonMasterTools.StealItemName, DungeonMasterTools.IntimidateCharacterName,
+                DungeonMasterTools.SteadyAllyName, DungeonMasterTools.RejectActionName
             ],
             dungeonMasterTools);
 

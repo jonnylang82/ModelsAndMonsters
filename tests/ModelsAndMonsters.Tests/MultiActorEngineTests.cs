@@ -267,7 +267,7 @@ public sealed class MultiActorEngineTests
 
         // The two draws advance the generator's sequence position by one apiece, in order.
         var glancing = result.RngDraws[1];
-        Assert.Equal("attack.glancing-check", glancing.Purpose);
+        Assert.Equal("attack.quality-check", glancing.Purpose);
         Assert.Equal(hit.SequenceAfter, glancing.SequenceBefore);
         Assert.Equal(glancing.SequenceBefore + 1, glancing.SequenceAfter);
     }

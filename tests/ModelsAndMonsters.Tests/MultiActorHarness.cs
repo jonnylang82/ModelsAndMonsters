@@ -33,7 +33,8 @@ internal sealed class MultiActorHarness
         CombatRules? rules = null,
         ScenarioDefinition? scenario = null,
         bool seedKnowledge = true,
-        ScriptedChatClient? rulebookResolverClient = null)
+        ScriptedChatClient? rulebookResolverClient = null,
+        ScriptedChatClient? historySummariserClient = null)
     {
         DungeonMasterClient = dungeonMasterClient;
         CharacterClients = characterClients;
@@ -99,13 +100,28 @@ internal sealed class MultiActorHarness
                     Limits.RulebookMaxCards, Limits.RulebookMaxInputChars, Limits.RulebookOutputTokens, Limits.RulebookCacheEnabled));
         }
 
+        // The history summariser, when a test wants to exercise the context budget. Null leaves histories
+        // untrimmed, which is what every test that is not about the budget wants.
+        HistorySummariser? summariser = null;
+        if (historySummariserClient is not null)
+        {
+            HistorySummariserClient = historySummariserClient;
+            summariser = new HistorySummariser(
+                Profile("HistorySummariser"),
+                new TracingChatClient(historySummariserClient, Profile("HistorySummariser"), Trace),
+                SharedPrompts);
+        }
+
         Coordinator = new TurnCoordinator(
             Engine, DungeonMaster, SharedPrompts, new WorldStateFormatter(SharedPrompts),
-            NarrationLog, Ledger, Trace, Console, Limits, rulebook: rulebook);
+            NarrationLog, Ledger, Trace, Console, Limits, summariser: summariser, rulebook: rulebook);
     }
 
     /// <summary>The scripted resolver client, when the rulebook stage is wired; null otherwise.</summary>
     public ScriptedChatClient? RulebookResolverClient { get; }
+
+    /// <summary>The scripted summariser client, when history summarisation is wired; null otherwise.</summary>
+    public ScriptedChatClient? HistorySummariserClient { get; }
 
     /// <summary>The rule catalog the wired rulebook uses, for tests that need real rule ids and versions.</summary>
     public RuleCatalog? Catalog { get; }

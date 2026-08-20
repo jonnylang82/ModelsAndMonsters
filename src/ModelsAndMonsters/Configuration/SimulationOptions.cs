@@ -1,3 +1,5 @@
+using ModelsAndMonsters.Engine;
+
 namespace ModelsAndMonsters.Configuration;
 
 /// <summary>Root options bound from the "ModelsAndMonsters" configuration section.</summary>
@@ -17,8 +19,24 @@ public sealed class SimulationOptions
 /// <summary>Tunable combat and engine-probability parameters that are not per-character.</summary>
 public sealed class CombatOptions
 {
-    /// <summary>Chance out of 100 that a landed hit is a glancing blow (half damage). 0 disables them.</summary>
+    /// <summary>
+    /// The size of the LOW band of the single attack-quality draw, out of 100: a landed blow glances (half
+    /// damage) when the raw quality roll is at or under this. 0 removes the band.
+    /// </summary>
     public int GlancingBlowChance { get; set; } = 25;
+
+    /// <summary>
+    /// The size of the HIGH band of the same draw, out of 100: a landed blow is critical (double damage) when
+    /// the raw quality roll is above <c>100 - CriticalHitChance</c>. 0 removes the band. With both bands at 25
+    /// the draw reads 1-25 glancing, 26-75 solid, 76-100 critical.
+    /// </summary>
+    public int CriticalHitChance { get; set; } = 25;
+
+    /// <summary>
+    /// Base chance out of 100 that an open threat frightens its target, before the state-derived modifiers.
+    /// Nothing about the wording of the threat ever changes it.
+    /// </summary>
+    public int BaseIntimidationChance { get; set; } = IntimidationRules.DefaultBaseChance;
 
     /// <summary>
     /// Base chance out of 100 that an attempted theft succeeds, before any modifier (v0.6 applies none).
@@ -210,6 +228,21 @@ public sealed class HarnessOptions
     /// </summary>
     public long? Seed { get; set; }
 
+    /// <summary>
+    /// Whether a configured <c>ContextWindow</c> constrains history summarisation on providers that never
+    /// receive it — OpenAI and Anthropic, whose windows are fixed per model and far larger. Off by default,
+    /// so a hosted run keeps its history verbatim instead of compacting to a local model's ceiling.
+    /// </summary>
+    /// <remarks>
+    /// Turn it on to level the field. Comparing providers is the point of this harness, and a hosted model
+    /// that never has to forget anything is not answering the same question as a local one working inside
+    /// 8k — so when the comparison is about how well a model plays a long fight, the handicap belongs on
+    /// both sides. When the comparison is about the best each provider can do, leave it off. Either way the
+    /// choice is now explicit and recorded in <c>run.json</c>, rather than an accident of which defaults a
+    /// hosted profile happened to inherit.
+    /// </remarks>
+    public bool EnforceContextWindowOnHostedModels { get; set; }
+
     public int MaxRounds { get; set; } = 8;
 
     /// <summary>Hard ceiling on model calls a single character may make in one turn.</summary>
@@ -220,10 +253,19 @@ public sealed class HarnessOptions
     public int MaxActionAttemptsPerTurn { get; set; } = 3;
 
     /// <summary>
-    /// How many times a character may speak aloud in one turn. Defaults to 1. Speaking does not consume
-    /// the turn, so this is the only thing bounding how much a character can say before it must act or end.
+    /// How many times a character may speak aloud in one turn. Speaking does not consume the turn, so this
+    /// is the only thing bounding how much a character can say before it must act or end.
     /// </summary>
-    public int MaxSpeechActsPerTurn { get; set; } = 1;
+    /// <remarks>
+    /// Two, not one, since v0.8, and the reason is the retry path rather than chattiness. A character that
+    /// speaks as part of an action attempt has spent its voice — and if the Dungeon Master then refuses that
+    /// attempt, the character is asked to try again with nothing left to say. Every occurrence in a live run
+    /// was exactly this: Skrit said "Elara, this spear isn't going to hurt you!" with a compound action that
+    /// was refused, reworded the action, and had "Eat this!" swallowed. The words that accompanied the failed
+    /// attempt were really said, so they cannot be given back; the honest fix is to allow the second breath
+    /// that a second attempt implies. Raising it further would let a character talk through a whole turn.
+    /// </remarks>
+    public int MaxSpeechActsPerTurn { get; set; } = 2;
 
     /// <summary>
     /// Upper bound on the length of a single spoken message, in characters. A message beyond this is
@@ -327,11 +369,52 @@ public sealed class HarnessOptions
     /// <summary>A hard CEILING (not a budget) on the total size, in characters, of the cards sent to the resolver. Exceeding it fails visibly at startup rather than trimming.</summary>
     public int RulebookMaxInputChars { get; set; } = 32000;
 
-    /// <summary>The output-token limit applied to the resolver's reply — it only ever emits a small JSON object.</summary>
-    public int RulebookOutputTokens { get; set; } = 500;
+    /// <summary>
+    /// The output-token limit applied to the resolver's reply, and the room reserved for it when checking
+    /// that the rulebook fits the resolver's context window.
+    /// </summary>
+    /// <remarks>
+    /// 300 since v0.8, down from 600. The old figure was sized for a schema that asked the resolver to copy
+    /// the cited card back; since the consultant hydrates those fields itself, measured replies are 69-132
+    /// tokens. On a local model the window covers input and output together, so an oversized reserve is not
+    /// free — it is that much less room for the rulebook.
+    /// </remarks>
+    public int RulebookOutputTokens { get; set; } = 300;
 
     /// <summary>When true, abstract rule guidance is cached and reused across identical consultations.</summary>
     public bool RulebookCacheEnabled { get; set; } = true;
+
+    /// <summary>
+    /// How the cards for a consultation are chosen: <c>WholeRulebook</c> (the default and the shipped
+    /// production path), <c>CompactIndex</c>, <c>Embedding</c> or <c>StructuredRouting</c>.
+    /// </summary>
+    /// <remarks>
+    /// Everything but the default is EXPERIMENTAL and behind this switch on purpose. Each alternative is
+    /// required to fall back to the whole bounded rulebook whenever it is not confident, so the worst case is
+    /// the baseline's cost rather than an answer given without the rule that mattered — but "the worst case is
+    /// survivable" is not the same as "proven", and the measured comparison lives in
+    /// <c>reports/rulebook-efficiency.md</c>. <c>StructuredRouting</c> is only meaningful to a caller that
+    /// already knows the action family; configured for ordinary pre-adjudication consultation it correctly
+    /// falls back every time, because it refuses to infer a family from language.
+    /// </remarks>
+    public string RulebookSelectionMode { get; set; } = "WholeRulebook";
+
+    /// <summary>How many cards an embedding selection takes before declared related-rule expansion.</summary>
+    public int RulebookSelectionTopK { get; set; } = 3;
+
+    /// <summary>
+    /// The Ollama embedding model used when the selection mode is <c>Embedding</c>. Blank falls back to the
+    /// offline trigram prototype, which is a lexical measure and NOT a semantic one — see
+    /// <c>reports/rulebook-efficiency.md</c> for what its numbers do and do not mean.
+    /// </summary>
+    public string RulebookEmbeddingModel { get; set; } = "";
+
+    /// <summary>
+    /// When true, a selection is cached against the static rulebook version, separately from the answer
+    /// cache. Card metadata does not change mid-run, so the same intent selects the same cards without
+    /// paying for the selection twice; the resolver's answer cache stays independent of it.
+    /// </summary>
+    public bool RulebookSelectionCacheEnabled { get; set; } = true;
 
     public string RunOutputDirectory { get; set; } = "runs";
 }

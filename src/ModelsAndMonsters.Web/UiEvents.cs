@@ -64,6 +64,27 @@ public sealed record UiEvent(string Type, object? Payload)
 
     public static UiEvent DefendReduced(string target, int reduction) => new("defendReduced", new { target, reduction });
 
+    // Morale and combat volatility (v0.8). Fear changes, threshold crossings, threats and reassurance each
+    // read distinctly: a point of fear moving is not the same event as a character breaking, and a threat
+    // that told is not the same as one that did not.
+    public static UiEvent FearChanged(
+        string character, int before, int after, int delta, string cause, string causeDetail,
+        string transition, bool absorbed) =>
+        new("fearChanged", new { character, before, after, delta, cause, causeDetail, transition, absorbed });
+
+    public static UiEvent Intimidation(
+        string character, string target, bool succeeded, int baseChance, int effectiveChance, int roll,
+        IReadOnlyList<string> modifiers, string? speech, int targetFearBefore, int targetFearAfter) =>
+        new("intimidation", new
+        {
+            character, target, succeeded, baseChance, effectiveChance, roll, modifiers, speech,
+            targetFearBefore, targetFearAfter
+        });
+
+    public static UiEvent AllySteadied(
+        string character, string target, int targetFearBefore, int targetFearAfter, bool noEffect, string? speech) =>
+        new("allySteadied", new { character, target, targetFearBefore, targetFearAfter, noEffect, speech });
+
     public static UiEvent Completed(
         string terminalCondition, string? outcome, IReadOnlyList<string> winningTeams, IReadOnlyList<string> survivors) =>
         new("completed", new { terminalCondition, outcome, winningTeams, survivors });
@@ -126,7 +147,14 @@ public sealed record CharacterDto(
     string Disposition,
     IReadOnlyList<AbilityDto> Abilities,
     IReadOnlyList<StatusDto> Statuses,
-    bool Disarmed);
+    bool Disarmed,
+    // Morale is an experiment artefact here, not character knowledge: the observer UI is allowed the exact
+    // figure that no opponent in the fiction ever sees. It stays on the card after a character dies, yields
+    // or flees, so the final state records the nerve they left the fight with.
+    int Fear,
+    int MaxFear,
+    bool Scared,
+    bool Outnumbered);
 
 /// <summary>
 /// A room object as the object panel renders it: its name and, for a container, whether it stands open —
@@ -164,7 +192,11 @@ public sealed record StateDto(
             c.Disposition.ToString(),
             [.. c.Abilities.Select(a => new AbilityDto(a.AbilityId, a.Name, a.Category.ToString(), a.RemainingUses, a.MaxUses))],
             [.. state.StatusesOn(c.Id).Select(s => ToStatusDto(state, s))],
-            c.IsDisarmed))],
+            c.IsDisarmed,
+            c.Fear,
+            FearRules.Maximum,
+            c.IsScared,
+            c.IsOutnumbered))],
         // The floor is surfaced separately as Ground, so exclude it from the ordinary object list.
         [.. state.Room.Objects.Where(o => o is not Container { IsGround: true }).Select(o => new ObjectDto(
             o.Id, o.Name, o is Container, o is Container { IsOpen: true }))],
@@ -259,6 +291,11 @@ public sealed record StateDto(
 }
 
 /// <summary>One resolved attack, for the combat ticker and card damage flashes.</summary>
+/// <remarks>
+/// <see cref="Quality"/> is the authoritative word from the single quality draw. <see cref="Glancing"/> is
+/// kept alongside it so a viewer rendering an older run — one recorded before critical hits existed — still
+/// reads correctly rather than silently showing every blow as solid.
+/// </remarks>
 public sealed record AttackDto(
     string Attacker,
     string Target,
@@ -267,4 +304,6 @@ public sealed record AttackDto(
     int Damage,
     int TargetHealth,
     int TargetMaxHealth,
-    bool Died);
+    bool Died,
+    string Quality = "Solid",
+    bool Critical = false);

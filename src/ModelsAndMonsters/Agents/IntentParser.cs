@@ -19,8 +19,10 @@ namespace ModelsAndMonsters.Agents;
 /// </remarks>
 public sealed class IntentParser : ModelAgent
 {
+    public const string AgentIdentifier = "IntentParser";
+
     public IntentParser(AgentModelProfile profile, TracingChatClient client, PromptLibrary prompts)
-        : base("IntentParser", profile, client, prompts.Render("character.parse-intent.system"))
+        : base(AgentIdentifier, profile, client, prompts.Render("character.parse-intent.system"))
     {
     }
 

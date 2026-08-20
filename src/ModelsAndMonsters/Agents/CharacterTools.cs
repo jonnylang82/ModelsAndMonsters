@@ -35,6 +35,22 @@ public static class CharacterTools
     /// </remarks>
     public const string UtterancesParameter = "utterances";
 
+    /// <summary>
+    /// The optional structured addressee that rides with <see cref="UtterancesParameter"/>: the one character
+    /// the words were aimed at. Declared, never inferred.
+    /// </summary>
+    /// <remarks>
+    /// Two v0.8 actions - threatening an enemy and steadying an ally - are defined as speech aimed at one
+    /// person, so "who was this said to" becomes a mechanical question. The alternative is reading the words
+    /// for a name, which is exactly the kind of hand-built language parsing this project keeps deleting: it
+    /// cannot tell "Vark, you are finished" from "Vark is finished", and it breaks the moment a character
+    /// addresses somebody by a nickname. Declaring it makes the speaker authoritative about their own aim.
+    /// It stays OPTIONAL: a line called to the whole room has no addressee, and a character that omits it
+    /// simply leaves the Dungeon Master's binding of the target unchallenged. What it can never do is
+    /// silently disagree - an action aimed at somebody other than the declared addressee is refused.
+    /// </remarks>
+    public const string AddressedToParameter = "addressed_to";
+
     private const string UtterancesSchema = $$"""
         "{{UtterancesParameter}}": {
           "type": "array",
@@ -43,6 +59,10 @@ public static class CharacterTools
             "type": "string",
             "description": "The exact words you speak aloud. For example: 'Elara, get whatever is in that chest — I will hold off the captain.'"
           }
+        },
+        "{{AddressedToParameter}}": {
+          "type": "string",
+          "description": "If you are speaking to ONE person in particular — threatening them, warning them, steadying them, answering them — put their name here, exactly as it is given to you. Leave it out when you are calling to the room as a whole. Everyone still hears you either way."
         }
         """;
 

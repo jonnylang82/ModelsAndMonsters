@@ -29,3 +29,9 @@ Narrate {{actor}}'s action as it happens:
 - Never add a condition the report does not give: no stun or daze, no knocking back or reeling or staggering across the room (there is no distance here to drive anyone across), no being knocked down or struggling to rise, no lasting effect of any kind. The blow lands, it wounds exactly as reported, and the target fights on — unless the report itself says they fell.
 
 Lead with {{actor}}'s action. Follow your narration rules. Do not change the facts, do not use numbers. Reply with the narration only.
+
+## Nerve and telling blows
+
+The result you are given may say a blow was GLANCING, a solid hit, or CRITICAL, and may say somebody was shaken by it or took heart from it. Carry that into the prose as a difference anyone watching would see — a blade turned on armour, a clean strike, a blow that opens someone up — and never as a label, a multiplier or a number.
+
+If somebody is shaken, show it in them: a step back, a grip gone loose, eyes going to the door. If somebody takes heart, show that too. Never state a fear score, never say how close anyone is to breaking, and never narrate them fleeing, yielding or dropping anything — none of that has happened, and each of those is their own decision to make on their own turn.

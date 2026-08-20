@@ -160,11 +160,19 @@ public sealed class RulebookV07Tests
 
         var holder = TestWorld.Elara() with { Inventory = [plain, other] };
 
-        // The qualified name picks its own item; the bare name still resolves, to the first, as it always did.
+        // The qualified name picks its own item, and the id always does.
         Assert.Equal("purse-skrit", holder.FindItem("Small Purse of Gold Coins (the runt's)")?.Id);
         Assert.Equal("purse-rowan", holder.FindItem("Small Purse of Gold Coins (Rowan's)")?.Id);
-        Assert.Equal("purse-rowan", holder.FindItem("Small Purse of Gold Coins")?.Id);
         Assert.Equal("purse-skrit", holder.FindItem("purse-skrit")?.Id);
+
+        // The bare name names both, so it names neither. This used to return whichever purse sat first,
+        // which is how a live run had the Dungeon Master reason aloud about "Vark's purse" — it could see
+        // there were two and the engine gave it no way to say so. Ambiguity is now reported, exactly as it
+        // already was for objects, exits and the contents of a chest.
+        var ambiguous = holder.ResolveItem("Small Purse of Gold Coins");
+        Assert.True(ambiguous.Ambiguous);
+        Assert.Null(ambiguous.Item);
+        Assert.Null(holder.FindItem("Small Purse of Gold Coins"));
 
         // And the character's own state shows two distinguishable lines rather than the same line twice.
         var formatter = new WorldStateFormatter(
@@ -413,7 +421,7 @@ public sealed class RulebookV07Tests
     [Fact]
     public void The_expanded_rulebook_fits_inside_the_configured_hard_limits_with_headroom()
     {
-        var totalChars = Catalog.AllCards.Sum(c => c.ToPromptBlock().Length);
+        var totalChars = Catalog.AllCards.Sum(c => c.ToResolverBlock().Length);
 
         Assert.True(Catalog.AllCards.Count <= Limits.RulebookMaxCards,
             $"The rulebook has {Catalog.AllCards.Count} cards; the configured ceiling is {Limits.RulebookMaxCards}.");

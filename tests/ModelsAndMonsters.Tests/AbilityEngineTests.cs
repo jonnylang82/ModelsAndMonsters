@@ -188,7 +188,7 @@ public sealed class AbilityEngineTests
         // One hit draw, one glancing draw. Redirection adds nothing, and the scripted rng would throw if it did.
         Assert.Equal(2, attack.RngDraws.Count);
         Assert.Equal(2, rng.DrawCount);
-        Assert.Equal(["attack.hit-check", "attack.glancing-check"], attack.RngDraws.Select(d => d.Purpose).ToArray());
+        Assert.Equal(["attack.hit-check", "attack.quality-check"], attack.RngDraws.Select(d => d.Purpose).ToArray());
     }
 
     [Fact]

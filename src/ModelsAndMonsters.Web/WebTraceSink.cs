@@ -37,7 +37,8 @@ public sealed class WebTraceSink : ITraceSink
                         case AttackOutcome attack:
                             _publish(UiEvent.Attack(new AttackDto(
                                 attack.AttackerName, attack.TargetName, attack.Hit, attack.Glancing,
-                                attack.DamageDealt, attack.TargetHealthAfter, attack.TargetMaxHealth, attack.TargetDied)));
+                                attack.DamageDealt, attack.TargetHealthAfter, attack.TargetMaxHealth, attack.TargetDied,
+                                attack.Quality.ToString(), attack.Critical)));
                             break;
                         case OpenExitOutcome openExit:
                             _publish(UiEvent.ExitOpened(openExit.ActorName, openExit.ExitName));
@@ -108,6 +109,27 @@ public sealed class WebTraceSink : ITraceSink
                         status.TargetCharacterName ?? status.TargetCharacterId,
                         status.SourceCharacterName ?? status.SourceCharacterId,
                         status.Modifier, status.Cause));
+                    break;
+
+                // Morale (v0.8). A point of fear moving and a character actually breaking are separate lines,
+                // because only the second is something anyone in the room can see.
+                case TraceEventType.FearChanged when traceEvent.Data is FearChangedPayload fear:
+                    _publish(UiEvent.FearChanged(
+                        fear.CharacterName, fear.FearBefore, fear.FearAfter, fear.Delta,
+                        fear.Cause, fear.CauseDetail, fear.ScaredTransition, fear.Absorbed));
+                    break;
+
+                case TraceEventType.IntimidationAttempted when traceEvent.Data is IntimidationAttemptedPayload threat:
+                    _publish(UiEvent.Intimidation(
+                        threat.ActorName, threat.TargetName, threat.Succeeded, threat.BaseChance,
+                        threat.EffectiveChance, threat.Roll, threat.Modifiers, threat.AssociatedSpeech,
+                        threat.TargetFearBefore, threat.TargetFearAfter));
+                    break;
+
+                case TraceEventType.AllySteadied when traceEvent.Data is AllySteadiedPayload steady:
+                    _publish(UiEvent.AllySteadied(
+                        steady.ActorName, steady.TargetName, steady.TargetFearBefore, steady.TargetFearAfter,
+                        steady.NoEffect, steady.AssociatedSpeech));
                     break;
 
                 case TraceEventType.SurrenderOfferResolved when traceEvent.Data is SurrenderOfferResolvedPayload resolvedOffer:

@@ -42,12 +42,17 @@ public sealed class GameEngine : IGameEngine
     private int _relationshipCounter;
     private int _offerCounter;
     private int _agreementCounter;
+    private int _intimidationCounter;
 
     public GameEngine(GameState initialState, IRng rng, CombatRules combatRules)
     {
-        _state = initialState;
         _rng = rng;
         _combatRules = combatRules;
+
+        // The outnumbering latch is seeded from the opening state and raises no fear. Fear rises on the
+        // TRANSITION into being outnumbered, and a character who is already outnumbered when the fight starts
+        // has not made that transition — the scenario decided the odds, not the fight.
+        _state = SeedScaredStatuses(SeedOutnumbering(initialState));
     }
 
     public GameState State => _state;
@@ -77,6 +82,8 @@ public sealed class GameEngine : IGameEngine
             OfferSurrenderAction offer => ResolveOfferSurrender(offer),
             AcceptSurrenderAction accept => ResolveAcceptSurrender(accept),
             UseAbilityAction ability => ResolveUseAbility(ability),
+            IntimidateCharacterAction intimidate => ResolveIntimidate(intimidate),
+            SteadyAllyAction steady => ResolveSteadyAlly(steady),
             DefendAction defend => ResolveUseAbility(new UseAbilityAction(defend.ActorRef, AbilityCatalog.DefendId)),
             GiveItemAction give => ResolveGiveItem(give),
             DropItemAction drop => ResolveDropItem(drop),
@@ -87,10 +94,473 @@ public sealed class GameEngine : IGameEngine
 
         if (result.Accepted)
         {
+            // Who is outnumbered is a consequence of the action, not part of it: a death, a surrender or an
+            // escape can turn the odds against somebody who was not even involved. Reconciling here, once,
+            // means every accepted action gets the same treatment and no handler has to remember to do it.
+            result = ReconcileOutnumbering(result);
             _state = result.StateAfter;
         }
 
         return result;
+    }
+
+    // ===============================================================================================
+    // Morale
+    // ===============================================================================================
+
+    /// <summary>
+    /// Moves one character's fear by a clamped amount, records the change with its cause, and keeps the
+    /// public <see cref="StatusEffectKind.Scared"/> status exactly in step with the threshold.
+    /// </summary>
+    /// <remarks>
+    /// This is the ONLY way fear ever moves. Every caller states a cause from the closed
+    /// <see cref="FearChangeCause"/> set, so a change without a roll is still fully explained by the record,
+    /// and a change the clamp absorbed is recorded as having been absorbed rather than quietly vanishing.
+    /// The status is applied and removed here and nowhere else, which is what makes it impossible for the
+    /// public shadow to disagree with the number it shadows.
+    /// </remarks>
+    private GameState ApplyFear(
+        GameState state,
+        string characterId,
+        int delta,
+        FearChangeCause cause,
+        string causeDetail,
+        string? sourceCharacterId,
+        string? relatedActionType,
+        List<StatusEvent> statusEvents,
+        List<FearChange> fearChanges)
+    {
+        if (delta == 0 || state.FindById(characterId) is not { } character)
+        {
+            return state;
+        }
+
+        var before = character.Fear;
+        var after = FearRules.Clamp(before + delta);
+        state = state.WithCharacter(character with { Fear = after });
+
+        var transition = ScaredTransition.None;
+        if (!FearRules.IsScared(before) && FearRules.IsScared(after))
+        {
+            transition = ScaredTransition.BecameScared;
+            var scared = NewStatus(StatusEffectKind.Scared, characterId, characterId, modifier: 0,
+                StatusExpiryRule.WhileConditionHolds);
+            state = state.WithStatus(scared);
+            statusEvents.Add(new StatusEvent(StatusEventKind.Applied, scared,
+                $"{character.Name} lost their nerve ({causeDetail})"));
+        }
+        else if (FearRules.IsScared(before) && !FearRules.IsScared(after))
+        {
+            transition = ScaredTransition.RecoveredFromScared;
+            foreach (var held in state.StatusesOn(characterId).Where(x => x.Kind == StatusEffectKind.Scared).ToList())
+            {
+                state = state.WithoutStatuses([held.Id]);
+                statusEvents.Add(new StatusEvent(StatusEventKind.Removed, held,
+                    $"{character.Name} got their nerve back ({causeDetail})"));
+            }
+        }
+
+        fearChanges.Add(new FearChange
+        {
+            CharacterId = character.Id,
+            CharacterName = character.Name,
+            Cause = cause,
+            CauseDetail = causeDetail,
+            Delta = delta,
+            Before = before,
+            After = after,
+            SourceCharacterId = sourceCharacterId,
+            SourceCharacterName = sourceCharacterId is null ? null : state.FindById(sourceCharacterId)?.Name,
+            RelatedActionType = relatedActionType,
+            Transition = transition
+        });
+
+        return state;
+    }
+
+    /// <summary>
+    /// Whether a character is outnumbered right now: strictly more ACTIVE enemies than active characters on
+    /// their own side, counting themselves. Dead, surrendered, escaped and absent characters count for
+    /// nobody, and a character who is not active themselves is never outnumbered.
+    /// </summary>
+    private static bool IsOutnumberedNow(GameState state, Character character)
+    {
+        if (!character.CanAct)
+        {
+            return false;
+        }
+
+        var enemies = state.Characters.Count(c => c.CanAct && !character.IsAllyOf(c));
+        var ownSide = state.Characters.Count(c => c.CanAct && character.IsAllyOf(c));
+        return enemies > ownSide;
+    }
+
+    /// <summary>
+    /// Gives the public Scared status to anybody a scenario seeded at or above the threshold.
+    /// </summary>
+    /// <remarks>
+    /// The status is normally applied by the CHANGE that crosses the threshold, so a character who simply
+    /// starts frightened would otherwise be scared with nothing on them to show it — the number and its
+    /// public shadow would disagree from the first turn. Seeding it here is the only place the status is
+    /// created outside <see cref="ApplyFear"/>, and it raises no fear and emits no event: nothing happened,
+    /// the scenario just said so.
+    /// </remarks>
+    private GameState SeedScaredStatuses(GameState state)
+    {
+        foreach (var character in state.Characters)
+        {
+            if (!character.IsScared || state.StatusOn(character.Id, StatusEffectKind.Scared) is not null)
+            {
+                continue;
+            }
+
+            state = state.WithStatus(NewStatus(StatusEffectKind.Scared, character.Id, character.Id,
+                modifier: 0, StatusExpiryRule.WhileConditionHolds));
+        }
+
+        return state;
+    }
+
+    /// <summary>Sets every character's outnumbering latch to match the state, raising no fear. Used once, at construction.</summary>
+    private static GameState SeedOutnumbering(GameState state)
+    {
+        foreach (var character in state.Characters)
+        {
+            var outnumbered = IsOutnumberedNow(state, character);
+            if (outnumbered != character.IsOutnumbered)
+            {
+                state = state.WithCharacter(state.RequireById(character.Id) with { IsOutnumbered = outnumbered });
+            }
+        }
+
+        return state;
+    }
+
+    /// <summary>
+    /// Brings every outnumbering latch up to date after an accepted action, and raises fear by one for each
+    /// character who has just crossed from not outnumbered to outnumbered.
+    /// </summary>
+    /// <remarks>
+    /// A latch, not a per-round check: standing outnumbered for five rounds is the same fact five times over
+    /// and frightens nobody further. Parity genuinely restored clears the latch, so a character who is
+    /// outnumbered again later has made a fresh transition and may be frightened again.
+    /// </remarks>
+    private EngineResult ReconcileOutnumbering(EngineResult result)
+    {
+        var state = result.StateAfter;
+        var ids = state.Characters.Select(c => c.Id).ToList();
+
+        List<StatusEvent>? statusEvents = null;
+        List<FearChange>? fearChanges = null;
+        var changed = false;
+
+        foreach (var id in ids)
+        {
+            var character = state.RequireById(id);
+
+            // Only those still in the fight. A character who has died, yielded or fled keeps the latch they
+            // left with: they are not outnumbered by anybody any more, and resetting it would rewrite the
+            // world version for a fact about somebody who is no longer playing.
+            if (!character.CanAct)
+            {
+                continue;
+            }
+
+            var outnumbered = IsOutnumberedNow(state, character);
+            if (outnumbered == character.IsOutnumbered)
+            {
+                continue;
+            }
+
+            state = state.WithCharacter(character with { IsOutnumbered = outnumbered });
+            changed = true;
+
+            if (!outnumbered)
+            {
+                continue;
+            }
+
+            statusEvents ??= [.. result.StatusEvents];
+            fearChanges ??= [.. result.FearChanges];
+            state = ApplyFear(state, id, +1, FearChangeCause.BecameOutnumbered,
+                "the odds turned: more enemies still fighting than allies", sourceCharacterId: null,
+                result.Action.ActionType, statusEvents, fearChanges);
+        }
+
+        if (!changed)
+        {
+            return result;
+        }
+
+        return result with
+        {
+            StateAfter = state with { Version = state.Version + 1 },
+            StatusEvents = statusEvents ?? result.StatusEvents,
+            FearChanges = fearChanges ?? result.FearChanges
+        };
+    }
+
+    /// <summary>
+    /// Resolves one attempt to frighten an opponent: validation, one fully traced draw against a chance
+    /// derived only from the authoritative state, and — on a success — exactly one point of fear.
+    /// </summary>
+    /// <remarks>
+    /// Nothing about the threat's wording reaches the odds. The spoken line is required to exist (and, when
+    /// the speaker declared an addressee, to be aimed at this target) and is then carried only as an id: the
+    /// engine never reads it. Every attempt, successful or not, is recorded against the actor-target pair, so
+    /// the affordance is spent whichever way the die falls.
+    /// </remarks>
+    private EngineResult ResolveIntimidate(IntimidateCharacterAction action)
+    {
+        var state = _state;
+
+        var actor = state.Resolve(action.ActorRef);
+        if (actor is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.UnknownActor,
+                $"There is no character called '{action.ActorRef}' in the room.");
+        }
+
+        if (!actor.CanAct)
+        {
+            return EngineResult.Reject(action, state,
+                actor.IsAlive ? EngineRejectionReason.ActorNotActive : EngineRejectionReason.ActorIsDead,
+                $"{actor.Name} is not an active combatant and cannot act.");
+        }
+
+        var target = state.Resolve(action.TargetRef);
+        if (target is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.UnknownTarget,
+                $"There is no character called '{action.TargetRef}' in the room.");
+        }
+
+        if (Same(target.Id, actor.Id))
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.TargetIsSelf,
+                $"{actor.Name} cannot threaten themselves.");
+        }
+
+        if (actor.IsAllyOf(target))
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.TargetIsNotAnOpponent,
+                $"{target.Name} fights on {actor.Name}'s own side; a threat is for an enemy.");
+        }
+
+        if (!target.IsCombatTarget)
+        {
+            return RejectUnavailableTarget(action, state, target, "threaten");
+        }
+
+        // Structural speech validation, before any draw: the threat has to have actually been spoken this
+        // turn, and — when the speaker named who they were speaking to — it has to have been aimed here.
+        // Neither check reads a single word of what was said.
+        if (action.AssociatedSpeechEventId is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.IntimidationRequiresSpeech,
+                $"{actor.Name} made no threat aloud; there is nothing for {target.Name} to be threatened by.");
+        }
+
+        if (action.SpeechAddressedToId is { } addressed && !Same(addressed, target.Id))
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.SpeechAddressedToSomebodyElse,
+                $"{actor.Name} spoke to somebody other than {target.Name}.");
+        }
+
+        if (state.HasAttemptedIntimidation(actor.Id, target.Id))
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.AlreadyAttemptedIntimidation,
+                $"{actor.Name} has already tried to frighten {target.Name} in this fight; that card is played.");
+        }
+
+        // ---- Modifiers, every one of them read from the authoritative state, in a fixed order. ----
+        var baseChance = _combatRules.BaseIntimidationChance;
+        var modifiers = new List<RngModifier>();
+        var order = 1;
+
+        if (target.Fear > 0)
+        {
+            modifiers.Add(new RngModifier("target-fear", target.Id,
+                target.Fear * IntimidationRules.PerTargetFearPoint, order++, Consumed: false));
+        }
+
+        if (target.IsOutnumbered)
+        {
+            modifiers.Add(new RngModifier("target-outnumbered", target.Id,
+                IntimidationRules.TargetOutnumbered, order++, Consumed: false));
+        }
+
+        if (HealthBands.IsBadlyWoundedOrWorse(target))
+        {
+            modifiers.Add(new RngModifier("target-badly-wounded", target.Id,
+                IntimidationRules.TargetBadlyWounded, order++, Consumed: false));
+        }
+
+        if (actor.IsScared)
+        {
+            modifiers.Add(new RngModifier("intimidator-scared", actor.Id,
+                IntimidationRules.IntimidatorScared, order++, Consumed: false));
+        }
+
+        var effectiveChance = IntimidationRules.Clamp(baseChance + modifiers.Sum(m => m.Value));
+
+        var sequenceBefore = _rng.DrawCount;
+        var roll = _rng.RollPercent();
+        var succeeded = roll <= effectiveChance;
+        var draw = new RngDraw
+        {
+            Purpose = "intimidation.check",
+            ActionType = action.ActionType,
+            ActorId = actor.Id,
+            ActorName = actor.Name,
+            TargetId = target.Id,
+            TargetName = target.Name,
+            OutcomeSelected = "the threat tells or it does not",
+            Sides = 100,
+            RangeMin = 1,
+            RangeMax = 100,
+            RawRoll = roll,
+            BaseChance = baseChance,
+            Modifiers = [.. modifiers.Select(m => m.Note)],
+            ModifierDetails = modifiers,
+            Threshold = effectiveChance,
+            Comparison = $"roll {roll} {(succeeded ? "<=" : ">")} effective chance {effectiveChance} " +
+                         $"(clamped to {IntimidationRules.MinimumChance}-{IntimidationRules.MaximumChance})",
+            Result = succeeded ? "intimidated" : "unmoved",
+            Seed = _rng.Seed,
+            SequenceBefore = sequenceBefore,
+            SequenceAfter = _rng.DrawCount
+        };
+
+        var statusEvents = new List<StatusEvent>();
+        var fearChanges = new List<FearChange>();
+
+        var after = state.WithIntimidationAttempt(new IntimidationAttempt
+        {
+            Id = $"intimidation-{++_intimidationCounter}",
+            ActorId = actor.Id,
+            TargetId = target.Id,
+            Round = CurrentRound,
+            Turn = CurrentTurn,
+            BaseChance = baseChance,
+            EffectiveChance = effectiveChance,
+            Roll = roll,
+            Succeeded = succeeded,
+            AssociatedSpeechEventId = action.AssociatedSpeechEventId
+        });
+
+        if (succeeded)
+        {
+            after = ApplyFear(after, target.Id, +1, FearChangeCause.Intimidated,
+                $"{actor.Name}'s open threat told", actor.Id, action.ActionType, statusEvents, fearChanges);
+        }
+
+        after = after with { Version = state.Version + 1 };
+
+        var outcome = new IntimidateOutcome
+        {
+            ActorId = actor.Id,
+            ActorName = actor.Name,
+            TargetId = target.Id,
+            TargetName = target.Name,
+            BaseChance = baseChance,
+            Modifiers = modifiers,
+            EffectiveChance = effectiveChance,
+            Roll = roll,
+            Succeeded = succeeded,
+            AssociatedSpeechEventId = action.AssociatedSpeechEventId,
+            FearChanges = fearChanges
+        };
+
+        return EngineResult.Accept(action, state, after, outcome, [draw], statusEvents, offerTransitions: null, fearChanges);
+    }
+
+    /// <summary>
+    /// Resolves one character spending their whole turn steadying an ally: validation, one point of fear
+    /// removed, and no draw at all. Reassurance is deterministic in v0.8.
+    /// </summary>
+    /// <remarks>
+    /// An ally already unafraid is not refused: the turn is spent and nothing moves, which is exactly what
+    /// spending a turn on unnecessary reassurance should cost. The change is still recorded, marked as
+    /// absorbed by the floor, so the record shows the action happening and achieving nothing rather than
+    /// showing nothing at all.
+    /// </remarks>
+    private EngineResult ResolveSteadyAlly(SteadyAllyAction action)
+    {
+        var state = _state;
+
+        var actor = state.Resolve(action.ActorRef);
+        if (actor is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.UnknownActor,
+                $"There is no character called '{action.ActorRef}' in the room.");
+        }
+
+        if (!actor.CanAct)
+        {
+            return EngineResult.Reject(action, state,
+                actor.IsAlive ? EngineRejectionReason.ActorNotActive : EngineRejectionReason.ActorIsDead,
+                $"{actor.Name} is not an active combatant and cannot act.");
+        }
+
+        var target = state.Resolve(action.TargetRef);
+        if (target is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.UnknownTarget,
+                $"There is no character called '{action.TargetRef}' in the room.");
+        }
+
+        if (Same(target.Id, actor.Id))
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.TargetIsSelf,
+                $"{actor.Name} cannot steady themselves; this is something done for a companion.");
+        }
+
+        if (!actor.IsAllyOf(target))
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.TargetIsNotAnAlly,
+                $"{target.Name} does not fight on {actor.Name}'s side.");
+        }
+
+        if (!target.CanAct || !target.IsPresent)
+        {
+            return RejectUnavailableTarget(action, state, target, "steady");
+        }
+
+        if (action.AssociatedSpeechEventId is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.IntimidationRequiresSpeech,
+                $"{actor.Name} said nothing aloud, so there were no words for {target.Name} to take heart from.");
+        }
+
+        if (action.SpeechAddressedToId is { } addressed && !Same(addressed, target.Id))
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.SpeechAddressedToSomebodyElse,
+                $"{actor.Name} spoke to somebody other than {target.Name}.");
+        }
+
+        var statusEvents = new List<StatusEvent>();
+        var fearChanges = new List<FearChange>();
+        var wasScared = target.IsScared;
+
+        var after = ApplyFear(state, target.Id, -1, FearChangeCause.SteadiedByAlly,
+            $"{actor.Name} steadied them", actor.Id, action.ActionType, statusEvents, fearChanges);
+
+        after = after with { Version = state.Version + 1 };
+
+        var outcome = new SteadyAllyOutcome
+        {
+            ActorId = actor.Id,
+            ActorName = actor.Name,
+            TargetId = target.Id,
+            TargetName = target.Name,
+            AssociatedSpeechEventId = action.AssociatedSpeechEventId,
+            FearChanges = fearChanges,
+            NoLongerScared = wasScared && !after.RequireById(target.Id).IsScared
+        };
+
+        return EngineResult.Accept(action, state, after, outcome, rngDraws: null, statusEvents,
+            offerTransitions: null, fearChanges);
     }
 
     // ===============================================================================================
@@ -228,14 +698,17 @@ public sealed class GameEngine : IGameEngine
     /// <remarks>
     /// <para>
     /// It is deliberately shared so an ability-driven blow (Dirty Strike) can never become a parallel combat
-    /// path with its own dice: exactly one hit draw, and — only on a hit — exactly one glancing draw, whichever
+    /// path with its own dice: exactly one hit draw, and — only on a hit — exactly one QUALITY draw, whichever
     /// route reached here. Guard redirection consumes no draw at all; it changes who the one draw is resolved
     /// against, before it is made.
     /// </para>
     /// <para>
     /// Order of resolution: redirect (guard), modify the hit chance (Rallied, OffBalance — both consumed
-    /// whatever the result), roll to hit, roll for glancing, subtract armour, halve for glancing, then subtract
-    /// the target's Defending reduction (consumed only by a blow that actually lands).
+    /// whatever the result), roll to hit, roll ONCE for quality (glancing, solid or critical — never a
+    /// glancing roll followed by a separate critical roll), subtract armour, apply the quality multiplier,
+    /// then subtract the target's Defending reduction (consumed only by a blow that actually lands), and
+    /// finally move morale: a surviving target frightened by a critical or heavy blow, and an attacker
+    /// steadied by landing a critical one.
     /// </para>
     /// </remarks>
     private EngineResult ResolveWeaponStrike(
@@ -329,8 +802,8 @@ public sealed class GameEngine : IGameEngine
             SequenceAfter = _rng.DrawCount
         });
 
-        int? glancingRoll = null;
-        var glancing = false;
+        int? qualityRoll = null;
+        var quality = AttackQuality.Solid;
         var baseDamage = 0;
         var damage = 0;
         var defendReduction = 0;
@@ -341,34 +814,35 @@ public sealed class GameEngine : IGameEngine
 
         if (hit)
         {
-            // ---- The one glancing draw, taken only because the blow landed. ----
-            var glancingSequenceBefore = _rng.DrawCount;
+            // ---- The one quality draw, taken only because the blow landed. It selects among all three
+            // outcomes at once: glancing and critical are opposite ends of a single roll, never two rolls. ----
+            var qualitySequenceBefore = _rng.DrawCount;
             var roll = _rng.RollPercent();
-            glancingRoll = roll;
-            glancing = roll <= _combatRules.GlancingBlowChance;
+            qualityRoll = roll;
+            quality = _combatRules.QualityFor(roll);
             draws.Add(new RngDraw
             {
-                Purpose = "attack.glancing-check",
+                Purpose = "attack.quality-check",
                 ActionType = action.ActionType,
                 ActorId = attacker.Id,
                 ActorName = attacker.Name,
                 TargetId = target.Id,
                 TargetName = target.Name,
-                OutcomeSelected = "glancing or solid",
+                OutcomeSelected = $"glancing, solid or critical ({_combatRules.DescribeQualityBands()})",
                 Sides = 100,
                 RangeMin = 1,
                 RangeMax = 100,
                 RawRoll = roll,
                 Threshold = _combatRules.GlancingBlowChance,
-                Comparison = $"roll {roll} {(glancing ? "<=" : ">")} glancing chance {_combatRules.GlancingBlowChance}",
-                Result = glancing ? "glancing" : "solid",
+                Comparison = _combatRules.DescribeQualityComparison(roll, quality),
+                Result = quality.ToString().ToLowerInvariant(),
                 Seed = _rng.Seed,
-                SequenceBefore = glancingSequenceBefore,
+                SequenceBefore = qualitySequenceBefore,
                 SequenceAfter = _rng.DrawCount
             });
 
             baseDamage = Math.Max(0, weapon.Damage - target.Armour);
-            damage = glancing ? CombatRules.GlancingDamage(baseDamage) : baseDamage;
+            damage = CombatRules.DamageFor(quality, baseDamage);
 
             // Defending applies last: after armour and after glancing, never below zero, and consumed by any
             // blow that lands — including one that armour had already reduced to nothing.
@@ -391,6 +865,8 @@ public sealed class GameEngine : IGameEngine
             }
         }
 
+        var fearChanges = new List<FearChange>();
+
         // ---- Build the new state. A miss can still change state: a consumed status, a spent charge, a
         // rejected offer. Nothing is assumed unchanged just because no damage was dealt. ----
         var after = state.WithoutStatuses(consumedStatusIds);
@@ -408,6 +884,45 @@ public sealed class GameEngine : IGameEngine
             };
             after = after.WithCharacter(updatedTarget);
             changed = true;
+        }
+
+        // ---- Morale. A blow that frightens does so exactly once, whatever combination of reasons applies:
+        // a critical hit that ALSO took a quarter of the target's health is one terrifying blow, not two.
+        // A dead target is never frightened; there is nobody left to frighten. ----
+        if (hit && !died)
+        {
+            var large = damage >= FearRules.LargeHitThreshold(target.MaxHealth) && damage > 0;
+            var critical = quality == AttackQuality.Critical;
+            if (critical || large)
+            {
+                var (cause, detail) = (critical, large) switch
+                {
+                    (true, true) => (FearChangeCause.CriticalAndLargeHitReceived,
+                        $"a critical blow from {attacker.Name} that also took at least a quarter of their health"),
+                    (true, false) => (FearChangeCause.CriticalHitReceived,
+                        $"a critical blow from {attacker.Name}"),
+                    _ => (FearChangeCause.LargeHitReceived,
+                        $"one blow from {attacker.Name} taking at least a quarter of their health")
+                };
+
+                after = ApplyFear(after, target.Id, +1, cause, detail, attacker.Id, action.ActionType,
+                    statusEvents, fearChanges);
+                changed = true;
+            }
+        }
+
+        // Landing a critical blow steadies the one who landed it, whether or not it killed. This is the
+        // counterplay to fear: a frightened character can fight their way back out of it.
+        if (hit && quality == AttackQuality.Critical)
+        {
+            var attackerBefore = after.FindById(attacker.Id);
+            if (attackerBefore is { Fear: > FearRules.Minimum })
+            {
+                after = ApplyFear(after, attacker.Id, -1, FearChangeCause.LandedCriticalHit,
+                    $"landed a critical blow on {target.Name}", target.Id, action.ActionType,
+                    statusEvents, fearChanges);
+                changed = true;
+            }
         }
 
         // The ability's charge is spent on an accepted use, hit or miss. A miss still costs the chance: that is
@@ -489,9 +1004,10 @@ public sealed class GameEngine : IGameEngine
             BaseHitChance = baseHitChance,
             HitModifiers = modifiers,
             Hit = hit,
-            GlancingRoll = glancingRoll,
+            GlancingRoll = qualityRoll,
             GlancingChance = _combatRules.GlancingBlowChance,
-            Glancing = glancing,
+            CriticalChance = _combatRules.CriticalHitChance,
+            Quality = quality,
             BaseDamage = baseDamage,
             DamageDealt = damage,
             DefendReduction = defendReduction,
@@ -507,10 +1023,11 @@ public sealed class GameEngine : IGameEngine
             StatusApplied = statusApplied,
             IntendedTargetId = intendedTarget.Id,
             IntendedTargetName = intendedTarget.Name,
-            Redirected = redirected
+            Redirected = redirected,
+            FearChanges = fearChanges
         };
 
-        return EngineResult.Accept(action, state, after, outcome, draws, statusEvents, offerTransitions);
+        return EngineResult.Accept(action, state, after, outcome, draws, statusEvents, offerTransitions, fearChanges);
     }
 
     /// <summary>
@@ -554,7 +1071,12 @@ public sealed class GameEngine : IGameEngine
             }
         }
 
-        var item = actor.FindItem(action.ItemRef);
+        var (item, ambiguousItem) = actor.ResolveItem(action.ItemRef);
+        if (ambiguousItem)
+        {
+            return RejectAmbiguousItem(action, state, actor.Inventory, action.ItemRef, $"that {actor.Name} is carrying");
+        }
+
         if (item is null)
         {
             return EngineResult.Reject(action, state, EngineRejectionReason.ItemNotPossessed,
@@ -664,7 +1186,13 @@ public sealed class GameEngine : IGameEngine
                     "Giving it up is a weapon forfeiture, promised as part of the terms rather than listed as an item.");
             }
 
-            var item = offerer.FindItem(itemRef);
+            var (item, ambiguousItem) = offerer.ResolveItem(itemRef);
+            if (ambiguousItem)
+            {
+                return RejectAmbiguousItem(action, state, offerer.Inventory, itemRef,
+                    $"that {offerer.Name} is carrying, so the terms do not say what is being promised");
+            }
+
             if (item is null)
             {
                 return EngineResult.Reject(action, state, EngineRejectionReason.OfferedItemNotOwned,
@@ -1139,7 +1667,21 @@ public sealed class GameEngine : IGameEngine
         var status = NewStatus(StatusEffectKind.Rallied, commander.Id, ally.Id, definition.EffectValue,
             StatusExpiryRule.EndOfTargetNextTurn, definition.Id);
 
+        var statusEvents = new List<StatusEvent>
+        {
+            new(StatusEventKind.Applied, status, $"{commander.Name} rallied {ally.Name}")
+        };
+
         var after = SpendCharge(state.WithStatus(status), commander.Id, definition, held);
+
+        // v0.8: a barked order steadies the nerve as well as the arm. The hit-chance effect above is exactly
+        // what it always was; this is added alongside it, so Rally Grunt keeps every bit of its old behaviour.
+        var fearChanges = new List<FearChange>();
+        var wasScared = ally.IsScared;
+        after = ApplyFear(after, ally.Id, -1, FearChangeCause.RallyGrunt,
+            $"{commander.Name} barked an order that steadied them", commander.Id, action.ActionType,
+            statusEvents, fearChanges);
+
         after = after with { Version = state.Version + 1 };
 
         var remaining = after.FindById(commander.Id)?.FindAbility(definition.Id)?.RemainingUses ?? 0;
@@ -1152,11 +1694,13 @@ public sealed class GameEngine : IGameEngine
             AllyName = ally.Name,
             AbilityName = definition.Name,
             Modifier = definition.EffectValue,
-            RemainingUses = remaining
+            RemainingUses = remaining,
+            FearChanges = fearChanges,
+            NoLongerScared = wasScared && !after.RequireById(ally.Id).IsScared
         };
 
-        return EngineResult.Accept(action, state, after, outcome, statusEvents:
-            [new StatusEvent(StatusEventKind.Applied, status, $"{commander.Name} rallied {ally.Name}")]);
+        return EngineResult.Accept(action, state, after, outcome, rngDraws: null, statusEvents,
+            offerTransitions: null, fearChanges);
     }
 
     /// <summary>Applies <see cref="StatusEffectKind.Defending"/> to the actor. Repeatable, and never random.</summary>
@@ -1301,11 +1845,10 @@ public sealed class GameEngine : IGameEngine
                 $"The {container.Name} is closed; nothing can be taken from it until it is opened.");
         }
 
-        var (item, ambiguousItem) = ResolveContainedItem(container, action.ItemRef);
+        var (item, ambiguousItem) = container.ResolveItem(action.ItemRef);
         if (ambiguousItem)
         {
-            return EngineResult.Reject(action, state, EngineRejectionReason.ItemReferenceAmbiguous,
-                $"'{action.ItemRef}' matches more than one thing inside the {container.Name}; it is not clear which is meant.");
+            return RejectAmbiguousItem(action, state, container.Contents, action.ItemRef, $"inside the {container.Name}");
         }
 
         if (item is null)
@@ -1577,7 +2120,12 @@ public sealed class GameEngine : IGameEngine
                 $"{giver.Name}'s {giver.Weapon!.Name} is their equipped weapon, not an item that can be handed over.");
         }
 
-        var item = giver.FindItem(action.ItemRef);
+        var (item, ambiguousItem) = giver.ResolveItem(action.ItemRef);
+        if (ambiguousItem)
+        {
+            return RejectAmbiguousItem(action, state, giver.Inventory, action.ItemRef, $"that {giver.Name} is carrying");
+        }
+
         if (item is null)
         {
             return EngineResult.Reject(action, state, EngineRejectionReason.ItemNotPossessed,
@@ -1636,7 +2184,12 @@ public sealed class GameEngine : IGameEngine
                 $"{actor.Name}'s {actor.Weapon!.Name} is their equipped weapon, not an item that can be dropped.");
         }
 
-        var item = actor.FindItem(action.ItemRef);
+        var (item, ambiguousItem) = actor.ResolveItem(action.ItemRef);
+        if (ambiguousItem)
+        {
+            return RejectAmbiguousItem(action, state, actor.Inventory, action.ItemRef, $"that {actor.Name} is carrying");
+        }
+
         if (item is null)
         {
             return EngineResult.Reject(action, state, EngineRejectionReason.ItemNotPossessed,
@@ -1711,7 +2264,12 @@ public sealed class GameEngine : IGameEngine
                 $"{target.Name}'s {target.Weapon!.Name} is their equipped weapon and cannot be stolen in the middle of a fight.");
         }
 
-        var item = target.FindItem(action.ItemRef);
+        var (item, ambiguousItem) = target.ResolveItem(action.ItemRef);
+        if (ambiguousItem)
+        {
+            return RejectAmbiguousItem(action, state, target.Inventory, action.ItemRef, $"that {target.Name} is carrying");
+        }
+
         if (item is null)
         {
             return EngineResult.Reject(action, state, EngineRejectionReason.ItemNotPossessed,
@@ -2068,6 +2626,31 @@ public sealed class GameEngine : IGameEngine
         };
 
     /// <summary>
+    /// The shared refusal for a reference that names more than one item, naming the qualified alternatives
+    /// so the next attempt can pick one. <paramref name="where"/> completes "matches more than one thing
+    /// ...", e.g. "inside the chest" or "that Vark is carrying".
+    /// </summary>
+    /// <remarks>
+    /// Listing the alternatives is the point of the refusal, not decoration. A bare "that is ambiguous"
+    /// hands a model back the same words it just used with no way forward, and the qualified display name is
+    /// precisely the reference that would resolve. This is the reply the Dungeon Master deliberated its whole
+    /// output budget away for want of, when Rowan reached for one of Vark's two identical purses.
+    /// </remarks>
+    private static EngineResult RejectAmbiguousItem(
+        GameAction action, GameState state, IEnumerable<InventoryItem> among, string itemRef, string where)
+    {
+        var options = among
+            .Where(i => i.MatchesReference(itemRef))
+            .Select(i => i.DisplayName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var choices = options.Count == 0 ? "" : $" - {string.Join(" and ", options)}";
+        return EngineResult.Reject(action, state, EngineRejectionReason.ItemReferenceAmbiguous,
+            $"'{itemRef}' matches more than one thing {where}{choices}. Name the one that is meant.");
+    }
+
+    /// <summary>
     /// The shared refusal for a target who has left active play, with one reason per disposition so the
     /// Dungeon Master can explain the right thing in-world. <paramref name="verb"/> completes the sentence.
     /// </summary>
@@ -2086,52 +2669,6 @@ public sealed class GameEngine : IGameEngine
             _ => EngineResult.Reject(action, state, EngineRejectionReason.AbilityTargetNotAvailable,
                 $"{target.Name} cannot be reached right now.")
         };
-
-    /// <summary>
-    /// Resolves an item reference against a container's contents, reporting ambiguity rather than
-    /// guessing — the same discipline the engine applies to characters and objects.
-    /// </summary>
-    private static (InventoryItem? Item, bool Ambiguous) ResolveContainedItem(Container container, string itemRef)
-    {
-        if (string.IsNullOrWhiteSpace(itemRef))
-        {
-            return (null, false);
-        }
-
-        var needle = itemRef.Trim();
-
-        var byId = container.Contents.FirstOrDefault(i => string.Equals(i.Id, needle, StringComparison.OrdinalIgnoreCase));
-        if (byId is not null)
-        {
-            return (byId, false);
-        }
-
-        // The qualified name resolves an otherwise ambiguous reference: two identically named purses on the
-        // floor used to be unreferenceable, so a take was refused as ambiguous no matter how it was worded.
-        var byDisplayName = container.Contents
-            .Where(i => string.Equals(i.DisplayName, needle, StringComparison.OrdinalIgnoreCase))
-            .ToList();
-        if (byDisplayName.Count == 1)
-        {
-            return (byDisplayName[0], false);
-        }
-
-        var byName = container.Contents
-            .Where(i => string.Equals(i.Name, needle, StringComparison.OrdinalIgnoreCase))
-            .ToList();
-        if (byName.Count == 0)
-        {
-            // Last resort: the reference may carry a rendered annotation the model copied out of the state.
-            byName = [.. container.Contents.Where(i => i.MatchesReference(needle))];
-        }
-
-        return byName.Count switch
-        {
-            0 => (null, false),
-            1 => (byName[0], false),
-            _ => (null, true)
-        };
-    }
 
     private static ImmutableArray<InventoryItem> RemoveFirst(Character actor, InventoryItem item)
     {

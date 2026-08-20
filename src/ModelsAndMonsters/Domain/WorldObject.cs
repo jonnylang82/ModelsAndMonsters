@@ -109,20 +109,15 @@ public sealed record Container : WorldObject
     public override string Kind => "container";
 
     /// <summary>
-    /// Finds an item inside this container by id, qualified display name, or plain name, case-insensitively
-    /// — the qualified name first, so two same-named items can still be told apart.
+    /// Resolves an item reference against this container's contents, reporting ambiguity rather than
+    /// guessing. See <see cref="ItemReference.Resolve"/> for the matching order.
     /// </summary>
-    public InventoryItem? FindItem(string idOrName)
-    {
-        if (string.IsNullOrWhiteSpace(idOrName))
-        {
-            return null;
-        }
+    public ItemResolution ResolveItem(string? idOrName) => ItemReference.Resolve(Contents, idOrName);
 
-        var needle = idOrName.Trim();
-        return Contents.FirstOrDefault(i => string.Equals(i.Id, needle, StringComparison.OrdinalIgnoreCase))
-            ?? Contents.FirstOrDefault(i => string.Equals(i.DisplayName, needle, StringComparison.OrdinalIgnoreCase))
-            ?? Contents.FirstOrDefault(i => string.Equals(i.Name, needle, StringComparison.OrdinalIgnoreCase))
-            ?? Contents.FirstOrDefault(i => i.MatchesReference(needle));
-    }
+    /// <summary>
+    /// Finds an item inside this container by reference, or null when the reference names none — or names
+    /// more than one. As with a character's inventory, an ambiguous reference yields null rather than a
+    /// first match.
+    /// </summary>
+    public InventoryItem? FindItem(string idOrName) => ResolveItem(idOrName).Item;
 }

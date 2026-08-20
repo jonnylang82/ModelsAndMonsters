@@ -72,11 +72,15 @@ public static class RunReportWriter
         WriteAlliedAttacks(report, events);
         WriteSurrenderNegotiation(report, events);
         WritePersuasionAndIntimidation(report, events);
+        WriteMoraleSummary(report, events, finalState);
+        WriteIntimidationSummary(report, events);
+        WriteAttackQualitySummary(report, events);
         WriteAbilityActivity(report, events, finalState);
         WriteStatusTimeline(report, events);
         WriteStateGroundingHealth(report, events);
         WriteInventoryActivity(report, events, finalState);
         WriteRulebookConsultations(report, events);
+        WriteRulebookEfficiency(report, events, manifest);
         WriteContextHealth(report, events, manifest);
         WriteScenario(report, manifest);
         WriteTeams(report, manifest);
@@ -712,7 +716,7 @@ public static class RunReportWriter
         report.AppendLine("## Surrender negotiation");
         report.AppendLine();
         report.AppendLine(
-            "Giving up the fight takes both sides in v0.7: a concrete offer from one, and acceptance from the " +
+            "Giving up the fight takes both sides: a concrete offer from one, and acceptance from the " +
             "one named opponent. An offer moves nothing and protects nobody — only the acceptance column below " +
             "records assets that actually changed hands.");
         report.AppendLine();
@@ -1376,6 +1380,406 @@ public static class RunReportWriter
     }
 
     // -------------------------------------------------------------------------------------------
+    // Morale, intimidation and attack quality (v0.8)
+    // -------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// What happened to everybody's nerve: where each character started and finished, the worst it got, when
+    /// they broke and when (if ever) they came back, every change grouped by cause, and what they actually
+    /// chose to do while frightened. That last table is the one that matters to the experiment — fear in v0.8
+    /// exerts pressure and never chooses, so the only way to see whether the pressure did anything is to look
+    /// at the actions taken under it. Skipped entirely when no fear ever moved.
+    /// </summary>
+    private static void WriteMoraleSummary(StringBuilder report, IReadOnlyList<TraceRow> events, JsonElement? finalState)
+    {
+        var changes = events.Where(e => e.EventType == "FearChanged").OrderBy(e => e.Sequence).ToList();
+        var finalFear = FinalFearByName(finalState);
+        if (changes.Count == 0 && finalFear.Values.All(f => f == 0))
+        {
+            return;
+        }
+
+        report.AppendLine("## Morale summary");
+        report.AppendLine();
+        report.AppendLine(
+            "Fear is engine state on a 0-5 scale, and it is shown here in full because a report is an " +
+            "experiment artefact — no character in the fiction ever sees another's figure. Nothing in this " +
+            "section chose an action: at 3 or more a character is told plainly that they are afraid and " +
+            "should weigh their life, and then decides for themselves.");
+        report.AppendLine();
+        report.AppendLine(
+            "Every character in the encounter is listed, including those whose nerve never moved — a run " +
+            "where three of four held steady is a result, and a table that showed only the two who broke " +
+            "would read as though the others had been left out.");
+        report.AppendLine();
+
+        var names = changes.Select(c => Text(c.Data, "CharacterName") ?? "")
+            .Concat(finalFear.Keys)
+            .Where(n => n.Length > 0)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(n => n, StringComparer.Ordinal)
+            .ToList();
+
+        report.AppendLine("| Character | Initial | Final | Peak | Became scared | Recovered |");
+        report.AppendLine("| --- | --- | --- | --- | --- | --- |");
+        foreach (var name in names)
+        {
+            var mine = changes.Where(c => string.Equals(Text(c.Data, "CharacterName"), name, StringComparison.Ordinal)).ToList();
+            var initial = mine.Count == 0 ? finalFear.GetValueOrDefault(name) : (int)LongField(mine[0].Data, "FearBefore");
+            var final = finalFear.TryGetValue(name, out var f)
+                ? f
+                : mine.Count == 0 ? 0 : (int)LongField(mine[^1].Data, "FearAfter");
+            var peak = mine.Count == 0
+                ? Math.Max(initial, final)
+                : Math.Max(initial, mine.Max(c => (int)LongField(c.Data, "FearAfter")));
+
+            var broke = mine.FirstOrDefault(c => string.Equals(Text(c.Data, "ScaredTransition"), "BecameScared", StringComparison.Ordinal));
+            var back = mine.FirstOrDefault(c => string.Equals(Text(c.Data, "ScaredTransition"), "RecoveredFromScared", StringComparison.Ordinal));
+
+            report.AppendLine(
+                $"| {name} | {initial} | {final} | {peak} | " +
+                $"{(broke is null ? "never" : $"round {broke.Round}, turn {broke.Turn}")} | " +
+                $"{(back is null ? (broke is null ? "n/a" : "never") : $"round {back.Round}, turn {back.Turn}")} |");
+        }
+
+        report.AppendLine();
+
+        if (changes.Count > 0)
+        {
+            report.AppendLine("### Fear changes by cause");
+            report.AppendLine();
+            report.AppendLine("| Cause | Times | Net change | Absorbed by the clamp |");
+            report.AppendLine("| --- | --- | --- | --- |");
+            foreach (var group in changes.GroupBy(c => Text(c.Data, "Cause") ?? "unknown").OrderBy(g => g.Key, StringComparer.Ordinal))
+            {
+                var net = group.Sum(c => LongField(c.Data, "FearAfter") - LongField(c.Data, "FearBefore"));
+                var absorbed = group.Count(c => IsTrue(c.Data, "Absorbed"));
+                report.AppendLine($"| {group.Key} | {group.Count()} | {net:+#;-#;0} | {absorbed} |");
+            }
+
+            report.AppendLine();
+
+            report.AppendLine("### Every change, in order");
+            report.AppendLine();
+            report.AppendLine("| Round | Turn | Character | Fear | Cause | Threshold |");
+            report.AppendLine("| --- | --- | --- | --- | --- | --- |");
+            foreach (var change in changes)
+            {
+                var transition = Text(change.Data, "ScaredTransition");
+                report.AppendLine(
+                    $"| {change.Round} | {change.Turn} | {Text(change.Data, "CharacterName")} | " +
+                    $"{LongField(change.Data, "FearBefore")} → {LongField(change.Data, "FearAfter")}" +
+                    $"{(IsTrue(change.Data, "Absorbed") ? " (absorbed)" : "")} | " +
+                    $"{SingleLine(Text(change.Data, "CauseDetail"))} | " +
+                    $"{(transition is null or "None" ? "-" : transition)} |");
+            }
+
+            report.AppendLine();
+        }
+
+        WriteActionsTakenWhileScared(report, events, changes);
+    }
+
+    /// <summary>
+    /// What each character actually did on every turn they took while publicly Scared. This is the honest
+    /// answer to "did the pressure change behaviour", and it is deliberately presented as a list rather than
+    /// a rate: one encounter cannot separate a frightened character choosing to run from one who would have
+    /// run anyway, and a percentage here would imply a causal claim the run cannot support.
+    /// </summary>
+    private static void WriteActionsTakenWhileScared(
+        StringBuilder report, IReadOnlyList<TraceRow> events, IReadOnlyList<TraceRow> changes)
+    {
+        // Rebuild who was scared at each moment from the threshold crossings, then read the turns off the
+        // turn-ended events. Reconstructed rather than recorded, so an older trace still renders.
+        var crossings = changes
+            .Where(c => Text(c.Data, "ScaredTransition") is "BecameScared" or "RecoveredFromScared")
+            .Select(c => (c.Sequence, Name: Text(c.Data, "CharacterName") ?? "",
+                Scared: string.Equals(Text(c.Data, "ScaredTransition"), "BecameScared", StringComparison.Ordinal)))
+            .ToList();
+        if (crossings.Count == 0)
+        {
+            return;
+        }
+
+        var rows = new List<string>();
+        foreach (var turn in events.Where(e => e.EventType == "TurnEnded").OrderBy(e => e.Sequence))
+        {
+            var name = Text(turn.Data, "CharacterName") ?? "";
+            var wasScared = crossings
+                .Where(c => string.Equals(c.Name, name, StringComparison.Ordinal) && c.Sequence < turn.Sequence)
+                .Select(c => (bool?)c.Scared)
+                .LastOrDefault();
+
+            if (wasScared is not true)
+            {
+                continue;
+            }
+
+            var action = Text(turn.Data, "AcceptedAction");
+            rows.Add(
+                $"| {turn.Round} | {turn.Turn} | {name} | {Text(turn.Data, "Result")} | " +
+                $"{(string.IsNullOrWhiteSpace(action) ? "nothing took effect" : SingleLine(action))} |");
+        }
+
+        if (rows.Count == 0)
+        {
+            report.AppendLine("No character took a turn while scared: every crossing happened too late in the encounter to act on.");
+            report.AppendLine();
+            return;
+        }
+
+        report.AppendLine("### Turns taken while scared");
+        report.AppendLine();
+        report.AppendLine(
+            "What was actually chosen under the pressure. **Nothing here shows that fear caused any of it** — " +
+            "one run cannot separate a frightened character who ran from one who would have run anyway.");
+        report.AppendLine();
+        report.AppendLine("| Round | Turn | Character | Outcome | Action chosen |");
+        report.AppendLine("| --- | --- | --- | --- | --- |");
+        foreach (var row in rows)
+        {
+            report.AppendLine(row);
+        }
+
+        report.AppendLine();
+    }
+
+    /// <summary>
+    /// Every attempt to frighten an enemy, with its whole derivation. The modifier column is the point: it
+    /// shows the effective chance being built from the state of the fight, and that the words spoken —
+    /// reproduced beside it — reached the odds nowhere at all.
+    /// </summary>
+    private static void WriteIntimidationSummary(StringBuilder report, IReadOnlyList<TraceRow> events)
+    {
+        var attempts = events.Where(e => e.EventType == "IntimidationAttempted").OrderBy(e => e.Sequence).ToList();
+        var steadyings = events.Where(e => e.EventType == "AllySteadied").OrderBy(e => e.Sequence).ToList();
+        if (attempts.Count == 0 && steadyings.Count == 0)
+        {
+            return;
+        }
+
+        report.AppendLine("## Intimidation and reassurance");
+        report.AppendLine();
+
+        if (attempts.Count > 0)
+        {
+            var told = attempts.Count(a => IsTrue(a.Data, "Succeeded"));
+            report.AppendLine(
+                $"**{attempts.Count}** threat(s) made, **{told}** of which told. Each is one seeded draw against a " +
+                "chance built only from the state of the fight. The spoken words are reproduced for the reader " +
+                "and reached the odds nowhere: eloquence, length and phrasing carry no modifier at all.");
+            report.AppendLine();
+
+            foreach (var row in attempts)
+            {
+                var modifiers = JoinArray(row.Data, "Modifiers");
+                report.AppendLine(
+                    $"**{Text(row.Data, "ActorName")} → {Text(row.Data, "TargetName")} " +
+                    $"(round {row.Round}, turn {row.Turn}): " +
+                    $"{(IsTrue(row.Data, "Succeeded") ? "**told**" : "no flinch")}**");
+                report.AppendLine();
+                report.AppendLine($"- Base chance: {LongField(row.Data, "BaseChance")}");
+                report.AppendLine($"- Modifiers: {(string.IsNullOrEmpty(modifiers) || modifiers == "none" ? "none — the base chance stood" : modifiers)}");
+                report.AppendLine($"- Effective chance: {LongField(row.Data, "EffectiveChance")}; raw roll: {LongField(row.Data, "Roll")}");
+                report.AppendLine(
+                    $"- Target fear: {LongField(row.Data, "TargetFearBefore")} → {LongField(row.Data, "TargetFearAfter")}" +
+                    $"{(Text(row.Data, "ScaredTransition") is { } t && t != "None" ? $" ({t})" : "")}");
+                var speech = Text(row.Data, "AssociatedSpeech");
+                report.AppendLine(speech is null
+                    ? "- Threat spoken: none recorded"
+                    : $"- Threat spoken (no mechanical effect): {Quote(SingleLine(speech))}");
+                report.AppendLine();
+            }
+        }
+
+        if (steadyings.Count > 0)
+        {
+            report.AppendLine("### Allies steadied");
+            report.AppendLine();
+            report.AppendLine("| Round | Turn | Who | Steadied | Fear | Effect |");
+            report.AppendLine("| --- | --- | --- | --- | --- | --- |");
+            foreach (var row in steadyings)
+            {
+                report.AppendLine(
+                    $"| {row.Round} | {row.Turn} | {Text(row.Data, "ActorName")} | {Text(row.Data, "TargetName")} | " +
+                    $"{LongField(row.Data, "TargetFearBefore")} → {LongField(row.Data, "TargetFearAfter")} | " +
+                    $"{(IsTrue(row.Data, "NoEffect") ? "none — the ally was not afraid, and the turn was spent anyway" : SingleLine(Text(row.Data, "ScaredTransition")) is "RecoveredFromScared" ? "steadied, and no longer scared" : "steadied")} |");
+            }
+
+            report.AppendLine();
+        }
+    }
+
+    /// <summary>
+    /// How the one quality draw actually fell across the run: the count and damage of each band, who dealt
+    /// and took the critical hits, and the fear those criticals moved. The damage-per-band figures are what
+    /// make the v0.8 volatility change legible — a critical costs the same roll as a glance and doubles
+    /// instead of halving.
+    /// </summary>
+    private static void WriteAttackQualitySummary(StringBuilder report, IReadOnlyList<TraceRow> events)
+    {
+        var attacks = events
+            .Where(e => e.EventType == "EngineAction"
+                        && string.Equals(Text(e.Data, "Outcome", "OutcomeType"), "attack", StringComparison.Ordinal)
+                        && IsTrue(e.Data, "Accepted")
+                        && IsTrue(e.Data, "Outcome", "Hit"))
+            .ToList();
+        if (attacks.Count == 0)
+        {
+            return;
+        }
+
+        report.AppendLine("## Attack quality");
+        report.AppendLine();
+        report.AppendLine(
+            "One draw per landed blow selects among all three bands, so a glancing blow and a critical hit " +
+            "are opposite ends of the same roll rather than two separate checks.");
+        report.AppendLine();
+
+        report.AppendLine("| Quality | Blows | Damage dealt | Average |");
+        report.AppendLine("| --- | --- | --- | --- |");
+        foreach (var band in new[] { "Glancing", "Solid", "Critical" })
+        {
+            var inBand = attacks.Where(a => QualityOf(a) == band).ToList();
+            var damage = inBand.Sum(a => LongField(a.Data, "Outcome", "DamageDealt"));
+            report.AppendLine(
+                $"| {band} | {inBand.Count} | {damage} | {(inBand.Count == 0 ? "-" : $"{(double)damage / inBand.Count:F1}")} |");
+        }
+
+        report.AppendLine();
+
+        var criticals = attacks.Where(a => QualityOf(a) == "Critical").ToList();
+        if (criticals.Count == 0)
+        {
+            report.AppendLine("No critical hit landed in this run.");
+            report.AppendLine();
+            return;
+        }
+
+        report.AppendLine("### Critical hits");
+        report.AppendLine();
+        report.AppendLine("| Round | Attacker | Recipient | Damage | Killed | Fear moved |");
+        report.AppendLine("| --- | --- | --- | --- | --- | --- |");
+        foreach (var row in criticals)
+        {
+            var moved = FearChangesOn(row);
+            report.AppendLine(
+                $"| {row.Round} | {Text(row.Data, "Outcome", "AttackerName")} | {Text(row.Data, "Outcome", "TargetName")} | " +
+                $"{LongField(row.Data, "Outcome", "DamageDealt")} | " +
+                $"{(IsTrue(row.Data, "Outcome", "TargetDied") ? "yes" : "no")} | {moved} |");
+        }
+
+        report.AppendLine();
+    }
+
+    /// <summary>The quality band of a landed blow, tolerating an older trace that recorded only a glancing flag.</summary>
+    private static string QualityOf(TraceRow attack) =>
+        Text(attack.Data, "Outcome", "Quality")
+        ?? (IsTrue(attack.Data, "Outcome", "Glancing") ? "Glancing" : "Solid");
+
+    /// <summary>
+    /// How a draw turned its roll into its result, in the draw's own words. Falls back to the raw roll alone
+    /// rather than inventing a comparison, because a draw that recorded none has nothing to compare against.
+    /// </summary>
+    private static string DescribeDraw(TraceRow row) =>
+        Text(row.Data, "Comparison") is { Length: > 0 } comparison
+            ? comparison
+            : $"rolled {Text(row.Data, "RawRoll")}";
+
+    /// <summary>The fear an attack moved, rendered for a table cell. "none" when it moved none.</summary>
+    private static string FearChangesOn(TraceRow attack)
+    {
+        if (Property(attack.Data, "Outcome") is not { } outcome
+            || !outcome.TryGetProperty("FearChanges", out var list)
+            || list.ValueKind != JsonValueKind.Array
+            || list.GetArrayLength() == 0)
+        {
+            return "none";
+        }
+
+        var parts = list.EnumerateArray().Select(change =>
+        {
+            var name = Text(change, "CharacterName");
+            var before = LongField(change, "Before");
+            var after = LongField(change, "After");
+            return $"{name} {before}→{after}";
+        });
+        return string.Join("; ", parts);
+    }
+
+    /// <summary>Every character's final fear from the final-state snapshot, so departures keep the nerve they left with.</summary>
+    /// <remarks>
+    /// The characters live under the snapshot's <c>State</c> wrapper, not at its root. Reading the root
+    /// returned nothing at all, and because the morale table takes the UNION of this and the characters who
+    /// had fear events, the failure was invisible: the table still rendered, just silently missing everyone
+    /// whose nerve never moved. A gpt-5.4 run listed two of four characters and read as though Rowan and
+    /// Elara had been left out on purpose.
+    /// </remarks>
+    private static Dictionary<string, int> FinalFearByName(JsonElement? finalState)
+    {
+        var result = new Dictionary<string, int>(StringComparer.Ordinal);
+        if (!TryGet(finalState, out var state, "State")
+            || Property(state, "Characters") is not { ValueKind: JsonValueKind.Array } characters)
+        {
+            return result;
+        }
+
+        foreach (var character in characters.EnumerateArray())
+        {
+            var name = Text(character, "Name");
+            if (!string.IsNullOrEmpty(name))
+            {
+                result[name] = (int)LongField(character, "Fear");
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// What the rulebook stage cost this run, and — when an experimental selection mode was configured —
+    /// how it compared with sending the whole book. The figures come from the consultation events, so this
+    /// section is the run's own evidence rather than a claim carried in from elsewhere.
+    /// </summary>
+    private static void WriteRulebookEfficiency(StringBuilder report, IReadOnlyList<TraceRow> events, JsonElement? manifest)
+    {
+        var consultations = events.Where(e => e.EventType == "RulebookConsultation").ToList();
+        if (consultations.Count == 0)
+        {
+            return;
+        }
+
+        var count = consultations.Count;
+        var cacheHits = consultations.Count(c => IsTrue(c.Data, "CacheHit"));
+        var called = count - cacheHits;
+        var cardsSum = consultations.Sum(c => LongField(c.Data, "CardCount"));
+        var charsSum = consultations.Sum(c => LongField(c.Data, "TotalRequestChars"));
+        var inTokens = consultations.Sum(c => LongField(c.Data, "InputTokens"));
+        var citedSum = consultations.Sum(c => CountOf(c.Data, "CitedRules"));
+        var fallbacks = consultations.Count(c => Text(c.Data, "SelectionFallback") is { Length: > 0 });
+        var modes = consultations
+            .Select(c => Text(c.Data, "SelectionMode") ?? "WholeRulebook")
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        report.AppendLine("## Rulebook efficiency");
+        report.AppendLine();
+        report.AppendLine($"- Configured selection mode(s): **{string.Join(", ", modes)}**.");
+        report.AppendLine($"- Consultations: **{count}**; resolver actually called **{called}** time(s) ({cacheHits} served from cache).");
+        report.AppendLine($"- Cards supplied: **{Average(cardsSum, count)}** per consultation; cited: **{Average(citedSum, count)}**.");
+        report.AppendLine($"- Request size: **{Average(charsSum, count)}** characters per consultation.");
+        report.AppendLine(called == 0 || inTokens == 0
+            ? "- Resolver input tokens: not reported by the provider for this run."
+            : $"- Resolver input tokens: **{Average(inTokens, called)}** per resolver call ({inTokens} total).");
+        report.AppendLine($"- Selection fallbacks to the full bounded rulebook: **{fallbacks}**.");
+        report.AppendLine();
+        report.AppendLine(
+            "The standing measurement and the strategies evaluated against it are in " +
+            "`reports/rulebook-efficiency.md`; this section is only what this run itself cost.");
+        report.AppendLine();
+    }
+
+    // -------------------------------------------------------------------------------------------
     // Context health (v0.6): request sizes against the configured limits
     // -------------------------------------------------------------------------------------------
 
@@ -1880,9 +2284,11 @@ public static class RunReportWriter
                 "CharacterPassed" => $"**{Text(row.Data, "CharacterName")} holds back:** \"{Text(row.Data, "Reason")}\"",
                 "DmAdjudication" => TranscribeRuling(row),
                 "TargetResolved" => $"*[target — {Text(row.Data, "Note")}]*",
-                "RngDraw" =>
-                    $"*[{Text(row.Data, "Purpose")}: rolled {Text(row.Data, "RawRoll")} vs {Text(row.Data, "Threshold")} " +
-                    $"→ {Text(row.Data, "Result")}]*",
+                // Every draw authors its own Comparison, because only the draw knows what its roll was
+                // measured against. Rendering RawRoll against the generic Threshold field instead produced
+                // "rolled 99 vs 25 → critical" for a quality draw, whose Threshold is the top of the
+                // GLANCING band — a number at the opposite end of the roll from the band that actually won.
+                "RngDraw" => $"*[{Text(row.Data, "Purpose")}: {DescribeDraw(row)} → {Text(row.Data, "Result")}]*",
                 "EngineAction" => TranscribeEngineAction(row),
                 // A departure from active combat, in plain readable terms — never "fallen" for a survivor.
                 "CharacterSurrendered" => $"*— {Text(row.Data, "CharacterName")} surrenders and takes no further part in the fight (still alive)*",
@@ -1915,6 +2321,16 @@ public static class RunReportWriter
                 "PostResolutionOutputDiscarded" when string.Equals(Text(row.Data, "DiscardedKind"), "tool-call", StringComparison.Ordinal) =>
                     $"*[{Text(row.Data, "CharacterName")}'s turn was already resolved; the further " +
                     $"`{Text(row.Data, "ToolName")}` was discarded without effect: \"{CellText(Text(row.Data, "DiscardedContent"))}\"]*",
+                // Morale (v0.8). A point of nerve moving and a nerve actually breaking are separate lines,
+                // because only the second is something anyone in the room could see.
+                "FearChanged" => TranscribeFearChange(row),
+                "IntimidationAttempted" =>
+                    $"*— {Text(row.Data, "ActorName")} threatens {Text(row.Data, "TargetName")} openly, and it " +
+                    $"{(IsTrue(row.Data, "Succeeded") ? "tells" : "does not tell")}. Nothing else changes: " +
+                    $"{Text(row.Data, "TargetName")} keeps their weapon, their belongings and their turn*",
+                "AllySteadied" =>
+                    $"*— {Text(row.Data, "ActorName")} spends the turn steadying {Text(row.Data, "TargetName")}" +
+                    $"{(IsTrue(row.Data, "NoEffect") ? ", who had not lost their nerve — the turn buys nothing" : "")}*",
                 "TurnSkipped" => TranscribeTurnSkipped(row),
                 "TeamOutcomeEvaluated" => TranscribeTeamOutcome(row),
                 "ContextWindowSaturated" =>
@@ -1932,6 +2348,9 @@ public static class RunReportWriter
                 "UnstructuredSpeechAttempt" =>
                     $"*[{Text(row.Data, "CharacterName")} tried to speak in prose, not via `say` — " +
                     $"nudged; attempted: \"{Text(row.Data, "AttemptedText")}\"]*",
+                "SpeechNotHeard" =>
+                    $"*[{Text(row.Data, "CharacterName")} had already spoken this turn; not heard again: " +
+                    $"\"{Text(row.Data, "Unheard")}\"]*",
                 "TurnEnded" => $"*— {Text(row.Data, "CharacterName")}'s turn ends: {Text(row.Data, "Result")}*",
                 _ => null
             };
@@ -1942,6 +2361,25 @@ public static class RunReportWriter
                 report.AppendLine();
             }
         }
+    }
+
+    /// <summary>
+    /// One fear change, for the transcript. A crossing of the public threshold reads as something anyone
+    /// would notice; a change below it reads as the private bookkeeping it is, in brackets.
+    /// </summary>
+    private static string TranscribeFearChange(TraceRow row)
+    {
+        var who = Text(row.Data, "CharacterName");
+        var cause = Text(row.Data, "CauseDetail");
+
+        return Text(row.Data, "ScaredTransition") switch
+        {
+            "BecameScared" => $"*— {who}'s nerve goes, and everyone present can see it ({cause})*",
+            "RecoveredFromScared" => $"*— {who} has their nerve back and no longer looks afraid ({cause})*",
+            _ when IsTrue(row.Data, "Absorbed") =>
+                $"*[{who}'s nerve is unchanged at {Text(row.Data, "FearAfter")} — already at the limit ({cause})]*",
+            _ => $"*[{who}'s nerve: {Text(row.Data, "FearBefore")} → {Text(row.Data, "FearAfter")} ({cause})]*"
+        };
     }
 
     /// <summary>
@@ -2271,6 +2709,15 @@ public static class RunReportWriter
                     ("Argument", Text(d, "RecoveredArgument")));
                 yield return "";
                 yield return Quote($"**Model wrote (as prose):** {Text(d, "OriginalText")}");
+                break;
+
+            case "SpeechNotHeard":
+                yield return Bullets(
+                    ("Character", $"{Text(d, "CharacterName")} (`{Text(d, "CharacterId")}`)"),
+                    ("Already spoken", $"{Text(d, "SpeechActsAlready")} of {Text(d, "Allowance")} this turn"),
+                    ("Outcome", "recorded, not delivered to anyone"));
+                yield return "";
+                yield return Quote($"**Not heard:** {Text(d, "Unheard")}");
                 break;
 
             case "UnstructuredSpeechAttempt":

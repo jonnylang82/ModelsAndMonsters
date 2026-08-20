@@ -207,8 +207,12 @@ public sealed class DispositionExitEngineTests
         Assert.True(accepted.Accepted);
         Assert.Equal(CharacterDisposition.Surrendered, engine.State.RequireById(TestWorld.VarkId).Disposition);
 
-        // Two accepted state-changing actions on two turns: the offer, then the acceptance.
-        Assert.Equal(versionBefore + 2, engine.State.Version);
+        // Two accepted state-changing actions on two turns — the offer, then the acceptance — and then a
+        // third version for the consequence the acceptance had on somebody who was not party to it: Vark
+        // leaving the fight puts Skrit alone against two, so Skrit's outnumbering latch flips and his fear
+        // rises. That is exactly the v0.8 rule firing, not an extra action.
+        Assert.Equal(versionBefore + 3, engine.State.Version);
+        Assert.Equal(1, engine.State.RequireById(TestWorld.SkritId).Fear);
     }
 
     [Fact]

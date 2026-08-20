@@ -72,6 +72,13 @@ public enum EngineRejectionReason
     AbilityAlreadyActive,
     TargetAlreadyGuarded,
 
+    // Morale, intimidation and reassurance (v0.8).
+    TargetIsNotAnOpponent,
+    TargetIsNotAnAlly,
+    AlreadyAttemptedIntimidation,
+    IntimidationRequiresSpeech,
+    SpeechAddressedToSomebodyElse,
+
     UnsupportedAction
 }
 
@@ -117,6 +124,14 @@ public sealed record EngineResult
     /// </summary>
     public IReadOnlyList<OfferTransition> OfferTransitions { get; init; } = [];
 
+    /// <summary>
+    /// Every change to a character's fear this action caused, in order — from a critical blow, a heavy one,
+    /// a threat that landed, an ally's steadying word, or the moment the odds turned against them. Empty when
+    /// morale did not move. Recorded even when no randomness was involved, so a deterministic change to
+    /// authoritative state is never knowable only by its effect on a later number.
+    /// </summary>
+    public IReadOnlyList<FearChange> FearChanges { get; init; } = [];
+
     public static EngineResult Reject(GameAction action, GameState state, EngineRejectionReason reason, string message) =>
         new()
         {
@@ -131,7 +146,8 @@ public sealed record EngineResult
     public static EngineResult Accept(GameAction action, GameState before, GameState after, ActionOutcome outcome,
         IReadOnlyList<RngDraw>? rngDraws = null,
         IReadOnlyList<StatusEvent>? statusEvents = null,
-        IReadOnlyList<OfferTransition>? offerTransitions = null) =>
+        IReadOnlyList<OfferTransition>? offerTransitions = null,
+        IReadOnlyList<FearChange>? fearChanges = null) =>
         new()
         {
             Action = action,
@@ -141,7 +157,8 @@ public sealed record EngineResult
             Outcome = outcome,
             RngDraws = rngDraws ?? [],
             StatusEvents = statusEvents ?? [],
-            OfferTransitions = offerTransitions ?? []
+            OfferTransitions = offerTransitions ?? [],
+            FearChanges = fearChanges ?? []
         };
 }
 

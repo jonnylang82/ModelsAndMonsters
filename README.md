@@ -1,4 +1,4 @@
-# Models & Monsters — v0.7
+# Models & Monsters — v0.8
 
 A small experimental harness for autonomous LLM characters interacting inside a deterministic fantasy
 world through an LLM Dungeon Master.
@@ -41,6 +41,21 @@ The project has grown release by release from a single 1v1 duel (v0.1) into the 
   cannot perceive. See [Negotiated surrender](#negotiated-surrender-terms-not-declarations),
   [Abilities and status effects](#abilities-and-status-effects) and
   [Grounded answers](#grounded-answers-answerfacts).
+- **v0.8** — **morale and combat volatility**: an encounter-scoped `Fear` value (0–5) with a public
+  `Scared` status at 3, moved only by the engine and only for stated reasons; `intimidate_character` and
+  `steady_ally`, two actions made of speech aimed at one named person; and **critical hits** as the
+  opposite end of the same single quality draw that already produced glancing blows. Fear exerts pressure
+  and never chooses — a scared character still has to make a real surrender offer or open a real door. Also
+  a measured investigation into the Rulebook Resolver's token cost, in
+  [`reports/rulebook-efficiency.md`](reports/rulebook-efficiency.md). See
+  [Morale: fear, threats and steadying](#morale-fear-threats-and-steadying) and
+  [Attack quality](#attack-quality-one-draw-three-outcomes).
+
+**New in v0.8: [`docs/architecture.md`](docs/architecture.md)** — the structural companion to this file.
+It maps the components and the five model-driven agents, walks a character's turn end to end through every
+stage it passes (with diagrams), lists every configuration lever there is, and names the AI techniques the
+project uses with a pointer to where each one lives. Read it first if you are new to the codebase; this
+README explains *why* things are the way they are, that document explains *what* they are.
 
 See **[Version history and where to look](#version-history-and-where-to-look)** near the end of this
 file before starting work in an unfamiliar part of the codebase — it points at the original spec,
@@ -320,6 +335,17 @@ room for the prompt that was already too big.
 - **Not every provider reports a finish reason.** An OpenAI run returned 109 responses with `FinishReason`
   null on every one, which left the finish-reason check permanently false. Detection falls back to usage when
   no reason is given.
+- **A third cause looks like the first and is neither (v0.8).** The DM's adjudication runs on a small
+  400-token cap (`AdjudicationOutputTokens`) **where the window is shared**, because every output token
+  reserved is an input token surrendered on the call carrying the largest input. A live qwen run hit that cap
+  with 1,500 tokens of window still free, having spent all 400 on visible chain-of-thought and produced no
+  tool call. There, raising it would not help — a model thinking out loud fills whatever it is given — so the
+  retry path handles it instead: a toolless truncated reply becomes a tool error, and the re-ask recovered in
+  63 tokens. **On a hosted provider the cap does not apply at all**: output is budgeted separately from a far
+  larger input window, so the reservation costs the request nothing and the cap buys nothing while a
+  truncated deliberation costs a worse ruling. Two Haiku runs truncated three adjudications between them,
+  each part-way through checking preconditions. `AdjudicationOutputBudget` reads
+  `BindingContextWindow` — the same signal as the history budget.
 - The **character system prompt is ~45% of every character request**, sent every turn to every character.
   Check its size before anything else: it grew 28% across v0.7 and jammed `character.decide` against the
   ceiling until it was compressed back.
@@ -336,6 +362,115 @@ room for the prompt that was already too big.
 4. Only if neither applies — the content genuinely needs to be that large (e.g. a much bigger
    scenario, many more characters or rule cards) — raise `ContextWindow`, and then re-check with
    `ollama ps` whether the model still fits fully on the GPU at the new size before calling it done.
+
+### `ContextWindow` is a local-model setting, and only binds where the provider takes it (v0.8)
+
+**Only Ollama receives a context window.** It takes `num_ctx` per request; OpenAI and Anthropic fix their
+window per model and never see the number — `ChatOptionsFactory` drops it and reports it dropped. So a
+`ContextWindow` inherited from `Agents:Default` is real on a local run and **a fiction on a hosted one**.
+
+The fiction was not harmless. A gpt-5.4 run with every agent on the Ollama-tuned `8192` ran **eleven history
+summarisations in six rounds** — roughly one every other turn — each replacing what characters actually said
+and did with a recap, and each paying a model call, to fit a ceiling the provider would never have enforced.
+Nothing said so: the setting was dropped from the request and forgotten.
+
+- `AgentModelProfile.BindingContextWindow` is the window that **actually bounds a request** — the configured
+  one where the provider takes it, `null` otherwise. History summarisation, the length-finish diagnosis and
+  the rulebook startup guard all read this; `ContextWindow` stays as configured so `run.json` still records
+  what was asked for.
+- The startup guard had the same bug in reverse: it would have **refused to start** a hosted run whose
+  rulebook did not fit a window that model does not have.
+- A run now **says which regime it is in** at startup, naming any agent whose configured window is not being
+  applied. Both regimes are fine; neither should be arrived at by accident.
+- `Harness:EnforceContextWindowOnHostedModels` (default `false`) holds hosted models to the configured window
+  anyway. **Turn it on to level the field** — a hosted model that never has to forget anything is not
+  answering the same question as a local one working inside 8k, so when the comparison is about playing a
+  long fight well, the handicap belongs on both sides. Leave it off when the question is what each provider
+  can do at its best.
+
+### The provider's own tool-call parser can 500, and a retry has to actually re-sample (v0.8)
+
+`qwen3.5` emits tool calls as XML, and **Ollama's own parser** sometimes rejects what the model produced —
+`element <function> closed by </parameter>` — returning **HTTP 500** rather than degrading to text. This is
+upstream and open ([ollama#14834](https://github.com/ollama/ollama/issues/14834), with
+[#17276](https://github.com/ollama/ollama/issues/17276) closed as a duplicate). Nothing on our side can
+prevent it: the reply never arrives, so a client-side XML salvage has nothing to salvage.
+
+One live run made the whole shape of the problem visible, because it contained **both outcomes at once**:
+
+| Agent | Temperature | Attempts | Result |
+| --- | --- | --- | --- |
+| Elara (`character.decide`) | 0.8 | 500, 500, **stop** | recovered on attempt 3 |
+| IntentParser (`parse-intent`) | 0 → old floor 0.1 | 500, 500, 500 | **run dead at round 5** |
+
+Five 500s against 1,263 successful calls (0.4%), every one the same structural malformation. Three things
+followed:
+
+- **A retry must re-sample, and 0.1 is not re-sampling.** The retry moved the seed and lifted the
+  temperature to 0.1, which is barely off greedy — the distribution did not move, so the model reproduced
+  the identical malformed call three times. The floor now **escalates**: 0.4 on the second attempt, 0.8 on
+  the third. The first attempt is untouched, so a clean run still replays identically.
+- **An optional component must not be able to end a run.** The intent parser is a convenience that salvages
+  a prose reply, and it had no failure path at all: the exception unwound through the turn, the round loop
+  and the run. It now returns null on failure and the turn falls back to the nudge path — which is exactly
+  how every character was handled before the parser was written.
+- **Retries are legible in the trace.** `ModelRequest` and `ModelError` carry an `Attempt` number. The
+  resolved sampling options were always recorded (under `RequestedOptions`); what was missing was any
+  marker that a call *was* a retry, so telling a re-send from a fresh call meant knowing that the seed is
+  offset by the attempt number.
+
+Escalating also changes the request, which matters beyond sampling:
+[ollama#17825](https://github.com/ollama/ollama/issues/17825) records that re-sending the **identical**
+request after such a 500 could wedge the server outright on a poisoned prompt cache — fixed in
+[ollama#17883](https://github.com/ollama/ollama/pull/17883), and only ever reproducible **with thinking
+enabled**, which is why this harness (reasoning off everywhere) has never seen it.
+
+### Reasoning written beside a tool call is dropped, not forbidden (v0.8)
+
+With reasoning off, a model thinks on the page: it reaches its tool call through a paragraph of
+deliberation, and providers put that text and the call in **one assistant message**. The turn-end prune kept
+such a message whole because it "carries a tool call", so the deliberation rode along for the rest of the run
+— a median of **310 characters per turn**, on roughly a third of all turns in one live run, in a history the
+summariser then pays to compress.
+
+The prune now keeps the call and sheds everything else the message carried. It is **dropped rather than
+suppressed at the source** on purpose: that paragraph is how a non-reasoning model reaches its decision, and
+forbidding it in the prompt would be asking the model to think less. It has done its work by the time the
+call is made; what it must not do is persist.
+
+### A character's voice is a world rule, not a harness limit (v0.8)
+
+`MaxSpeechActsPerTurn` is **2** since v0.8, and the reason is the retry path rather than chattiness. A
+character that speaks as part of an action attempt has spent its voice — and when the Dungeon Master refuses
+that attempt, it is asked to try again with nothing left to say. Every occurrence in a live run was that
+shape: Skrit said *"Elara, this spear isn't going to hurt you!"* with a compound action that was refused,
+reworded the action, and had *"Eat this!"* swallowed. The words that went with the failed attempt were really
+said and cannot be given back, so the honest fix is to allow the second breath a second attempt implies.
+
+Exceeding the allowance now traces **`SpeechNotHeard`**, not `HarnessLimitReached`. A harness limit means
+something went wrong; a character running out of breath is the fiction working. Filing it under the former
+made a good run read as a troubled one — three of one run's four "harness limits" were this rule behaving
+exactly as designed.
+
+### A local-model accommodation must not become a global rule (v0.8)
+
+Three separate defects in this release were the same mistake wearing different clothes, and it is worth
+recognising the shape before adding a fourth:
+
+| Accommodation | Why it exists | What it was doing everywhere |
+| --- | --- | --- |
+| `ContextWindow` bounding history | Ollama takes `num_ctx` | Summarising hosted runs to fit a ceiling the provider never applies |
+| The rulebook startup guard | Same window arithmetic | Would have refused to start a hosted run over a window that does not exist |
+| `AdjudicationOutputTokens` | On a shared window, output tokens are input tokens surrendered | Truncating hosted adjudications mid-reasoning for no gain |
+
+Each was tuned for `qwen3.5:9b` inside 8k, was correct there, and was silently wrong on a hosted provider
+whose input window is far larger and whose output budget is separate. All three now read
+`AgentModelProfile.BindingContextWindow` — **the window that actually bounds a request, or null when nothing
+the harness knows about does.**
+
+Before adding a knob that compensates for a model, ask which providers the compensation is *true* for, and
+gate it on a capability rather than applying it to everyone. `ProviderCapabilities` is the place that
+knowledge belongs.
 
 ### Dungeon Master context projections
 
@@ -466,6 +601,24 @@ further lever not yet wired.
 The scenario lives in `src/ModelsAndMonsters/scenario.json`, and prompts are plain markdown in
 `src/ModelsAndMonsters/Prompts/Templates/`. Each prompt is content-hashed into `run.json` so a run
 can be tied to the exact prompt text that produced it.
+
+### What each model actually does, before you spend an hour on a run (v0.8)
+
+Measured across this release's live runs on the same scenario and the same prompts. Model behaviour is the
+main variable in this project, and the failure modes barely overlap — **run any change across at least two
+of these before believing it.**
+
+| | `qwen3.5:9b` (Ollama) | `gpt-5.4` | `claude-haiku-4-5` |
+| --- | --- | --- | --- |
+| Tool-call discipline | Frequently replies in prose; 16 intent-parses in one 11-round run | Clean | Clean — **zero** prose replies across three runs, 100+ calls |
+| Provider failures | 500s on its own malformed tool-call XML (~0.4% of calls) | none seen | none seen |
+| Adjudication style | Deliberates in prose when uncertain | Calls the tool immediately (largest reply seen: 122 tokens) | Deliberates in headed, bulleted analysis — needs the room |
+| Speech | Short, loud, repetitive across rounds | Terse, escalating, almost scripted | Longest and most varied; negotiates unprompted |
+| Watch for | Context exhaustion, malformed arguments, repetition loops | Little; it is the quiet one | Output length on adjudication, not truncation |
+
+The two practical consequences: **qwen is the model that finds harness bugs** (every serialisation and
+context defect in v0.8 came from it), and **Haiku is the model that finds prompt bugs** (it does what it is
+told, so when it does something odd the prompt said so).
 
 ## Output
 
@@ -638,6 +791,95 @@ never become a second combat path with its own dice. `RngDraw` now records `Base
 value, application order, whether it was consumed) as well as a readable note — so an effective chance
 can be recomputed exactly rather than parsed out of prose. Modifier order is *fixed*, not discovered
 (`Rallied`, then `OffBalance`), so two runs with the same statuses reach the same recorded order.
+
+## Morale: fear, threats and steadying
+
+Every character carries an encounter-scoped **`Fear`** from 0 to 5. It is authoritative engine state on
+`Character.Fear`, it moves only through `GameEngine.ApplyFear`, and every change names a cause from the
+closed `FearChangeCause` set and produces a `FearChanged` trace event — including a change the clamp
+absorbed, and including changes no die was involved in.
+
+At **3 or above** a character is publicly **`Scared`**. That is a real `StatusEffectInstance` with a new
+`StatusExpiryRule.WhileConditionHolds`, so the turn-upkeep sweep never touches it: the engine applies and
+removes it as the number crosses the threshold, and nothing else may. The status exists so the public
+shadow of fear can never disagree with the number it shadows.
+
+**Fear rises by one** when a surviving character takes a critical hit, when one blow takes at least a
+quarter of their maximum health, when they first find themselves outnumbered among the *active*
+combatants, and when an enemy's `intimidate_character` tells. A blow that is both critical and heavy
+frightens once, recorded as `CriticalAndLargeHitReceived` — the causes are combined, never counted twice.
+
+**Fear falls by one** when a character lands a critical hit of their own, when an ally spends a turn on
+`steady_ally`, and when Vark's existing Rally Grunt is used on them (its v0.7 hit-chance effect is
+untouched; the steadying is added alongside it).
+
+### The information boundary
+
+This is the part worth being careful about when extending it:
+
+| Who | Gets |
+| --- | --- |
+| The character themselves | the exact number, in their turn context and in an `AnswerFacts` answer |
+| Everyone else present | only the `Scared` status, as "*X* looks scared and increasingly concerned with survival" |
+| The Dungeon Master | the `Scared` status in the snapshot, and **no number at all** |
+| The trace, report and observer UI | everything — they are experiment artefacts, not characters |
+
+A fear change that does **not** cross the threshold creates no public fact and reaches nobody, which is
+what stops an opponent inferring the value by counting events.
+
+### Outnumbering is a latch, not a check
+
+`Character.IsOutnumbered` is authoritative state, reconciled once per accepted action in
+`GameEngine.ReconcileOutnumbering`. Fear rises on the *transition* into being outnumbered, so standing
+outnumbered for five rounds is one fact five times over and frightens nobody further. Parity genuinely
+restored clears the latch, so it can fire again later. It is seeded at construction from the opening state
+and raises no fear — a character the scenario placed at bad odds has not made a transition. A character who
+has left the fight keeps the latch and the fear they left with.
+
+### Fear compels nothing
+
+This is the design constraint, not a nicety. A scared character is handed a strong, explicitly non-binding
+instruction ("Seriously consider escaping, surrendering, defending, seeking reassurance … but the choice
+remains yours") and then decides for itself. There is no panic roll, no forced action, no attack penalty,
+and no path by which fear surrenders or escapes anybody: yielding still needs a concrete offer *and* an
+acceptance, and leaving still needs the door opened and then walked through. `MoraleRegressionTests` holds
+that line.
+
+### Two actions made of speech
+
+`intimidate_character` and `steady_ally` are the first actions defined as *speech aimed at one person*.
+Recognising that structurally, rather than by reading the words, needed one addition: an optional
+**`addressed_to`** field beside `utterances` on the character tools. The speaker declares who they were
+talking to; the engine validates that the action's target matches, and refuses a mismatch **before any
+draw**. When no addressee is declared, the DM's binding stands unchallenged. Nothing ever reads the words.
+
+Intimidation makes exactly one seeded draw against a base 35%, modified only by state — the target's
+existing fear (+10 each), whether they are outnumbered (+15), whether they are badly wounded or worse
+(+10, using the project's one `HealthBands` definition), and whether the intimidator is themselves Scared
+(−10) — clamped to 10–90. Eloquence, length, punctuation and model identity carry no modifier at all, and
+`What_was_said_never_reaches_the_odds` asserts it. Each actor may try it on each enemy **once per
+encounter**, spent whether it succeeds or fails, and the affordance is withdrawn from the DM's tool set
+once there is nobody left to try it on.
+
+## Attack quality: one draw, three outcomes
+
+v0.7 rolled to hit and then rolled again for a glancing blow. v0.8 replaces that second roll rather than
+adding a third: **one quality draw** selects among all three bands.
+
+| Raw quality roll | Result | Post-armour damage |
+| --- | --- | --- |
+| 1–25 | Glancing | halved (existing rounding) |
+| 26–75 | Solid | unchanged |
+| 76–100 | Critical | doubled |
+
+Armour is subtracted *before* the multiplier and a Defending status *after* it, so a blow armour stopped
+stays stopped and a braced guard still turns aside its point. The draw's purpose in the trace changed from
+`attack.glancing-check` to `attack.quality-check`; `CombatOptions.CriticalHitChance` configures the high
+band and `0` removes it (`CombatRules.NoGlancing` sets both bands to zero, which is what "deterministic
+damage" means in a scripted test).
+
+Note for tests: `ScriptedRng.Solid` is **50**, not 100. Under three bands a maximum roll is a *critical*
+hit, so a test meaning "no quality variance" has to say so in the middle of the range.
 
 ## Grounded answers: `AnswerFacts`
 
@@ -892,6 +1134,20 @@ from afterwards), or attempt `steal_item` (one seeded RNG roll, `Combat:BaseStea
 container (its own body — narrated as a body, never as an "open container"). An equipped weapon can never
 be given, dropped or stolen.
 
+**An item reference that names two items names neither (v0.8).** Characters, objects, exits and container
+contents have always reported *ambiguity* separately from *not found*, so the engine could refuse with
+"say which one" rather than guess. A character's own inventory did not: it ran a chain of first-match
+lookups and silently returned whichever item sat first. A live run found the gap — Vark carried two purses
+both reading `Small Purse of Gold Coins`, qualified `(the runt's)` and `(the captain's)`, Rowan tried to
+steal "Vark's purse", and the Dungeon Master **spent its entire adjudication output budget reasoning aloud
+about which one was meant** instead of calling a tool ("But which purse? The intent doesn't specify"). It had
+diagnosed the problem correctly; the engine simply offered it no way to say so, and would have handed over a
+purse the reference did not single out. `ItemReference.Resolve` is now the one rule for both inventories and
+containers: id first (never ambiguous), then the **qualified** display name — which is what keeps two
+identical purses referenceable at all — then the plain name, which is where ambiguity is reported. The
+refusal **lists the qualified alternatives**, because a bare "that is ambiguous" hands a model back the same
+words it just used.
+
 **Informational-basis gates (both `steal_item` and `take_item`).** A character can only reach for an item
 it has a legitimate reason to know is there — having seen it carried/taken/given/dropped, opened or
 inspected the container, known it from backstory, or been told of it. This is enforced *authoritatively*,
@@ -925,14 +1181,43 @@ cards actually sent, the resolver's raw request/response, validation outcome, ca
 traced, and the report's **Rulebook Consultations** section shows the supported/unsupported split and
 confirms request size stays flat across a run rather than growing with the number of rounds played.
 
+**v0.8 stopped asking the resolver to copy the card back.** Its schema (`guidance-v2`) now asks only for
+`supported`, `candidateActions`, `citedRules` and `unsupportedReason`; the consultant fills the bindings,
+preconditions, turn cost, randomness, visibility and behaviours from the cited cards themselves
+(`RulebookConsultant.Hydrate`). That makes the guidance the rulebook's own words rather than a model's
+paraphrase of them — and it decouples the reply's length from the cards', which was not theoretical: v0.8
+lengthened one card and **8 of 16 resolver replies in the next live run truncated mid-JSON** at the
+output cap, each surfacing as a refusal of an ordinary attack.
+
+**The resolver is shown only what an action IS and IS NOT.** Since hydration fills the consequence fields
+from the cited card, sending them to the resolver was asking it to read text it structurally cannot use —
+six of a card's ten fields. `RuleCard.ToResolverBlock()` renders summary, description, preconditions and
+exclusions only, which took the card text from 31,245 to 18,261 characters and a consultation from ~8,200
+to **~5,260 estimated input tokens**, with no model call and no recall risk. That mattered for more than
+cost: at 8,200 the request left ~127 tokens of an 8,192-token window to reply in, and a live 12-round run
+lost 5 of 57 consultations to replies truncated mid-JSON. `RulebookRequestBudget` now refuses to start a run
+whose book cannot fit the resolver's window with room to answer, because that failure is silent otherwise.
+
+**v0.8 also added experimental card selection, behind `Harness:RulebookSelectionMode`** (default
+`WholeRulebook` — the path described above, unchanged). `CompactIndex` shows a model one line per card
+and resolves with only the ids it picks; `Embedding` retrieves a top-K by similarity
+(`RulebookEmbeddingModel`, `RulebookSelectionTopK`); `StructuredRouting` selects by declared metadata for
+a caller that already knows the action family. Every one of them falls back to the whole bounded rulebook
+when it is not confident, and traces its ids, its reasons, its declared-link expansions and any fallback.
+The measured comparison — including which of them quietly drops the card a decision turns on — is in
+[`reports/rulebook-efficiency.md`](reports/rulebook-efficiency.md).
+
 ## Randomness and seeds
 
 Combat now rolls dice. Each character has a hidden `HitChance` (scenario stat, default 75): an attack
 rolls d100 and lands when the roll is at or under the chance, otherwise it misses. A landed hit rolls
-again for a glancing blow (`Combat:GlancingBlowChance`, default 25), which deals half damage. A theft
-attempt (`steal_item`) rolls once against `Combat:BaseStealChance`. Misses, glancing blows and theft
-chances are narrated only in-world, never shown to characters or narrated as a number. All rolls go
-through a single `IRng`, so nothing is random except through it.
+**once** for quality, and that one roll selects among all three bands — glancing
+(`Combat:GlancingBlowChance`, default 25, half damage), solid, or critical
+(`Combat:CriticalHitChance`, default 25, double damage). A theft attempt (`steal_item`) rolls once
+against `Combat:BaseStealChance`, and an open threat (`intimidate_character`) rolls once against
+`Combat:BaseIntimidationChance` plus modifiers read only from the state of the fight. Every one of
+these chances is narrated only in-world, never shown to characters or narrated as a number. All rolls
+go through a single `IRng`, so nothing is random except through it.
 
 One master seed governs the whole run — the dice and every agent's model sampling (the Dungeon Master,
 each character, and — when enabled — the intent parser, history summariser and Rulebook Resolver):
@@ -946,7 +1231,8 @@ to the recorded value.** The per-agent seeds are derived from the master, so the
 fixed run, random under a random run, and always distinct from one another.
 
 Every RNG draw is traced in full — not just the final hit-or-miss. Each `RngDraw` event records the
-action and actor/target that caused it, what it was selecting (hit-or-miss, glancing-or-solid), the
+action and actor/target that caused it, what it was selecting (hit-or-miss, the three quality bands and
+their exact ranges, a threat telling or not), the
 candidate range, the raw roll, the **base** chance, every **modifier** applied to reach the effective
 threshold, the result, the seed, and the generator's sequence position before and after the draw. That is
 enough to reconstruct and compare any draw in isolation, and two runs with the same accepted actions and
@@ -977,10 +1263,12 @@ src/ModelsAndMonsters/
     Agents/          conversations, character + DM agents, declaration-only tools
     AI/              model profiles (with per-agent inheritance), provider capabilities, chat client factory
     Configuration/   options and scenario definitions (teams, per-character profiles, exits, abilities, rulebook flags)
-    Domain/          characters (team, disposition, abilities), weapons (with stable ids), items, injuries,
-                     room, exits, status effects, surrender offers and agreements, game state
-    Engine/          game actions, results, combat rules, RNG draw records + modifiers, turn upkeep,
-                     team terminal condition, deterministic in-world refusal rendering (v0.7), the engine
+    Domain/          characters (team, disposition, abilities, fear), weapons (with stable ids), items, injuries,
+                     room, exits, status effects, surrender offers and agreements, intimidation attempts,
+                     the one health-band definition (v0.8), the morale rules (v0.8), game state
+    Engine/          game actions, results, combat rules (the three-band quality draw + intimidation
+                     modifiers, v0.8), RNG draw records + modifiers, turn upkeep, team terminal condition,
+                     deterministic in-world refusal rendering (v0.7), the engine
     Knowledge/       the knowledge ledger — facts, sources, per-character learned records, backstory seeding
     Orchestration/   simulation runner (fixed turn order, team terminal check), turn coordinator,
                      narration log, the deterministic AnswerFacts projection (v0.7)
@@ -989,12 +1277,19 @@ src/ModelsAndMonsters/
                      per job — see "Version history" below for why)
     Randomness/      IRng (with sequence position), seeded rng, master-seed + per-agent derivation
     Rulebook/        rule cards, retrieval, the resolver, guidance validation and caching (v0.6)
+      Selection/     experimental card-selection strategies, the labelled corpus and its evaluator (v0.8) —
+                     all behind Harness.RulebookSelectionMode, which defaults to the shipped whole-rulebook path
     Tracing/         trace sink, event models, tracing chat client, run artefacts, report writer
 src/ModelsAndMonsters.Web/   live SSE-driven observer UI (React client under client/)
 tests/ModelsAndMonsters.Tests/
-docs/prompts/        the original build spec for each release (build_v0_1.md … build_v0_7.md)
-reports/             field notes and known-issues write-ups per release — see below
+docs/prompts/        the original build spec for each release (build_v0_1.md … build_v0_8.md)
+reports/             field notes and known-issues write-ups per release — see below, plus
+                     rulebook-efficiency.md (v0.8): the measured comparison of rule-selection strategies
 ```
+
+Morale (`Domain/FearRules.cs`) is the third: `Character.Fear` is the value, `StatusEffectKind.Scared` is
+its public shadow, and `GameEngine.ApplyFear` is the only thing that moves either. A new reason for fear to
+move means a new `FearChangeCause` and a call to that one method — never a second way to write the number.
 
 The ability book (`Domain/Ability.cs`) and the rule catalog (`Rulebook/RuleCatalog.cs`) are the two places
 a new ability touches: a definition with one `AbilityEffectKind`, a concrete handler in `GameEngine`, and a
@@ -1008,6 +1303,17 @@ Each release started from a spec in `docs/prompts/build_v0_<n>.md` — read the 
 you're extending *before* changing its area, since prompts and validation are often tuned around
 exact wording that isn't obvious from the code alone.
 
+v0.8 also added two more kinds of document:
+
+- [`docs/architecture.md`](docs/architecture.md) — components, the five agents, a character's turn end to
+  end, every configuration lever, and the AI techniques used, named. The best starting point for anyone new
+  to the codebase.
+- [`reports/rulebook-efficiency.md`](reports/rulebook-efficiency.md) — a measured comparison of four
+  rule-selection strategies against a labelled corpus, reproducible from
+  `dotnet run --project src/ModelsAndMonsters -- --rulebook-eval`. Read it before touching the rulebook
+  stage: it says which strategy is worth implementing next and, more usefully, which one looks attractive
+  and quietly drops the card a decision turns on.
+
 After each release, two write-ups were kept in `reports/`:
 
 - `v0_<n>_notes.md` — real dialog and emergent behaviour pulled from actual run traces (what the
@@ -1020,6 +1326,22 @@ After each release, two write-ups were kept in `reports/`:
   and the fix pattern (harness-side correction + prompt hardening, never trust-and-hope) generalises.
 
 A few things worth knowing that aren't obvious from reading any single file:
+
+- **An optional component must never be able to end a run.** The intent parser exists to salvage a reply a
+  character malformed; everything it does was survivable before it was added. It had no failure path, so
+  when its provider returned 500 the exception unwound through the turn, the round loop and the run
+  (v0.8, `reports/v0_8_issues.md` §11). Every convenience component is worth checking for this.
+- **A retry that does not genuinely re-sample is not a retry.** The transient-retry path moved the seed and
+  lifted temperature to 0.1 — near-greedy — and reproduced the identical malformed reply three times. One
+  live run contained both outcomes at once: an agent at 0.8 recovered on its third attempt while the
+  temperature-0 agent did not recover at all.
+- **Prompt-shaped guarantees are prompts; enforce anything that must hold on structured state.** v0.8 added
+  three more deterministic guards for meaning the deciding component cannot see (see §4.4 of
+  `docs/architecture.md`), and every one of them exists because a model reasoned correctly from what it had
+  and still got the wrong answer.
+- **Read `reports/v0_8_notes.md` for what a natural run sounds like** before concluding a model is
+  misbehaving. Several things that look like bugs — a goblin attacking his own captain, a character
+  announcing that he is muttering to himself — are personas and declared fields working exactly as designed.
 
 - **The Dungeon Master never carries a growing conversation.** Every task — narrate, answer, adjudicate
   — runs on a fresh *projection* (system prompt + only that task's context), because measured evidence
@@ -1043,6 +1365,27 @@ A few things worth knowing that aren't obvious from reading any single file:
   process with its own full copy of the model weights** plus its own KV cache — there is no
   cross-process weight sharing — so two loaded instances just double VRAM pressure rather than letting
   two context sizes share one resident model.
+- **v0.8's prompt additions cost the character context roughly 340 tokens, and the window is the binding
+  constraint.** A v0.7 live run peaked at 8,160 tokens of character request against an 8,192 window; the
+  smoke run for v0.8 peaked at 7,899 with the nerve section in, which is close enough that the section was
+  deliberately trimmed to about half its first draft before release. If you add anything to
+  `character.system.md`, measure the peak `InputTokens` in a real run before assuming it is free — and
+  trim rather than raising `ContextWindow`, because raising it takes the model out of memory.
+- **`--rulebook-probe "<intent>"` asks the live resolver what it makes of one phrasing, in seconds.** Card
+  misroutes are otherwise only visible buried in a forty-minute run's trace, and they are the single most
+  likely thing to be wrong after adding an action. v0.8 shipped with two: "I catch Elara's eye and tell her
+  to hold the line" routed to **intimidation**, and "I level my sabre at Rowan and tell him what is coming"
+  routed to **attack** despite the attack card explicitly excluding a levelled weapon that strikes nothing.
+  Both were fixed by card authoring, not by keywords — each card now leads with the SIDE it is aimed at and
+  names the other as what it is not, the pair moved up beside the rest of the combat family instead of
+  trailing at the end of twenty-one cards, and the attack card's exclusion now says where such an intent
+  goes rather than only that it is not an attack. Probe after any card edit.
+- **A resolver reply can come back malformed because the model wrapped its JSON in a think block**, which
+  `ModelText.Clean` strips, leaving a stray `{`. It is pre-existing (v0.7 runs show it too, at a low rate),
+  it fails safe as an in-world refusal, and it happens *despite* `Effort: none` and `Thinking: false` being
+  correctly applied to that agent — verified in `run.json`. If a specific intent reproduces it, that is the
+  cause; look at the raw reply (`--rulebook-probe` prints it for a malformed outcome) before suspecting the
+  card or the schema.
 - **A weak or small model reliably tries things the engine doesn't support**, and the fix is almost
   always to make the boundary explicit in the prompt/state text (so the model stops discovering it by
   failing repeatedly) rather than to add the mechanic reactively. Past examples: passing items hand to

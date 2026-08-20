@@ -196,8 +196,21 @@ public sealed class AnswerFactsProjector : IAnswerFactsProjector
                 : $"You have already used {ability.Name} in this fight and have nothing left of it.");
         }
 
+        // The asker's own nerve, with the exact figure: it is theirs, and this is one of the two places it is
+        // ever projected (the other is their turn context).
+        lines.Add(asker.IsScared
+            ? $"Your nerve has gone: fear {asker.Fear} out of {FearRules.Maximum}, and it shows on you. You are " +
+              "increasingly concerned with survival — escaping, yielding, guarding, or asking a companion to " +
+              "steady you are all worth weighing — but nothing forces your hand."
+            : $"Your nerve: fear {asker.Fear} out of {FearRules.Maximum}.");
+
         foreach (var status in state.StatusesOn(asker.Id))
         {
+            if (status.Kind == StatusEffectKind.Scared)
+            {
+                continue;
+            }
+
             var source = state.FindById(status.SourceCharacterId)?.Name ?? status.SourceCharacterId;
             lines.Add($"Affecting you now: {status.Describe()} (put there by {source}).");
         }
@@ -254,6 +267,14 @@ public sealed class AnswerFactsProjector : IAnswerFactsProjector
 
                 foreach (var status in state.StatusesOn(other.Id))
                 {
+                    // Somebody else's nerve is answered by what a face shows and nothing more. The number
+                    // behind it is not observable, so it is not projected — asking about it can never reveal it.
+                    if (status.Kind == StatusEffectKind.Scared)
+                    {
+                        lines.Add($"{other.Name} looks scared and increasingly concerned with survival.");
+                        continue;
+                    }
+
                     var source = state.FindById(status.SourceCharacterId)?.Name ?? status.SourceCharacterId;
                     lines.Add($"{other.Name} is {status.Describe()} (put there by {source}).");
                 }

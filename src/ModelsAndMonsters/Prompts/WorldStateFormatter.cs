@@ -96,7 +96,8 @@ public sealed class WorldStateFormatter
         {
             builder.AppendLine("- A container's listed contents, and any exterior marking marked FOR YOU ONLY, are yours alone. Open or closed is public; what is inside is not, and opening does not make it so. You are told exactly what the character you are serving knows — never hand them contents or a marking they have not discovered.");
         }
-        builder.AppendLine("- ACTIONS THE WORLD CAN RESOLVE: attack_character, use_item, use_ability, defend, open_container, take_item, inspect_object, open_exit, escape_encounter, offer_surrender, accept_surrender, give_item, drop_item, steal_item. Nothing else exists.");
+        builder.AppendLine("- ACTIONS THE WORLD CAN RESOLVE: attack_character, use_item, use_ability, defend, open_container, take_item, inspect_object, open_exit, escape_encounter, offer_surrender, accept_surrender, give_item, drop_item, steal_item, intimidate_character, steady_ally. Nothing else exists.");
+        builder.AppendLine("- A Scared status is what a face shows, not a number. There is no morale figure here to reveal, and being Scared compels nobody: a frightened character still chooses, and yielding or leaving still take their own actions.");
 
         return builder.ToString().TrimEnd();
     }
@@ -229,6 +230,14 @@ public sealed class WorldStateFormatter
         return string.Join("; ", statuses.Select(s =>
         {
             var source = state.FindById(s.SourceCharacterId)?.Name ?? s.SourceCharacterId;
+            // Nerve is nobody's doing but the fight's, so naming a source for it would read as though somebody
+            // put it there. It is reported as what it is: a visible state, with no number attached.
+            if (s.Kind == StatusEffectKind.Scared)
+            {
+                return "Scared — visibly afraid and increasingly concerned with survival. It compels nothing: " +
+                       "they still choose their own actions, and yielding or leaving still take their own actions";
+            }
+
             var partner = s.Kind is StatusEffectKind.Guarding
                 ? PartnerName(state, s)
                 : null;
@@ -346,6 +355,7 @@ public sealed class WorldStateFormatter
                 : $"{character.Weapon.Name}\nDamage: {character.Weapon.Damage}",
             ["inventory"] = FormatBulletList(character.Inventory.Select(FormatItem)),
             ["abilities"] = FormatAbilitiesForSelf(character.Abilities),
+            ["morale"] = FormatMoraleForSelf(character),
             ["statuses"] = FormatStatusesForSelf(character, state),
             ["offers"] = FormatOffersForSelf(character, state)
         }).TrimEnd();
@@ -371,6 +381,34 @@ public sealed class WorldStateFormatter
             var what = definition is null ? "" : $" {definition.Description}";
             return $"- {a.Name} ({uses}{spent}).{what}";
         }));
+    }
+
+    /// <summary>
+    /// A character's own nerve, as a plain scale and — once they are Scared — a strong but explicitly
+    /// non-binding pull toward staying alive.
+    /// </summary>
+    /// <remarks>
+    /// The exact number goes only here, to the one person entitled to it. The instruction is deliberately
+    /// worded as pressure rather than command: fear in v0.8 must never choose an action, and a line that
+    /// said "you flee" would hand the mechanic the very agency the design is trying to keep with the model.
+    /// The options it lists are the ones the world can actually resolve, so a frightened character is not
+    /// pushed toward attempts the engine will refuse.
+    /// </remarks>
+    private static string FormatMoraleForSelf(Character character)
+    {
+        var scale = $"{character.Fear} out of {FearRules.Maximum}";
+        if (!character.IsScared)
+        {
+            return character.Fear == FearRules.Minimum
+                ? $"Steady. Fear {scale} — nothing has shaken you yet."
+                : $"Shaken, but holding. Fear {scale}.";
+        }
+
+        return $"SCARED. Fear {scale}.\n" +
+               "You are scared and increasingly concerned with survival. Seriously consider escaping, " +
+               "surrendering, defending, seeking reassurance from a companion, or otherwise protecting your " +
+               "life — but the choice remains yours, and you may still fight if that is what you decide. " +
+               "Everyone in the room can see it on you.";
     }
 
     /// <summary>
@@ -400,6 +438,10 @@ public sealed class WorldStateFormatter
                 StatusEffectKind.Defending =>
                     "- Your guard is up: the next blow that lands on you will do less harm. It falls away when your " +
                     "next turn begins.",
+                // Nerve has its own block above, with the exact figure. Repeating it here would say the same
+                // thing twice in one prompt and invite the character to narrate a status rather than a feeling.
+                StatusEffectKind.Scared =>
+                    "- Your nerve has gone, and it shows. Anyone here can see you are afraid.",
                 _ => $"- {status.Describe()}"
             });
         }

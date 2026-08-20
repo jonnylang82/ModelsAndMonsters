@@ -109,6 +109,13 @@ public sealed class CharacterDefinition
     /// <summary>Chance out of 100 that this character's attacks land. Defaults to 75.</summary>
     public int HitChance { get; set; } = 75;
 
+    /// <summary>
+    /// Starting fear, 0-5. Zero unless a scenario deliberately opens with somebody already shaken — a
+    /// grunt who has watched a companion die on the way down the stairs, say. Seeded above the threshold
+    /// the character begins visibly Scared, and nothing in the fight caused it, so nothing is traced for it.
+    /// </summary>
+    public int Fear { get; set; }
+
     public WeaponDefinition? Weapon { get; set; }
 
     public List<ItemDefinition> Inventory { get; set; } = [];

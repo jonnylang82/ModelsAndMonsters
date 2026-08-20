@@ -55,6 +55,92 @@ public sealed class RulebookConsultationTests
         """;
     }
 
+    // ------------------------------------------------------------------------------------------
+    // Hydration (v0.8): the rulebook's own words, not the resolver's paraphrase of them
+    // ------------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task Guidance_carries_the_cited_cards_own_text_and_not_whatever_the_resolver_wrote()
+    {
+        // A resolver that selects correctly but paraphrases everything else — badly, and in one case
+        // dangerously ("no dice", for the one action that rolls).
+        var (consultant, _) = Build(ScriptedChatClient.Text("""
+            {
+              "supported": true,
+              "candidateActions": ["steal_item"],
+              "citedRules": [ { "ruleId": "inventory.steal", "version": "REPLACED" } ],
+              "requiredBindings": ["something"], "preconditions": ["something else"],
+              "turnCost": "free", "rngSpecification": "no dice", "visibility": "secret",
+              "successBehaviour": "the thief wins", "failureBehaviour": "nothing"
+            }
+            """.Replace("REPLACED", Catalog.Find("inventory.steal")!.Version)));
+
+        var result = await consultant.ConsultAsync("hero-rowan", "Rowan", "I snatch the vial off his belt.", default);
+
+        var card = Catalog.Find("inventory.steal")!;
+        var guidance = result.Guidance!;
+
+        Assert.Equal(card.TurnCost, guidance.TurnCost);
+        Assert.Equal(card.RngRequirement, guidance.RngSpecification);
+        Assert.Equal(card.Visibility, guidance.Visibility);
+        Assert.Equal(card.SuccessBehaviour, guidance.SuccessBehaviour);
+        Assert.Equal(card.FailureBehaviour, guidance.FailureBehaviour);
+        Assert.Equal(card.RequiredBindings, guidance.RequiredBindings);
+
+        // The paraphrase is gone entirely — including the one that would have told the Dungeon Master a
+        // theft rolls no dice.
+        Assert.DoesNotContain("no dice", guidance.RngSpecification, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("the thief wins", guidance.SuccessBehaviour, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Guidance_that_omits_the_descriptive_fields_entirely_is_still_complete()
+    {
+        // The v0.8 schema asks for only these four fields. The rest must arrive from the card regardless.
+        var (consultant, _) = Build(ScriptedChatClient.Text($$"""
+            {
+              "supported": true,
+              "candidateActions": ["attack_character"],
+              "citedRules": [ { "ruleId": "combat.attack", "version": "{{Catalog.Find("combat.attack")!.Version}}" } ]
+            }
+            """));
+
+        var guidance = (await consultant.ConsultAsync("hero-rowan", "Rowan", "I strike Vark.", default)).Guidance!;
+
+        Assert.NotEmpty(guidance.RequiredBindings);
+        Assert.NotEmpty(guidance.Preconditions);
+        Assert.Equal(Catalog.Find("combat.attack")!.TurnCost, guidance.TurnCost);
+        Assert.Contains("quality roll", guidance.RngSpecification, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task A_background_card_never_supplies_the_guidance_the_dungeon_master_binds_against()
+    {
+        // Citing the morale mechanic alongside the threat is correct and expected. The DESCRIPTIVE fields
+        // must still come from the action card — morale has no bindings and rolls nothing.
+        var intimidate = Catalog.Find("combat.intimidate")!;
+        var morale = Catalog.Find("combat.morale")!;
+        var (consultant, _) = Build(ScriptedChatClient.Text($$"""
+            {
+              "supported": true,
+              "candidateActions": ["intimidate_character"],
+              "citedRules": [
+                { "ruleId": "combat.morale", "version": "{{morale.Version}}" },
+                { "ruleId": "combat.intimidate", "version": "{{intimidate.Version}}" }
+              ]
+            }
+            """));
+
+        var guidance = (await consultant.ConsultAsync("goblin-vark", "Vark", "I threaten Rowan.", default)).Guidance!;
+
+        Assert.Equal(intimidate.TurnCost, guidance.TurnCost);
+        Assert.Equal(intimidate.RngRequirement, guidance.RngSpecification);
+        Assert.Equal(intimidate.RequiredBindings, guidance.RequiredBindings);
+
+        // But the background card's preconditions still ride along, because they were cited.
+        Assert.Contains(guidance.Preconditions, p => intimidate.Preconditions.Contains(p));
+    }
+
     // A flight through the open door, worded with none of the escape card's words — no "run", "flee", "bolt",
     // "escape", "door", "stairs", "get out". A keyword index would never route this to encounter.escape.
     private const string KeywordFreeEscapeIntent =

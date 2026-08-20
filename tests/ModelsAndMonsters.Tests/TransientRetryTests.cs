@@ -84,10 +84,61 @@ public sealed class TransientRetryTests
         Assert.Equal(0f, flaky.RequestOptions[0]!.Temperature);
         Assert.Equal(100, flaky.RequestOptions[0]!.Seed);
 
-        // The retry re-samples: the temperature is floored above zero and the seed is moved, so the identical
-        // greedy draw that failed cannot simply recur.
-        Assert.Equal(0.1f, flaky.RequestOptions[1]!.Temperature);
+        // The retry re-samples: the temperature is floored WELL above zero and the seed is moved, so the
+        // draw genuinely moves rather than repeating the same one.
+        Assert.Equal(0.4f, flaky.RequestOptions[1]!.Temperature);
         Assert.NotEqual(100, flaky.RequestOptions[1]!.Seed);
+    }
+
+    [Fact]
+    public async Task The_retry_temperature_escalates_so_a_second_failure_draws_further_from_the_first()
+    {
+        // The number that killed a run. The floor used to be a flat 0.1, which is barely off greedy: a
+        // temperature-0 agent re-sent at 0.1 reproduced the identical malformed tool call three times, Ollama
+        // 500'd on each, and the run ended at round 5. In the same trace an agent configured at 0.8 took two
+        // 500s and recovered on the third attempt — the mechanism was sound, the floor was not.
+        var (agent, flaky) = Build(
+            OllamaProfile(temperature: 0f, seed: 100),
+            new FlakyChatClient(failuresBeforeSuccess: 2, ScriptedChatClient.Text("recovered")));
+
+        await agent.Send();
+
+        Assert.Equal(3, flaky.CallCount);
+        Assert.Equal(0f, flaky.RequestOptions[0]!.Temperature);
+        Assert.Equal(0.4f, flaky.RequestOptions[1]!.Temperature);
+        Assert.Equal(0.8f, flaky.RequestOptions[2]!.Temperature);
+
+        // Every attempt draws from a different seed as well, so two attempts never share a draw.
+        var seeds = flaky.RequestOptions.Select(o => o!.Seed).ToList();
+        Assert.Equal(seeds.Count, seeds.Distinct().Count());
+    }
+
+    [Fact]
+    public async Task Each_attempt_is_recorded_in_the_trace_as_the_attempt_it_was()
+    {
+        // Without this a retry is invisible except as an unexplained shift in the sampling options, and a
+        // reader has to know the seed-offset formula to tell a re-send from a fresh call. Diagnosing the run
+        // that died meant doing exactly that.
+        var sink = new RecordingTraceSink();
+        var trace = new ExperimentTrace("test-run", sink);
+        var profile = OllamaProfile(temperature: 0f, seed: 100);
+        var flaky = new FlakyChatClient(failuresBeforeSuccess: 2, ScriptedChatClient.Text("recovered"));
+        var agent = new PokeAgent(profile, new TracingChatClient(flaky, profile, trace));
+
+        await agent.Send();
+
+        var attempts = sink.Events
+            .Where(e => e.EventType == TraceEventType.ModelRequest)
+            .Select(e => Assert.IsType<ModelRequestPayload>(e.Data).Attempt)
+            .ToList();
+        Assert.Equal([1, 2, 3], attempts);
+
+        // The failures say which attempt they were, too, so a trace shows the escalation working or not.
+        var failed = sink.Events
+            .Where(e => e.EventType == TraceEventType.ModelError)
+            .Select(e => Assert.IsType<ModelErrorPayload>(e.Data).Attempt)
+            .ToList();
+        Assert.Equal([1, 2], failed);
     }
 
     [Fact]

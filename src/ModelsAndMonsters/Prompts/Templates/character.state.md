@@ -24,6 +24,9 @@ Inventory:
 What you can do beyond a plain swing (nothing else is trained into you):
 {{abilities}}
 
+Your nerve:
+{{morale}}
+
 What is affecting you right now:
 {{statuses}}
 

@@ -130,14 +130,40 @@ public static class ToolArguments
     }
 
     /// <summary>
+    /// The characters a model may produce where a closing <c>]</c> belongs: the real one, and the full-width
+    /// and CJK lenticular lookalikes a quantised model reaches for instead.
+    /// </summary>
+    private static readonly char[] ArrayClosers = [']', '\uFF3D', '\u3011'];
+
+    /// <summary>
     /// Reads a value that arrived as a bare string where a list was expected. A model that serialises the
     /// array rather than sending one gets parsed properly; anything else is either split or kept whole.
     /// </summary>
     /// <remarks>
-    /// The serialised-array case is not hypothetical. A live run had a character send its speech as the
-    /// literal text <c>["Take it! You may go!"']</c>, and the harness spoke that aloud to the room, brackets
-    /// and quotes included, and wrote it into the knowledge ledger. Parsing costs nothing and the failure it
-    /// prevents is highly visible.
+    /// <para>
+    /// The serialised-array case is not hypothetical, and it is not rare. Qwen's tool-call wire format is
+    /// XML, which has no array type: every parameter value arrives as text, so an array-typed parameter
+    /// necessarily comes back as a string that merely LOOKS like an array. Whether it is well-formed is then
+    /// down to the model.
+    /// </para>
+    /// <para>
+    /// It often is not, and the failure is loud, because speech is delivered verbatim by design. Three live
+    /// examples, each defeating the previous guard:
+    /// <list type="bullet">
+    /// <item><c>["Take it! You may go!"']</c> — a stray apostrophe; valid brackets, invalid JSON.</item>
+    /// <item><c>["Skrit, hold your line ..."】</c> — closed with a CJK lenticular bracket instead of <c>]</c>.</item>
+    /// <item><c>["Vark, take this!"</c> — never closed at all.</item>
+    /// </list>
+    /// The last two got through a guard that required a literal <c>]</c> to be present, and were spoken to
+    /// the room with the scaffolding attached. That is not a cosmetic blemish: spoken words are delivered
+    /// into every listener's history and folded into their running summaries, so one malformed argument in
+    /// round 5 was still sitting in the Dungeon Master's context in round 11.
+    /// </para>
+    /// <para>
+    /// So the signal is how the value OPENS, not whether it closes. This is protocol repair, not language
+    /// parsing: it undoes a serialisation the provider could not express, and never inspects the words
+    /// between the quotes or infers anything from them.
+    /// </para>
     /// </remarks>
     private static IReadOnlyList<string> FromLooseString(string? text, bool splitLooseStrings)
     {
@@ -147,30 +173,45 @@ public static class ToolArguments
         }
 
         var trimmed = text.Trim();
-        if (trimmed.StartsWith('[') && trimmed.Contains(']', StringComparison.Ordinal))
+        if (trimmed.StartsWith('['))
         {
-            var close = trimmed.LastIndexOf(']');
-            try
+            var close = trimmed.LastIndexOfAny(ArrayClosers);
+
+            // Only a real bracket can close real JSON; a lookalike means it was never going to parse.
+            if (close > 0 && trimmed[close] == ']')
             {
-                using var document = JsonDocument.Parse(trimmed[..(close + 1)]);
-                if (document.RootElement.ValueKind == JsonValueKind.Array)
+                try
                 {
-                    return [.. document.RootElement.EnumerateArray()
-                        .Select(element => Stringify(element))
-                        .Where(v => !string.IsNullOrWhiteSpace(v))
-                        .Select(v => v!.Trim())];
+                    using var document = JsonDocument.Parse(trimmed[..(close + 1)]);
+                    if (document.RootElement.ValueKind == JsonValueKind.Array)
+                    {
+                        return [.. document.RootElement.EnumerateArray()
+                            .Select(element => Stringify(element))
+                            .Where(v => !string.IsNullOrWhiteSpace(v))
+                            .Select(v => v!.Trim())];
+                    }
+                }
+                catch (JsonException)
+                {
+                    // Fall through to span recovery.
                 }
             }
-            catch (JsonException)
+
+            // Malformed, unclosed, or closed with a lookalike. Recover the quoted spans rather than giving
+            // up, because the alternative is speaking the punctuation aloud.
+            var quoted = QuotedSpans(trimmed);
+            if (quoted.Count > 0)
             {
-                // Malformed, which is the usual case: the live example was ["Take it! You may go!"'] — a
-                // stray apostrophe inside the brackets. Recover the quoted spans directly rather than giving
-                // up, because the alternative is speaking the punctuation aloud.
-                var quoted = QuotedSpans(trimmed[..(close + 1)]);
-                if (quoted.Count > 0)
-                {
-                    return quoted;
-                }
+                return quoted;
+            }
+
+            // Nothing quoted to recover: strip the scaffolding and treat what is left as the value. Keeping
+            // the brackets would put them in a character's mouth, which is the one outcome to avoid.
+            var inner = close > 0 ? trimmed[1..close] : trimmed[1..];
+            trimmed = inner.Trim();
+            if (trimmed.Length == 0)
+            {
+                return [];
             }
         }
 

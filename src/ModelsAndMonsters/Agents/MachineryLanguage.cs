@@ -52,13 +52,19 @@ public static partial class MachineryLanguage
         // which any person in a cellar has a word for.
         @"\brulebook\b|\bthe engine\b|\bgame engine\b|\bhit chance\b|\bworld version\b|\bstatus effect\b" +
         @"|\bturn cost\b|\bdisposition\b|\bd100\b|\battack roll\b|\bdamage roll\b|\bglancing roll\b" +
+        // v0.8 adds its own quantities. "Fear" is a perfectly ordinary word and is NOT banned; a fear
+        // SCORE, LEVEL or VALUE is the harness naming its own number, and nobody in a cellar has a word for
+        // "double damage" either. "Critical" is deliberately absent: a critical blow is a thing a person can
+        // see, and banning the word would push narration into worse phrasings for no gain.
+        @"|\bquality roll\b|\bfear (?:score|level|value|points?)\b|\bscared status\b" +
+        @"|\b(?:double|half|full) damage\b" +
         // 2. Stable identifiers: the counter ids the harness mints, the ability ids, and the rulebook hash.
-        @"|\b(?:offer|agreement|status|guard)-\d+\b|\bcorpse-[a-z0-9-]+\b|\brulebook-[0-9a-f]{6,}\b" +
+        @"|\b(?:offer|agreement|status|guard|intimidation)-\d+\b|\bcorpse-[a-z0-9-]+\b|\brulebook-[0-9a-f]{6,}\b" +
         @"|\bguard-ally\b|\bhealing-prayer\b|\brally-grunt\b|\bdirty-strike\b" +
         // 3. Tool names. snake_case is not a thing anybody says out loud.
         @"|\b(?:attack_character|use_item|use_ability|open_container|take_item|inspect_object|open_exit" +
         @"|escape_encounter|offer_surrender|accept_surrender|give_item|drop_item|steal_item|reject_action" +
-        @"|ask_dm|take_action|end_turn)\b",
+        @"|intimidate_character|steady_ally|ask_dm|take_action|end_turn)\b",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex MachineryPattern();
 }

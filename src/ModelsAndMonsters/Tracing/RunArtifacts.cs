@@ -94,6 +94,14 @@ public sealed record TracedAgentProfile
 
     public int? ContextWindow { get; init; }
 
+    /// <summary>
+    /// The window that actually bounded this agent's requests, or null when nothing did. Differs from
+    /// <see cref="ContextWindow"/> on a hosted provider, which never receives the configured number — so a
+    /// run's own artefact says which regime it played under rather than leaving it to be inferred from the
+    /// provider name and a setting somewhere else.
+    /// </summary>
+    public int? BindingContextWindow { get; init; }
+
     public string? Effort { get; init; }
 
     public bool? Thinking { get; init; }
@@ -118,6 +126,7 @@ public sealed record TracedAgentProfile
             MaxOutputTokens = profile.MaxOutputTokens,
             Seed = profile.Seed,
             ContextWindow = profile.ContextWindow,
+            BindingContextWindow = profile.BindingContextWindow,
             Effort = profile.Effort?.ToString(),
             Thinking = profile.Thinking,
             ForceToolChoice = profile.ForceToolChoice,

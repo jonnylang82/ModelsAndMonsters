@@ -363,6 +363,65 @@ public sealed class KnowledgeLedger
     }
 
     /// <summary>
+    /// A public morale fact: a character visibly lost their nerve, or visibly recovered it. Keyed by the
+    /// character and the world version at which the threshold was crossed, so each crossing is one fact.
+    /// </summary>
+    /// <remarks>
+    /// The description is deliberately number-free. What everyone present can see is that somebody has
+    /// started fighting for their life, or has steadied; the fear score behind it is not observable and never
+    /// becomes anyone else's knowledge. This is the ONLY morale fact the ledger mints — a change that does
+    /// not cross the threshold changes nothing anyone else can see, and so creates nothing here.
+    /// </remarks>
+    public FactResult GetOrAddMoraleFact(string characterId, string characterName, bool scared, int worldVersion)
+    {
+        var id = $"{characterId}-{(scared ? "scared" : "steadied")}-wv{worldVersion}";
+        if (_facts.TryGetValue(id, out var existing))
+        {
+            return new FactResult(existing, WasCreated: false);
+        }
+
+        var fact = new KnowledgeFact
+        {
+            Id = id,
+            SubjectId = characterId,
+            FactType = FactType.CharacterMorale,
+            Description = scared
+                ? $"{characterName} looks scared and increasingly concerned with survival."
+                : $"{characterName} has their nerve back and no longer looks afraid.",
+            WorldVersion = worldVersion
+        };
+        _facts[id] = fact;
+        return new FactResult(fact, WasCreated: true);
+    }
+
+    /// <summary>
+    /// A public intimidation fact: one character openly threatened another, and the room saw whether it told.
+    /// Keyed by the pair and the world version, so one attempt yields one fact.
+    /// </summary>
+    public FactResult GetOrAddIntimidationFact(
+        string actorId, string actorName, string targetId, string targetName, bool succeeded, int worldVersion)
+    {
+        var id = $"{actorId}-threatened-{targetId}-wv{worldVersion}";
+        if (_facts.TryGetValue(id, out var existing))
+        {
+            return new FactResult(existing, WasCreated: false);
+        }
+
+        var fact = new KnowledgeFact
+        {
+            Id = id,
+            SubjectId = targetId,
+            FactType = FactType.IntimidationAttempted,
+            Description = succeeded
+                ? $"{actorName} threatened {targetName} openly, and it told: {targetName} is visibly shaken."
+                : $"{actorName} threatened {targetName} openly, and {targetName} did not flinch.",
+            WorldVersion = worldVersion
+        };
+        _facts[id] = fact;
+        return new FactResult(fact, WasCreated: true);
+    }
+
+    /// <summary>
     /// A public surrender-offer fact: terms of surrender were named aloud, in plain hearing of the room. Keyed
     /// by the offer, so one offer yields one fact. Its subject is the offer, not an item: the offer transfers
     /// nothing, and knowing of it is not a basis to reach for anything that was merely promised.

@@ -22,13 +22,15 @@ public sealed class StructuredSpeechTests
             (CharacterTools.IntentParameter, intent),
             (CharacterTools.UtterancesParameter, utterances));
 
-    private static OrchestrationHarness HarnessFor(ScriptedChatClient hero, ScriptedChatClient? dm = null) =>
+    private static OrchestrationHarness HarnessFor(
+        ScriptedChatClient hero, ScriptedChatClient? dm = null, HarnessOptions? limits = null) =>
         new(dm ?? new ScriptedChatClient(
                 ScriptedChatClient.Call("dm-1", DungeonMasterTools.AttackCharacterName,
                     ("attacker", "Aric"), ("target", "Grik"), ("weapon", "Iron Sword")),
                 ScriptedChatClient.Text("Aric's blade bites deep.")),
             hero,
-            new ScriptedChatClient());
+            new ScriptedChatClient(),
+            limits);
 
     [Fact]
     public async Task Declared_speech_is_heard_without_any_speech_verb_anywhere()
@@ -152,9 +154,10 @@ public sealed class StructuredSpeechTests
     }
 
     [Fact]
-    public async Task A_second_separate_speaking_in_the_same_turn_is_still_refused()
+    public async Task A_second_separate_speaking_beyond_the_allowance_is_still_refused()
     {
-        // The limit itself is unchanged: joining one reply's lines is not licence to speak twice.
+        // Joining one reply's lines is not licence to exceed the allowance. Pinned to one so the test covers
+        // the rule rather than tracking the default.
         var harness = HarnessFor(new ScriptedChatClient(
             ScriptedChatClient.Calls(
                 ScriptedChatClient.CallContent("h-1", CharacterTools.SayName,
@@ -163,13 +166,14 @@ public sealed class StructuredSpeechTests
                     (CharacterTools.MessageParameter, "And keep clear of the captain!"))),
             ScriptedChatClient.Call("h-3", CharacterTools.EndTurnName,
                 (CharacterTools.ReasonParameter, "Said my piece."))),
-            new ScriptedChatClient(ScriptedChatClient.Text("Aric holds his ground.")));
+            new ScriptedChatClient(ScriptedChatClient.Text("Aric holds his ground.")),
+            new HarnessOptions { MaxSpeechActsPerTurn = 1 });
 
         await harness.RunHeroTurn();
 
         Assert.Single(harness.Sink.OfType(TraceEventType.CharacterSpeech));
-        Assert.Contains(harness.Sink.Payloads<HarnessLimitPayload>(TraceEventType.HarnessLimitReached),
-            p => p.Limit == nameof(HarnessOptions.MaxSpeechActsPerTurn));
+        Assert.Contains(harness.Sink.Payloads<SpeechNotHeardPayload>(TraceEventType.SpeechNotHeard),
+            p => p.Unheard == "And keep clear of the captain!");
     }
 
     [Fact]
@@ -203,6 +207,52 @@ public sealed class StructuredSpeechTests
 
         var speech = Assert.Single(harness.Sink.Payloads<CharacterSpeechPayload>(TraceEventType.CharacterSpeech));
         Assert.Equal("Take it! You may go!", speech.Message);
+    }
+
+    [Theory]
+    // Verbatim from one live run, at the two places the previous guard missed. Qwen's tool-call wire format
+    // is XML, which has no array type, so an array-typed parameter always arrives as text that merely looks
+    // like an array — and whether it is well-formed is down to the model.
+    //
+    // Closed with a CJK lenticular bracket instead of ']', which a quantised model reaches for:
+    [InlineData("[\"Skrit, hold your line!\"\u3011", "Skrit, hold your line!")]
+    // Never closed at all:
+    [InlineData("[\"Vark, take this!\"", "Vark, take this!")]
+    // Full-width closer, the same class of substitution:
+    [InlineData("[\"Hold fast!\"\uFF3D", "Hold fast!")]
+    public async Task An_array_that_never_closes_properly_is_still_parsed_rather_than_spoken(
+        string declared, string expected)
+    {
+        // The old guard required a literal ']' to be present, so both live cases fell straight through and
+        // were spoken to the room with the scaffolding attached. Speech is delivered verbatim by design and
+        // lands in every listener's history, so one malformed argument in round 5 was still sitting in the
+        // Dungeon Master's context in round 11.
+        var harness = HarnessFor(new ScriptedChatClient(
+            ScriptedChatClient.Call("h-1", CharacterTools.TakeActionName,
+                (CharacterTools.IntentParameter, "I bring my sword down on Grik's shoulder."),
+                (CharacterTools.UtterancesParameter, declared))));
+
+        await harness.RunHeroTurn();
+
+        var speech = Assert.Single(harness.Sink.Payloads<CharacterSpeechPayload>(TraceEventType.CharacterSpeech));
+        Assert.Equal(expected, speech.Message);
+    }
+
+    [Fact]
+    public async Task Array_scaffolding_with_nothing_quoted_inside_it_is_stripped_not_spoken()
+    {
+        // The residual case: an opening bracket and no quoted span to recover. Whatever else happens, the
+        // bracket must not end up in a character's mouth.
+        var harness = HarnessFor(new ScriptedChatClient(
+            ScriptedChatClient.Call("h-1", CharacterTools.TakeActionName,
+                (CharacterTools.IntentParameter, "I bring my sword down on Grik's shoulder."),
+                (CharacterTools.UtterancesParameter, "[Hold the line"))));
+
+        await harness.RunHeroTurn();
+
+        var speech = Assert.Single(harness.Sink.Payloads<CharacterSpeechPayload>(TraceEventType.CharacterSpeech));
+        Assert.Equal("Hold the line", speech.Message);
+        Assert.DoesNotContain('[', speech.Message);
     }
 
     [Fact]

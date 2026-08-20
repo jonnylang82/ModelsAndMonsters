@@ -89,6 +89,7 @@ public static class ScenarioFactory
             Health = Math.Clamp(definition.Health ?? maxHealth, 0, maxHealth),
             Armour = Math.Max(0, definition.Armour),
             HitChance = Math.Clamp(definition.HitChance, 0, 100),
+            Fear = FearRules.Clamp(definition.Fear),
             Weapon = ToWeapon(definition),
             Inventory = [.. definition.Inventory.Select(ToItem)],
             Injuries = [.. definition.Injuries.Select(text => new Injury(text))],

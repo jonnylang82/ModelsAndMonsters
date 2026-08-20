@@ -1,3 +1,4 @@
+using Microsoft.Extensions.AI;
 using ModelsAndMonsters.AI;
 using ModelsAndMonsters.Agents;
 using ModelsAndMonsters.Configuration;
@@ -69,7 +70,9 @@ internal sealed class OrchestrationHarness
         ScriptedChatClient monsterClient,
         HarnessOptions? limits = null,
         GameState? initialState = null,
-        ScriptedChatClient? intentParserClient = null)
+        // Widened from ScriptedChatClient so a test can supply a client that FAILS: the parser is an
+        // optional component and what it does when unreachable is behaviour worth covering.
+        IChatClient? intentParserClient = null)
     {
         DungeonMasterClient = dungeonMasterClient;
         HeroClient = heroClient;

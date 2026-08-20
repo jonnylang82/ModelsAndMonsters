@@ -11,7 +11,10 @@ const LOG_KINDS = new Set([
   // v0.7: negotiation, abilities, statuses. Deliberately distinct kinds — an offer and an accepted
   // surrender must never read alike, because only one of them ends a fight.
   'surrenderOffered', 'surrenderOfferSettled', 'surrenderAccepted',
-  'abilityUsed', 'statusChanged', 'attackRedirected', 'defendReduced'
+  'abilityUsed', 'statusChanged', 'attackRedirected', 'defendReduced',
+  // v0.8: morale. A point of fear moving, a nerve breaking, a threat and a steadying word are four
+  // different things and read as four different lines.
+  'fearChanged', 'intimidation', 'allySteadied'
 ])
 
 export default function App() {
@@ -74,7 +77,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="top">
-        <h1>🎲 Models &amp; Monsters 🧌 <span className="version">v0.7</span></h1>
+        <h1>🎲 Models &amp; Monsters 🧌 <span className="version">v0.8</span></h1>
         <div className="controls">
           {round != null && <span className="round">Round {round}</span>}
           <span className={`status ${status}`}>{status}</span>
@@ -157,7 +160,10 @@ const STATUS_BADGE = {
   Guarded: (s) => `🛡 guarded by ${s.source}`,
   Rallied: (s) => `📣 rallied ${s.modifier >= 0 ? '+' : ''}${s.modifier}`,
   OffBalance: (s) => `💫 off balance ${s.modifier >= 0 ? '+' : ''}${s.modifier}`,
-  Defending: () => '🪨 guard up (−1 next hit)'
+  Defending: () => '🪨 guard up (−1 next hit)',
+  // Fear itself is shown by the meter below; this badge is the public fact — that everyone in the room
+  // can see it — which is a different claim from the number.
+  Scared: () => '😰 scared'
 }
 
 // Disposition drives how a card reads. Only the dead are "fallen"; a surrendered or escaped character is
@@ -184,6 +190,7 @@ function CharacterCard({ c, active }) {
       <div className="meta">
         {c.disarmed ? <span className="disarmed">disarmed</span> : (c.weapon || 'unarmed')} · armour {c.armour}
       </div>
+      <FearMeter fear={c.fear} max={c.maxFear} scared={c.scared} outnumbered={c.outnumbered} />
       {(c.statuses || []).length > 0 && (
         <div className="statuses">
           {c.statuses.map((s) => (
@@ -208,6 +215,22 @@ function CharacterCard({ c, active }) {
   )
 }
 
+// A compact 0-5 nerve indicator. The observer UI is an experiment artefact, so it shows the exact
+// authoritative figure that no opponent in the fiction ever sees. It stays on the card after a character
+// dies, yields or flees, recording the nerve they left the fight with.
+function FearMeter({ fear, max, scared, outnumbered }) {
+  if (fear == null || max == null) return null // an older run recorded before morale existed
+  const pips = Array.from({ length: max }, (_, i) => i < fear)
+  return (
+    <div className={`fear ${scared ? 'scared' : ''}`} title={`Fear ${fear} / ${max}${scared ? ' — Scared' : ''}`}>
+      <span className="fear-label">nerve</span>
+      <span className="pips">{pips.map((on, i) => <i key={i} className={on ? 'on' : ''} />)}</span>
+      <span className="fear-count">{fear}/{max}</span>
+      {outnumbered && <span className="fear-note" title="More active enemies than allies">outnumbered</span>}
+    </div>
+  )
+}
+
 function LogLine({ evt }) {
   const p = evt.payload || {}
   switch (evt.type) {
@@ -221,7 +244,11 @@ function LogLine({ evt }) {
     case 'passes': return <Line label={`${p.character} holds back`} cls="pass" text={p.text} />
     case 'refused': return <Line label={`DM → ${p.character}`} cls="refused" text={p.text} />
     case 'privateObservation': return <Line label={`DM → ${p.character} (private)`} cls="private" text={p.text} />
-    case 'attack': return <div className="line combat">{attackText(p)}</div>
+    case 'attack': return (
+      <div className={`line combat ${(p.quality || (p.glancing ? 'Glancing' : 'Solid')).toLowerCase()}`}>
+        {attackText(p)}
+      </div>
+    )
     case 'exitOpened': return <div className="line outcome">🚪 {p.character} opens the {p.exit}.</div>
     case 'surrendered': return <div className="line outcome">🏳️ {p.character} surrenders and leaves the fight (still alive).</div>
     case 'escaped': return <div className="line outcome">🏃 {p.character} escapes through the {p.exit} and is gone (still alive).</div>
@@ -268,6 +295,43 @@ function LogLine({ evt }) {
     case 'defendReduced': return (
       <div className="line status">🪨 {p.target}’s guard turned aside {p.reduction} damage.</div>
     )
+    case 'fearChanged': {
+      if (p.absorbed) {
+        return (
+          <div className="line status">
+            😐 {p.character}: nerve unchanged at {p.after} — {p.causeDetail} (already at the limit).
+          </div>
+        )
+      }
+      const arrow = p.delta > 0 ? '▲' : '▼'
+      const cls = p.transition === 'BecameScared' ? 'line fear broke'
+        : p.transition === 'RecoveredFromScared' ? 'line fear steadied'
+          : 'line fear'
+      const crossing = p.transition === 'BecameScared'
+        ? ' — their nerve goes, and everyone can see it'
+        : p.transition === 'RecoveredFromScared' ? ' — their nerve holds again' : ''
+      return (
+        <div className={cls}>
+          {arrow} {p.character} fear {p.before} → {p.after} ({p.causeDetail}){crossing}.
+        </div>
+      )
+    }
+    case 'intimidation': return (
+      <div className={`line threat ${p.succeeded ? 'told' : 'failed'}`}>
+        {p.succeeded ? '😨' : '😐'} {p.character} threatens {p.target} — {p.succeeded ? 'it tells' : 'no flinch'}.
+        <span className="sub">
+          {' '}rolled {p.roll} against {p.effectiveChance} (base {p.baseChance}
+          {p.modifiers && p.modifiers.length ? `, ${p.modifiers.join(', ')}` : ''});
+          {' '}{p.target} fear {p.targetFearBefore} → {p.targetFearAfter}. Nothing else changes.
+        </span>
+      </div>
+    )
+    case 'allySteadied': return (
+      <div className="line steady">
+        🫱 {p.character} steadies {p.target}
+        {p.noEffect ? ' — but they had not lost their nerve, and the turn is spent' : ` — fear ${p.targetFearBefore} → ${p.targetFearAfter}`}.
+      </div>
+    )
     case 'completed': {
       const suffix = p.outcome && p.outcome !== 'Ongoing' ? ` — ${p.outcome}` : ''
       return <div className="line divider end">── {p.terminalCondition}{suffix} ──</div>
@@ -295,9 +359,18 @@ function statusIcon(transition) {
   }
 }
 
+// `quality` is the authoritative word from the single quality draw; `glancing` is the older field, kept
+// so a run recorded before critical hits existed still reads correctly instead of showing every blow solid.
+const QUALITY_TEXT = {
+  Glancing: 'a glancing blow',
+  Solid: 'a solid hit',
+  Critical: 'a CRITICAL hit'
+}
+
 function attackText(p) {
   if (!p.hit) return `${p.attacker} attacks ${p.target} — misses.`
-  const kind = p.glancing ? 'a glancing blow' : 'a solid hit'
+  const quality = p.quality || (p.glancing ? 'Glancing' : 'Solid')
+  const kind = QUALITY_TEXT[quality] || 'a solid hit'
   const dead = p.died ? ` ${p.target} falls.` : ` (${p.target} ${p.targetHealth}/${p.targetMaxHealth})`
   return `${p.attacker} hits ${p.target} — ${kind}, ${p.damage} damage.${dead}`
 }

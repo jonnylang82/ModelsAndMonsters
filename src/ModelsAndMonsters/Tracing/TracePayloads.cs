@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ModelsAndMonsters.Domain;
+using ModelsAndMonsters.Engine;
 
 namespace ModelsAndMonsters.Tracing;
 
@@ -126,6 +127,14 @@ public sealed record ModelRequestPayload
 
     public required TracedChatOptions RequestedOptions { get; init; }
 
+    /// <summary>
+    /// Which transient-retry attempt this call is, counting from 1. Anything above 1 is a re-send after a
+    /// provider failure, drawing at a raised temperature and an offset seed — see
+    /// <see cref="Agents.ModelAgent"/>. Recorded so a retry is legible as a retry rather than as an
+    /// unexplained change in the sampling options.
+    /// </summary>
+    public int Attempt { get; init; } = 1;
+
     public required IReadOnlyList<TracedToolDefinition> Tools { get; init; }
 }
 
@@ -241,6 +250,9 @@ public sealed record ModelErrorPayload
 
     public required string CallId { get; init; }
 
+    /// <summary>Which transient-retry attempt failed, counting from 1. See <see cref="ModelRequestPayload.Attempt"/>.</summary>
+    public int Attempt { get; init; } = 1;
+
     public required string ExceptionType { get; init; }
 
     public required string Message { get; init; }
@@ -304,6 +316,26 @@ public sealed record ToolCallRecoveredPayload
 /// attempted words are captured so a report never concludes the character stayed silent, but they are not
 /// delivered — the character is nudged to speak properly.
 /// </summary>
+/// <summary>
+/// Words a character tried to say after it had already spoken this turn. They are recorded and never
+/// delivered, so a report can show that the character tried rather than implying it chose silence.
+/// </summary>
+public sealed record SpeechNotHeardPayload
+{
+    public required string CharacterId { get; init; }
+
+    public required string CharacterName { get; init; }
+
+    /// <summary>The words that were not delivered. Never reaches any other character.</summary>
+    public required string Unheard { get; init; }
+
+    /// <summary>How many times this character had already spoken this turn.</summary>
+    public required int SpeechActsAlready { get; init; }
+
+    /// <summary>The per-turn allowance in force, so the record explains itself without the config to hand.</summary>
+    public required int Allowance { get; init; }
+}
+
 public sealed record UnstructuredSpeechAttemptPayload
 {
     public required string CharacterId { get; init; }
@@ -461,6 +493,16 @@ public sealed record CharacterPassedPayload
 /// </summary>
 public sealed record CharacterSpeechPayload
 {
+    /// <summary>
+    /// The one character the speaker DECLARED they were speaking to, resolved to an id, or null when they
+    /// were calling to the room. Structural: it comes from the speaker's own field, never from reading the
+    /// words for a name. It is what lets a threat or a word of encouragement be bound to one person without
+    /// any language parsing.
+    /// </summary>
+    public string? AddressedToId { get; init; }
+
+    public string? AddressedToName { get; init; }
+
     public required string SpeakerId { get; init; }
 
     public required string SpeakerName { get; init; }
@@ -1050,6 +1092,32 @@ public sealed record RulebookConsultationPayload
 
     public required int TotalRequestChars { get; init; }
 
+    /// <summary>
+    /// How the cards were chosen: "WholeRulebook" for the shipped path, or the experimental strategy's name.
+    /// </summary>
+    public string SelectionMode { get; init; } = "WholeRulebook";
+
+    /// <summary>The rule ids the strategy itself chose, before declared related-rule expansion.</summary>
+    public IReadOnlyList<string> SelectionDirectRuleIds { get; init; } = [];
+
+    /// <summary>The rule ids added purely by following declared related-rule links.</summary>
+    public IReadOnlyList<string> SelectionExpandedRuleIds { get; init; } = [];
+
+    /// <summary>Why each chosen id was chosen — a similarity score, a model-chosen id, a declared route.</summary>
+    public IReadOnlyList<string> SelectionReasons { get; init; } = [];
+
+    /// <summary>Set when the strategy gave up and sent the whole bounded rulebook, with the reason. Null otherwise.</summary>
+    public string? SelectionFallback { get; init; }
+
+    /// <summary>Model calls the SELECTION made, not counting the resolver call that follows it.</summary>
+    public int SelectionModelCalls { get; init; }
+
+    public long? SelectionInputTokens { get; init; }
+
+    public long? SelectionOutputTokens { get; init; }
+
+    public double SelectionLatencyMs { get; init; }
+
     public required int MaxCardsConfigured { get; init; }
 
     public required int MaxInputCharsConfigured { get; init; }
@@ -1599,4 +1667,163 @@ public sealed record PostResolutionOutputDiscardedPayload
     public required int Round { get; init; }
 
     public required int Turn { get; init; }
+}
+
+/// <summary>
+/// One authoritative change to a character's fear: what moved it, what it was, what it became, and whether
+/// that crossed the public Scared threshold.
+/// </summary>
+/// <remarks>
+/// Emitted for every change, whether or not a die was involved. A change the clamp absorbed is emitted too,
+/// with <see cref="Absorbed"/> set, so "the ceiling ate it" is visible rather than looking like the rule
+/// simply failed to fire.
+/// </remarks>
+public sealed record FearChangedPayload
+{
+    public required string CharacterId { get; init; }
+
+    public required string CharacterName { get; init; }
+
+    public required string Team { get; init; }
+
+    /// <summary>The closed-set cause, e.g. "CriticalHitReceived" or "SteadiedByAlly".</summary>
+    public required string Cause { get; init; }
+
+    /// <summary>A short factual note naming the authoritative source of the change. Never narration.</summary>
+    public required string CauseDetail { get; init; }
+
+    /// <summary>The signed change requested, before clamping.</summary>
+    public required int Delta { get; init; }
+
+    public required int FearBefore { get; init; }
+
+    public required int FearAfter { get; init; }
+
+    /// <summary>True when the clamp absorbed the whole change, so the value did not move.</summary>
+    public required bool Absorbed { get; init; }
+
+    /// <summary>"None", "BecameScared" or "RecoveredFromScared".</summary>
+    public required string ScaredTransition { get; init; }
+
+    public required bool ScaredAfter { get; init; }
+
+    public string? SourceCharacterId { get; init; }
+
+    public string? SourceCharacterName { get; init; }
+
+    /// <summary>The action type the change happened under, e.g. "attack_character".</summary>
+    public string? RelatedActionType { get; init; }
+
+    /// <summary>Whether a random draw decided the change. False for every deterministic cause.</summary>
+    public required bool RngConsulted { get; init; }
+
+    public required int Round { get; init; }
+
+    public required int Turn { get; init; }
+
+    public required int WorldVersion { get; init; }
+
+    /// <summary>
+    /// Who the visible consequence reached. Only a threshold CROSSING is public; a change that did not cross
+    /// it is nobody else's knowledge, so this is empty for those.
+    /// </summary>
+    public IReadOnlyList<string> PublicRecipients { get; init; } = [];
+}
+
+/// <summary>
+/// One attempt to frighten an opponent, with every modifier and its authoritative source.
+/// </summary>
+/// <remarks>
+/// <see cref="ModifierSources"/> is the point of the record: it shows that each modifier came from the
+/// snapshot — the target's own fear, the odds against them, their wounds, the intimidator's nerve — and that
+/// nothing about the spoken threat reached the number. The utterance is carried only as a reference.
+/// </remarks>
+public sealed record IntimidationAttemptedPayload
+{
+    public required string AttemptId { get; init; }
+
+    public required string ActorId { get; init; }
+
+    public required string ActorName { get; init; }
+
+    public required string TargetId { get; init; }
+
+    public required string TargetName { get; init; }
+
+    /// <summary>The public-channel id of the spoken threat. The words are roleplay and change no odds.</summary>
+    public int? AssociatedSpeechEventId { get; init; }
+
+    /// <summary>The threat as spoken, reproduced for the report. Never read by the engine.</summary>
+    public string? AssociatedSpeech { get; init; }
+
+    /// <summary>The addressee the speaker declared, when they declared one. Structural, never parsed from the words.</summary>
+    public string? SpeechAddressedToId { get; init; }
+
+    public required int BaseChance { get; init; }
+
+    /// <summary>Each modifier as a readable note, in deterministic application order.</summary>
+    public required IReadOnlyList<string> Modifiers { get; init; }
+
+    /// <summary>Each modifier's source, signed value and order, so the effective chance can be recomputed exactly.</summary>
+    public required IReadOnlyList<RngModifier> ModifierSources { get; init; }
+
+    public required int EffectiveChance { get; init; }
+
+    public required int Roll { get; init; }
+
+    public required bool Succeeded { get; init; }
+
+    /// <summary>The target's fear either side of the attempt. Equal on a failure, which changes nothing.</summary>
+    public required int TargetFearBefore { get; init; }
+
+    public required int TargetFearAfter { get; init; }
+
+    public required string ScaredTransition { get; init; }
+
+    public required int Round { get; init; }
+
+    public required int Turn { get; init; }
+
+    public required int WorldVersionBefore { get; init; }
+
+    public required int WorldVersionAfter { get; init; }
+
+    public IReadOnlyList<string> PublicRecipients { get; init; } = [];
+}
+
+/// <summary>One character spending their whole turn steadying an ally. Deterministic: no draw is made.</summary>
+public sealed record AllySteadiedPayload
+{
+    public required string ActorId { get; init; }
+
+    public required string ActorName { get; init; }
+
+    public required string TargetId { get; init; }
+
+    public required string TargetName { get; init; }
+
+    public int? AssociatedSpeechEventId { get; init; }
+
+    public string? AssociatedSpeech { get; init; }
+
+    public string? SpeechAddressedToId { get; init; }
+
+    public required int TargetFearBefore { get; init; }
+
+    public required int TargetFearAfter { get; init; }
+
+    /// <summary>True when the ally was already unafraid, so a whole turn bought nothing.</summary>
+    public required bool NoEffect { get; init; }
+
+    public required string ScaredTransition { get; init; }
+
+    public required int Round { get; init; }
+
+    public required int Turn { get; init; }
+
+    public required int WorldVersionBefore { get; init; }
+
+    public required int WorldVersionAfter { get; init; }
+
+    public IReadOnlyList<string> PublicRecipients { get; init; } = [];
 }

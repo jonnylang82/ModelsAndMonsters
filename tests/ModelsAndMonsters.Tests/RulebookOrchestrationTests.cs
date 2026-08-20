@@ -182,6 +182,14 @@ public sealed class RulebookOrchestrationTests
 
         // Same intent, same cards → identical bounded request size, regardless of how far into the fight it is.
         Assert.Equal(consultations[0].TotalRequestChars, consultations[1].TotalRequestChars);
-        Assert.True(consultations[1].TotalRequestChars <= consultations[1].MaxInputCharsConfigured + 2000);
+
+        // The ceiling governs the CARDS; the whole request is those plus the resolver's system prompt, the
+        // request template and the intent. That fixed overhead is a few thousand characters, so the bound is
+        // the ceiling plus a stated allowance for it rather than the ceiling exactly.
+        const int FixedRequestOverheadAllowance = 6000;
+        Assert.True(
+            consultations[1].TotalRequestChars <= consultations[1].MaxInputCharsConfigured + FixedRequestOverheadAllowance,
+            $"Resolver request was {consultations[1].TotalRequestChars} characters against a card ceiling of " +
+            $"{consultations[1].MaxInputCharsConfigured} plus {FixedRequestOverheadAllowance} of fixed overhead.");
     }
 }

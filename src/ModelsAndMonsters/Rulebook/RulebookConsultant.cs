@@ -1,5 +1,6 @@
 using Microsoft.Extensions.AI;
 using ModelsAndMonsters.Agents;
+using ModelsAndMonsters.Rulebook.Selection;
 using ModelsAndMonsters.Tracing;
 
 namespace ModelsAndMonsters.Rulebook;
@@ -65,6 +66,13 @@ public sealed class RulebookConsultant
     private readonly ExperimentTrace _trace;
     private readonly RulebookConsultationOptions _options;
 
+    /// <summary>
+    /// The configured card-selection strategy, or null for the v0.6-v0.7 behaviour of sending the whole
+    /// rulebook through <see cref="IRuleRetriever"/>. Null is the default and the shipped production path;
+    /// an experimental strategy is opt-in and always falls back to the whole bounded rulebook on any doubt.
+    /// </summary>
+    private readonly IRuleSelector? _selector;
+
     public RulebookConsultant(
         IRuleRepository repository,
         IRuleRetriever retriever,
@@ -72,7 +80,8 @@ public sealed class RulebookConsultant
         RuleGuidanceValidator validator,
         IRuleGuidanceCache cache,
         ExperimentTrace trace,
-        RulebookConsultationOptions options)
+        RulebookConsultationOptions options,
+        IRuleSelector? selector = null)
     {
         _repository = repository;
         _retriever = retriever;
@@ -81,6 +90,7 @@ public sealed class RulebookConsultant
         _cache = cache;
         _trace = trace;
         _options = options;
+        _selector = selector;
     }
 
     public async Task<RulebookConsultationResult> ConsultAsync(
@@ -89,15 +99,33 @@ public sealed class RulebookConsultant
         var consultationId = $"rb-{Guid.NewGuid():N}";
 
         RuleRetrievalResult retrieval;
+        RuleSelection? selection = null;
         try
         {
-            retrieval = _retriever.Retrieve(intent);
+            if (_selector is not null)
+            {
+                // An experimental strategy chooses the cards; it is required to fall back to the whole
+                // bounded rulebook rather than guess, so the worst case is the baseline's cost.
+                selection = await _selector.SelectAsync(intent, cancellationToken).ConfigureAwait(false);
+                retrieval = new RuleRetrievalResult
+                {
+                    SelectedCards = selection.Cards,
+                    ConsideredRuleIds = [.. _repository.AllCards.Select(c => c.RuleId)],
+                    TotalInputChars = selection.TotalInputChars,
+                    Trimmed = false
+                };
+            }
+            else
+            {
+                retrieval = _retriever.Retrieve(intent);
+            }
         }
         catch (Exception ex)
         {
             return Fail(consultationId, characterId, characterName, intent, RulebookOutcome.RetrievalFailure,
                 $"Rule retrieval failed: {ex.GetType().Name}: {ex.Message}",
-                retrieval: null, resolver: null, cacheHit: false, guidance: null, validation: "n/a");
+                retrieval: null, resolver: null, cacheHit: false, guidance: null, validation: "n/a",
+                selection: selection);
         }
 
         var resolverIdentity = $"{_resolver.Profile.Provider}:{_resolver.Profile.ModelId}";
@@ -108,7 +136,7 @@ public sealed class RulebookConsultant
         {
             var stampedCache = cached with { ConsultationId = consultationId };
             return Complete(consultationId, characterId, characterName, intent, retrieval, resolver: null,
-                cacheHit: true, guidance: stampedCache, validation: "valid (cached)");
+                cacheHit: true, guidance: stampedCache, validation: "valid (cached)", selection: selection);
         }
 
         var resolverResult = await _resolver.ResolveAsync(intent, retrieval.SelectedCards, cancellationToken).ConfigureAwait(false);
@@ -117,43 +145,46 @@ public sealed class RulebookConsultant
         {
             return Fail(consultationId, characterId, characterName, intent, RulebookOutcome.ResolverFailure,
                 "The rulebook resolver model call failed.", retrieval, resolverResult, cacheHit: false,
-                guidance: null, validation: "n/a");
+                guidance: null, validation: "n/a", selection: selection);
         }
 
         if (resolverResult.Parsed is null)
         {
             return Fail(consultationId, characterId, characterName, intent, RulebookOutcome.MalformedGuidance,
                 "The resolver response could not be parsed as guidance.", retrieval, resolverResult, cacheHit: false,
-                guidance: null, validation: "invalid: unparseable");
+                guidance: null, validation: "invalid: unparseable", selection: selection);
         }
 
-        var validation = _validator.Validate(resolverResult.Parsed);
+        // The validator is given the cards this request actually carried, so a citation of anything else is
+        // dropped rather than accepted on the strength of existing somewhere in the catalog.
+        var validation = _validator.Validate(resolverResult.Parsed, retrieval.SelectedCards);
         if (!validation.IsValid)
         {
             return Fail(consultationId, characterId, characterName, intent, RulebookOutcome.MalformedGuidance,
                 validation.Reason, retrieval, resolverResult, cacheHit: false,
-                guidance: null, validation: $"invalid: {validation.Reason}");
+                guidance: null, validation: $"invalid: {validation.Reason}", selection: selection);
         }
 
-        var guidance = validation.Guidance with { ConsultationId = consultationId };
+        var guidance = Hydrate(validation.Guidance) with { ConsultationId = consultationId };
         if (_options.CacheEnabled)
         {
             _cache.Set(cacheKey, guidance);
         }
 
         return Complete(consultationId, characterId, characterName, intent, retrieval, resolverResult,
-            cacheHit: false, guidance: guidance, validation: "valid");
+            cacheHit: false, guidance: guidance, validation: "valid", selection: selection);
     }
 
     private RulebookConsultationResult Complete(
         string consultationId, string characterId, string characterName, string intent,
-        RuleRetrievalResult retrieval, ResolverResult? resolver, bool cacheHit, RuleGuidance guidance, string validation)
+        RuleRetrievalResult retrieval, ResolverResult? resolver, bool cacheHit, RuleGuidance guidance, string validation,
+        RuleSelection? selection = null)
     {
         var outcome = guidance.Supported ? RulebookOutcome.Supported : RulebookOutcome.Unsupported;
         var tools = ToolsFor(guidance);
 
         EmitConsultation(consultationId, characterId, characterName, intent, retrieval, resolver, cacheHit,
-            guidance, validation, outcome, tools, failureDetail: null);
+            guidance, validation, outcome, tools, failureDetail: null, selection: selection);
 
         return new RulebookConsultationResult
         {
@@ -168,13 +199,13 @@ public sealed class RulebookConsultant
     private RulebookConsultationResult Fail(
         string consultationId, string characterId, string characterName, string intent,
         RulebookOutcome outcome, string? detail, RuleRetrievalResult? retrieval, ResolverResult? resolver,
-        bool cacheHit, RuleGuidance? guidance, string validation)
+        bool cacheHit, RuleGuidance? guidance, string validation, RuleSelection? selection = null)
     {
         // Fail safe: expose only the rejection so the DM cannot invent an action, and the engine stays authoritative.
         IReadOnlyList<AITool> tools = [DungeonMasterTools.RejectAction];
 
         EmitConsultation(consultationId, characterId, characterName, intent, retrieval, resolver, cacheHit,
-            guidance, validation, outcome, tools, detail);
+            guidance, validation, outcome, tools, detail, selection);
 
         return new RulebookConsultationResult
         {
@@ -184,6 +215,62 @@ public sealed class RulebookConsultant
             CandidateTools = tools,
             CacheHit = cacheHit,
             FailureDetail = detail
+        };
+    }
+
+    /// <summary>
+    /// Fills the guidance's descriptive fields from the CITED CARDS rather than from whatever the resolver
+    /// wrote, so the Dungeon Master is handed the rulebook's own words.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The resolver's job is selection — which action, under which rule — and the answer to "what does that
+    /// rule say" is already sitting in the catalog. Asking a model to copy it back was three bad things at
+    /// once: it regenerated a few hundred tokens the consultant was already holding, it let a paraphrase
+    /// stand in for the rule, and it made the reply's length depend on the cards' length. That last one is
+    /// not theoretical — v0.8 lengthened one card and half the resolver replies in the next live run were
+    /// truncated mid-JSON at the output cap, which surfaced as malformed guidance and a refusal.
+    /// </para>
+    /// <para>
+    /// The PRIMARY card is the cited card governing the first candidate action; a background card (morale)
+    /// never supplies it. Bindings and preconditions are merged across every cited action card, because
+    /// genuinely ambiguous guidance cites two and the DM needs both sets to bind either.
+    /// </para>
+    /// </remarks>
+    private RuleGuidance Hydrate(RuleGuidance guidance)
+    {
+        if (!guidance.Supported || guidance.CitedRules.Count == 0)
+        {
+            return guidance;
+        }
+
+        var cards = guidance.CitedRules
+            .Select(c => _repository.Find(c.RuleId))
+            .Where(c => c is not null)
+            .Select(c => c!)
+            .ToList();
+
+        var actionCards = cards.Where(c => !c.IsReference).ToList();
+        if (actionCards.Count == 0)
+        {
+            return guidance;
+        }
+
+        var primary = guidance.CandidateActions
+                          .Select(action => actionCards.FirstOrDefault(c =>
+                              string.Equals(c.ActionName, action, StringComparison.OrdinalIgnoreCase)))
+                          .FirstOrDefault(c => c is not null)
+                      ?? actionCards[0];
+
+        return guidance with
+        {
+            RequiredBindings = [.. actionCards.SelectMany(c => c.RequiredBindings).Distinct(StringComparer.Ordinal)],
+            Preconditions = [.. cards.SelectMany(c => c.Preconditions).Distinct(StringComparer.Ordinal)],
+            TurnCost = primary.TurnCost,
+            RngSpecification = primary.RngRequirement,
+            Visibility = primary.Visibility,
+            SuccessBehaviour = primary.SuccessBehaviour,
+            FailureBehaviour = primary.FailureBehaviour
         };
     }
 
@@ -210,7 +297,8 @@ public sealed class RulebookConsultant
     private void EmitConsultation(
         string consultationId, string characterId, string characterName, string intent,
         RuleRetrievalResult? retrieval, ResolverResult? resolver, bool cacheHit, RuleGuidance? guidance,
-        string validation, RulebookOutcome outcome, IReadOnlyList<AITool> tools, string? failureDetail)
+        string validation, RulebookOutcome outcome, IReadOnlyList<AITool> tools, string? failureDetail,
+        RuleSelection? selection = null)
     {
         var cards = retrieval?.SelectedCards ?? [];
         _trace.Emit(TraceEventType.RulebookConsultation, new RulebookConsultationPayload
@@ -240,6 +328,15 @@ public sealed class RulebookConsultant
             CardCount = cards.Count,
             CardInputChars = retrieval?.TotalInputChars ?? 0,
             TotalRequestChars = resolver?.RequestChars ?? (retrieval?.TotalInputChars ?? 0),
+            SelectionMode = (selection?.Mode ?? RuleSelectionMode.WholeRulebook).ToString(),
+            SelectionDirectRuleIds = selection?.DirectlySelectedRuleIds ?? [],
+            SelectionExpandedRuleIds = selection?.ExpandedRuleIds ?? [],
+            SelectionReasons = selection?.SelectionReasons ?? [],
+            SelectionFallback = selection?.FallbackReason,
+            SelectionModelCalls = selection?.ModelCalls ?? 0,
+            SelectionInputTokens = selection?.InputTokens,
+            SelectionOutputTokens = selection?.OutputTokens,
+            SelectionLatencyMs = selection?.LatencyMs ?? 0,
             MaxCardsConfigured = _options.MaxCards,
             MaxInputCharsConfigured = _options.MaxInputChars,
             OutputTokenLimitConfigured = _options.OutputTokenLimit,

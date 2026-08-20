@@ -57,7 +57,20 @@ public enum FactType
     /// A surrender offer stopped being open — taken up, refused by a hostile act, or simply lapsed. Public,
     /// because everyone who heard the terms can see they came to nothing.
     /// </summary>
-    SurrenderOfferSettled
+    SurrenderOfferSettled,
+
+    /// <summary>
+    /// A character visibly lost their nerve, or visibly got it back. Public: fear is written on a face, and
+    /// everyone present can read it. Deliberately the ONLY morale fact there is — the number behind it is the
+    /// character's own knowledge and never becomes a fact anyone else can hold.
+    /// </summary>
+    CharacterMorale,
+
+    /// <summary>
+    /// One character openly threatened another, and everyone present saw whether it told. Public, because the
+    /// threat was spoken aloud in a small room and its effect is visible on the one threatened.
+    /// </summary>
+    IntimidationAttempted
 }
 
 /// <summary>

@@ -16,8 +16,10 @@ namespace ModelsAndMonsters.Agents;
 /// </remarks>
 public sealed class HistorySummariser : ModelAgent
 {
+    public const string AgentIdentifier = "HistorySummariser";
+
     public HistorySummariser(AgentModelProfile profile, TracingChatClient client, PromptLibrary prompts)
-        : base("HistorySummariser", profile, client, prompts.Render("character.summarise-history.system"))
+        : base(AgentIdentifier, profile, client, prompts.Render("character.summarise-history.system"))
     {
     }
 

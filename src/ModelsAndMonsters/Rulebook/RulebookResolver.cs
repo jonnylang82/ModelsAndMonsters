@@ -40,7 +40,7 @@ public sealed class RulebookResolver : ModelAgent, IRulebookResolver
         // keeps its request bounded and independent of how many rounds have already been played.
         var conversation = new AgentConversation(AgentName, Conversation.SystemPrompt);
 
-        var cardText = string.Join("\n\n", cards.Select(c => c.ToPromptBlock()));
+        var cardText = string.Join("\n\n", cards.Select(c => c.ToResolverBlock()));
         var requestText = _prompts.Render("rulebook.resolve", new Dictionary<string, string?>
         {
             ["intent"] = intent,

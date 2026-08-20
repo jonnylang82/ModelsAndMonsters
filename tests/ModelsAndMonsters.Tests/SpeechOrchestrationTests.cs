@@ -81,24 +81,65 @@ public sealed class SpeechOrchestrationTests
     // ------------------------------------------------------------------------------------------
 
     [Fact]
-    public async Task A_character_may_speak_only_once_per_turn_by_default()
+    public async Task Speech_beyond_the_per_turn_allowance_is_not_heard()
     {
-        var harness = Harness(
+        // The allowance is pinned here rather than left to the default, so this test covers the RULE and
+        // does not quietly change meaning when the default does.
+        var harness = new MultiActorHarness(
             new ScriptedChatClient(ScriptedChatClient.Text("Rowan falls silent.")),
-            ("Rowan", new ScriptedChatClient(
+            MultiActorHarness.Clients(("Rowan", new ScriptedChatClient(
                 ScriptedChatClient.Call("r-1", CharacterTools.SayName, ("message", "First thing.")),
                 ScriptedChatClient.Call("r-2", CharacterTools.SayName, ("message", "Second thing.")),
-                ScriptedChatClient.Call("r-3", CharacterTools.EndTurnName, ("reason", "Done.")))));
+                ScriptedChatClient.Call("r-3", CharacterTools.EndTurnName, ("reason", "Done."))))),
+            new HarnessOptions { MaxSpeechActsPerTurn = 1 });
 
         var result = await harness.RunTurn("Rowan");
 
-        // Only the first utterance was heard; the second hit the per-turn speech limit.
+        // Only the first utterance was heard; the second was over the allowance.
         Assert.Equal(1, result.SpeechActs);
         var speech = Assert.Single(harness.Sink.Payloads<CharacterSpeechPayload>(TraceEventType.CharacterSpeech));
         Assert.Equal("First thing.", speech.Message);
 
-        var limit = Assert.Single(harness.Sink.Payloads<HarnessLimitPayload>(TraceEventType.HarnessLimitReached));
-        Assert.Equal(nameof(HarnessOptions.MaxSpeechActsPerTurn), limit.Limit);
+        // It is recorded as a rule of the world, NOT as a harness limit: a harness limit means something
+        // went wrong, and a character running out of breath is the fiction working.
+        Assert.Empty(harness.Sink.OfType(TraceEventType.HarnessLimitReached));
+        var unheard = Assert.Single(harness.Sink.Payloads<SpeechNotHeardPayload>(TraceEventType.SpeechNotHeard));
+        Assert.Equal("Rowan", unheard.CharacterName);
+        Assert.Equal("Second thing.", unheard.Unheard);
+        Assert.Equal(1, unheard.Allowance);
+    }
+
+    [Fact]
+    public async Task A_second_attempt_after_a_refusal_may_still_speak()
+    {
+        // Why the default is two. A character that speaks as part of an action attempt has spent its voice,
+        // and if the Dungeon Master refuses that attempt it is asked to try again with nothing left to say.
+        // Every occurrence in a live run was exactly this shape, never a character simply being chatty.
+        var harness = new MultiActorHarness(
+            new ScriptedChatClient(
+                // First attempt refused, second accepted.
+                ScriptedChatClient.Call("dm-1", DungeonMasterTools.RejectActionName,
+                    ("reason", "Nothing comes of it."), ("category", "unsupported")),
+                ScriptedChatClient.Text("Rowan's attempt comes to nothing."),
+                ScriptedChatClient.Call("dm-2", DungeonMasterTools.DefendName, ("actor", "Rowan")),
+                ScriptedChatClient.Text("Rowan sets his feet.")),
+            MultiActorHarness.Clients(("Rowan", new ScriptedChatClient(
+                ScriptedChatClient.Call("r-1", CharacterTools.TakeActionName,
+                    ("intent", "I hurl my shield at the goblin."),
+                    (CharacterTools.UtterancesParameter, "Take this!")),
+                ScriptedChatClient.Call("r-2", CharacterTools.TakeActionName,
+                    ("intent", "I set my feet and guard."),
+                    (CharacterTools.UtterancesParameter, "Then I hold here!"))))));
+
+        var result = await harness.RunTurn("Rowan");
+
+        // Both lines were heard: the words that went with the failed attempt were really said, and the
+        // second attempt gets the second breath it implies.
+        Assert.Equal(2, result.SpeechActs);
+        Assert.Equal(
+            ["Take this!", "Then I hold here!"],
+            harness.Sink.Payloads<CharacterSpeechPayload>(TraceEventType.CharacterSpeech).Select(s => s.Message));
+        Assert.Empty(harness.Sink.OfType(TraceEventType.SpeechNotHeard));
     }
 
     // ------------------------------------------------------------------------------------------

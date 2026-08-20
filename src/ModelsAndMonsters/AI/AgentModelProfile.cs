@@ -68,6 +68,43 @@ public sealed record AgentModelProfile
     /// </remarks>
     public int? ContextWindow { get; init; }
 
+    /// <summary>
+    /// Whether a configured <see cref="ContextWindow"/> is treated as binding even on a provider that never
+    /// sees it. Off by default; see
+    /// <see cref="ModelsAndMonsters.Configuration.HarnessOptions.EnforceContextWindowOnHostedModels"/>.
+    /// </summary>
+    public bool EnforceContextWindowOnHostedModels { get; init; }
+
+    /// <summary>
+    /// The window that actually bounds a request, or null when nothing the harness knows about does. This —
+    /// not <see cref="ContextWindow"/> — is what history summarisation budgets against and what a
+    /// length-finish diagnosis measures against.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The two differ on hosted providers. Only Ollama takes a window as a request parameter (<c>num_ctx</c>);
+    /// OpenAI and Anthropic have a fixed, far larger window per model and never see this number, so
+    /// <see cref="AI.ChatOptionsFactory"/> drops it. Budgeting against it there means compacting a
+    /// conversation to fit a limit that does not exist.
+    /// </para>
+    /// <para>
+    /// A live gpt-5.4 run made the cost concrete: every agent inherited <c>ContextWindow: 8192</c> from the
+    /// Ollama-tuned defaults, and in six rounds the harness ran eleven history summarisations — roughly one
+    /// every other turn — replacing what characters actually said and did with a recap, and paying a model
+    /// call to do it, against a ceiling the provider would never have enforced.
+    /// </para>
+    /// <para>
+    /// Set <see cref="EnforceContextWindowOnHostedModels"/> to hold a hosted model to the same window as a
+    /// local one, which is what a like-for-like comparison between providers needs.
+    /// </para>
+    /// </remarks>
+    public int? BindingContextWindow =>
+        ContextWindow is not { } window || window <= 0
+            ? null
+            : ProviderCapabilities.For(Provider).SupportsContextWindow || EnforceContextWindowOnHostedModels
+                ? window
+                : null;
+
     /// <summary>Optional per-agent endpoint override; falls back to the provider-level endpoint.</summary>
     public string? Endpoint { get; init; }
 
@@ -92,7 +129,13 @@ public sealed record AgentModelProfile
     /// </summary>
     public bool? OmitSampling { get; init; }
 
-    public static AgentModelProfile FromOptions(string agentName, AgentProfileOptions options)
+    /// <param name="enforceContextWindowOnHostedModels">
+    /// Carries <see cref="ModelsAndMonsters.Configuration.HarnessOptions.EnforceContextWindowOnHostedModels"/>
+    /// onto the profile, where <see cref="BindingContextWindow"/> reads it. Defaults to off, matching the
+    /// harness default.
+    /// </param>
+    public static AgentModelProfile FromOptions(
+        string agentName, AgentProfileOptions options, bool enforceContextWindowOnHostedModels = false)
     {
         ArgumentNullException.ThrowIfNull(options);
 
@@ -119,6 +162,7 @@ public sealed record AgentModelProfile
             MaxOutputTokens = options.MaxOutputTokens,
             // Seed is not read from config here; the runner derives it from the master seed.
             ContextWindow = options.ContextWindow,
+            EnforceContextWindowOnHostedModels = enforceContextWindowOnHostedModels,
             Effort = ParseEffort(agentName, options.Effort),
             Thinking = options.Thinking,
             Endpoint = string.IsNullOrWhiteSpace(options.Endpoint) ? null : options.Endpoint.Trim(),

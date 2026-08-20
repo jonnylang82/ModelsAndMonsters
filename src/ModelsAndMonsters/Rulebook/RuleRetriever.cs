@@ -24,7 +24,7 @@ public sealed class RuleRetriever : IRuleRetriever
 
         _allCards = repository.AllCards;
         _allRuleIds = [.. _allCards.Select(c => c.RuleId)];
-        _totalChars = _allCards.Sum(c => c.ToPromptBlock().Length);
+        _totalChars = _allCards.Sum(c => c.ToResolverBlock().Length);
 
         if (_allCards.Count > maxCards)
         {

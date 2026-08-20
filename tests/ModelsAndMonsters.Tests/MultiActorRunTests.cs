@@ -146,7 +146,9 @@ public sealed class MultiActorRunTests : IDisposable
                 EnableRulebookResolver = false,
                 RunOutputDirectory = _directory
             },
-            Combat = new CombatOptions { GlancingBlowChance = 0 } // deterministic damage
+            // Deterministic damage: both bands of the quality draw are silenced, so every landed blow is a
+            // plain solid hit. The draw is still taken, so the seeded sequence is unchanged either way.
+            Combat = new CombatOptions { GlancingBlowChance = 0, CriticalHitChance = 0 }
         };
 
         var factory = new ScriptedChatClientFactory(BuildClients());

@@ -11,6 +11,7 @@ using ModelsAndMonsters.Presentation;
 using ModelsAndMonsters.Prompts;
 using ModelsAndMonsters.Randomness;
 using ModelsAndMonsters.Rulebook;
+using ModelsAndMonsters.Rulebook.Selection;
 using ModelsAndMonsters.Tracing;
 
 namespace ModelsAndMonsters.Orchestration;
@@ -100,7 +101,11 @@ public sealed class SimulationRunner
 
         var initialState = ScenarioFactory.CreateInitialState(_scenario);
         var engine = new GameEngine(initialState, new SeededRng(gameSeed),
-            new CombatRules(_options.Combat.GlancingBlowChance, _options.Combat.BaseStealChance));
+            new CombatRules(
+                _options.Combat.GlancingBlowChance,
+                _options.Combat.BaseStealChance,
+                _options.Combat.CriticalHitChance,
+                _options.Combat.BaseIntimidationChance));
 
         // The application-owned knowledge ledger, seeded with the scenario's private backstory knowledge.
         // It is separate from authoritative game state: game state is current mechanical truth, this is the
@@ -110,13 +115,14 @@ public sealed class SimulationRunner
         // The Dungeon Master and every character inherit the shared defaults, then apply their own
         // overrides; the resolved profile is what its model calls actually use, so that is what is recorded.
         var defaults = _options.Agents.Default;
+        var enforceWindow = harness.EnforceContextWindowOnHostedModels;
         var dungeonMasterProfile = AgentModelProfile.FromOptions(
-                DungeonMasterAgent.AgentIdentifier, _options.Agents.DungeonMaster.Overlay(defaults))
+                DungeonMasterAgent.AgentIdentifier, _options.Agents.DungeonMaster.Overlay(defaults), enforceWindow)
             with { Seed = RunSeeds.Derive(masterSeed, RunSeeds.DungeonMasterKey) };
 
         var characterProfiles = _scenario.Characters.ToDictionary(
             c => c.Id,
-            c => ResolveCharacterProfile(c, defaults, masterSeed),
+            c => ResolveCharacterProfile(c, defaults, masterSeed, enforceWindow),
             StringComparer.OrdinalIgnoreCase);
 
         // The intent parser reuses the Dungeon Master's model but reads at temperature zero for a stable,
@@ -124,7 +130,7 @@ public sealed class SimulationRunner
         // calls. It is context-free, so the window is ample; a derived seed keeps the whole run replayable.
         var intentParserProfile = dungeonMasterProfile with
         {
-            AgentName = "IntentParser",
+            AgentName = IntentParser.AgentIdentifier,
             Temperature = 0f,
             Effort = ReasoningEffort.None,
             Thinking = false,
@@ -136,7 +142,7 @@ public sealed class SimulationRunner
         // small output budget. Context-free like the parser; a derived seed keeps the run replayable.
         var historySummariserProfile = dungeonMasterProfile with
         {
-            AgentName = "HistorySummariser",
+            AgentName = HistorySummariser.AgentIdentifier,
             Temperature = 0.3f,
             Effort = ReasoningEffort.None,
             Thinking = false,
@@ -149,7 +155,8 @@ public sealed class SimulationRunner
         // off and a small output budget — it only ever emits a small JSON object — and a derived seed keeps
         // the whole run replayable.
         var resolverConfig = _options.Agents.RulebookResolver;
-        var resolverBase = AgentModelProfile.FromOptions("RulebookResolver", resolverConfig.Overlay(defaults));
+        var resolverBase = AgentModelProfile.FromOptions(
+            "RulebookResolver", resolverConfig.Overlay(defaults), enforceWindow);
         var rulebookResolverProfile = resolverBase with
         {
             Temperature = resolverConfig.Temperature ?? 0.1f,
@@ -204,16 +211,29 @@ public sealed class SimulationRunner
             {
                 var catalog = new RuleCatalog();
                 var retriever = new RuleRetriever(catalog, harness.RulebookMaxCards, harness.RulebookMaxInputChars);
+                // Fail loudly if the whole book cannot be sent to this resolver with room to answer in. The
+                // provider does not error on an over-full request — it returns a truncated reply that reads
+                // downstream as malformed guidance — so the only place to catch it is before the run starts.
+                RulebookRequestBudget.Validate(catalog, _prompts, rulebookResolverProfile, harness.RulebookOutputTokens);
+
                 var validator = new RuleGuidanceValidator(catalog);
                 var cache = new RuleGuidanceCache();
                 var resolver = new RulebookResolver(
                     rulebookResolverProfile,
                     CreateTracingClient(rulebookResolverProfile, trace, clients),
                     _prompts);
+                // The card-selection strategy. Null keeps the shipped path (the whole book, every time);
+                // anything else is experimental, configured explicitly, and falls back to that same path
+                // whenever it is not confident.
+                var selector = RuleSelectorFactory.Create(
+                    harness, _options.Providers, catalog, rulebookResolverProfile,
+                    profile => CreateTracingClient(profile, trace, clients));
+
                 rulebook = new RulebookConsultant(catalog, retriever, resolver, validator, cache, trace,
                     new RulebookConsultationOptions(
                         harness.RulebookMaxCards, harness.RulebookMaxInputChars,
-                        harness.RulebookOutputTokens, harness.RulebookCacheEnabled));
+                        harness.RulebookOutputTokens, harness.RulebookCacheEnabled),
+                    selector);
             }
 
             var characterPrompts = new CharacterPromptFactory(_prompts);
@@ -240,6 +260,21 @@ public sealed class SimulationRunner
             if (harness.EnableRulebookResolver)
             {
                 profilesForManifest["RulebookResolver"] = TracedAgentProfile.From(rulebookResolverProfile);
+            }
+
+            // The derived agents are recorded too. They are not configured directly — each is the Dungeon
+            // Master's profile with fixed overrides — which is exactly why they were missing from the
+            // manifest, and exactly why they need to be in it: nothing else states what they actually ran
+            // with. A run where the intent parser's temperature mattered could not be read without them.
+            if (harness.UseIntentParser)
+            {
+                profilesForManifest[IntentParser.AgentIdentifier] = TracedAgentProfile.From(intentParserProfile);
+            }
+
+            if (harness.SummariseHistory)
+            {
+                profilesForManifest[HistorySummariser.AgentIdentifier] =
+                    TracedAgentProfile.From(historySummariserProfile);
             }
 
             WriteManifest(paths, startedAt, initialState, profilesForManifest, seeds);
@@ -293,6 +328,8 @@ public sealed class SimulationRunner
                 ? $"Run seed: {masterSeed} (fixed)."
                 : $"Run seed: {masterSeed} (random). {seeds.ReplayHint}");
             _console.Notice(DescribeTeams(initialState));
+            ReportContextWindowRegime(
+                [dungeonMasterProfile, rulebookResolverProfile, .. characterProfiles.Values], enforceWindow);
 
             var narrationLog = new NarrationLog();
             var formatter = new WorldStateFormatter(_prompts);
@@ -328,14 +365,51 @@ public sealed class SimulationRunner
         }
     }
 
-    private AgentModelProfile ResolveCharacterProfile(CharacterDefinition character, AgentProfileOptions defaults, long masterSeed)
+    private AgentModelProfile ResolveCharacterProfile(
+        CharacterDefinition character, AgentProfileOptions defaults, long masterSeed, bool enforceWindow)
     {
         var overrides = _options.Agents.Characters.TryGetValue(character.Id, out var configured)
             ? configured
             : new AgentProfileOptions();
 
-        return AgentModelProfile.FromOptions(character.Name, overrides.Overlay(defaults))
+        return AgentModelProfile.FromOptions(character.Name, overrides.Overlay(defaults), enforceWindow)
             with { Seed = RunSeeds.Derive(masterSeed, RunSeeds.AgentKey(character.Id)) };
+    }
+
+    /// <summary>
+    /// Says out loud when a configured context window is not the one being budgeted against, so the run
+    /// starts with the reader knowing which regime it is in.
+    /// </summary>
+    /// <remarks>
+    /// Silence was the problem worth fixing. A hosted run inheriting the Ollama-tuned <c>ContextWindow</c>
+    /// summarised its characters' histories every other turn against a ceiling the provider never applied,
+    /// and nothing in the console, the trace or the report said so — the setting was simply dropped from
+    /// the request and forgotten. Both regimes are legitimate; neither should be arrived at by accident.
+    /// </remarks>
+    private void ReportContextWindowRegime(IEnumerable<AgentModelProfile> profiles, bool enforceWindow)
+    {
+        var unbounded = profiles
+            .Where(p => p.ContextWindow is > 0 && p.BindingContextWindow is null)
+            .Select(p => $"{p.AgentName} ({p.Provider}:{p.ModelId})")
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (unbounded.Count == 0)
+        {
+            if (enforceWindow)
+            {
+                _console.Notice(
+                    "Context windows are enforced on all providers, including hosted ones (levelled comparison).");
+            }
+
+            return;
+        }
+
+        _console.Notice(
+            $"ContextWindow is configured but not applied for {unbounded.Count} agent(s) — " +
+            $"{string.Join(", ", unbounded)} — because the provider sets its own window per model. " +
+            "History will not be summarised to fit it. Set Harness.EnforceContextWindowOnHostedModels " +
+            "to hold these agents to the configured window instead.");
     }
 
     private void WriteReport(RunPaths paths)

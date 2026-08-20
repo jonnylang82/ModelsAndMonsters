@@ -58,6 +58,55 @@ public sealed class AgentConversationTests
     }
 
     [Fact]
+    public void CompactTurn_drops_the_reasoning_a_model_wrote_alongside_its_tool_call()
+    {
+        // Models with reasoning off think on the page, and providers put that text and the tool call in ONE
+        // assistant message. Keeping the message whole because it "carries a tool call" therefore kept the
+        // deliberation as well — a median of 310 characters per turn in a live run, every turn, accumulating
+        // in a history the summariser then has to pay to compress.
+        var convo = new AgentConversation("Rowan", "system prompt");
+        convo.AppendUser("It is your turn.");
+        var mark = convo.Count;
+
+        var call = new FunctionCallContent("c1", "take_action",
+            new Dictionary<string, object?> { ["intent"] = "I raise my blade to guard Elara." });
+        convo.Append(new ChatMessage(ChatRole.Assistant,
+        [
+            new TextContent("Rowan is wounded and Elara is exposed. If I step across now I can take the blow "
+                            + "meant for her, and I still have the strength for one more guard."),
+            call
+        ]));
+        convo.AppendToolResult("c1", "You step in front of Elara.");
+
+        convo.CompactTurn(mark);
+
+        // The call and its result survive; the paragraph that led to them does not.
+        var assistant = Assert.Single(convo.Messages, m => m.Role == ChatRole.Assistant);
+        Assert.Equal("c1", Assert.Single(assistant.Contents.OfType<FunctionCallContent>()).CallId);
+        Assert.Empty(assistant.Contents.OfType<TextContent>());
+        Assert.Contains(convo.Messages, m => m.Role == ChatRole.Tool);
+    }
+
+    [Fact]
+    public void CompactTurn_leaves_a_clean_call_message_exactly_as_it_arrived()
+    {
+        // Nothing is rebuilt when there is nothing to shed, so a reply that was already just a call keeps its
+        // identity rather than being replaced by an equivalent copy.
+        var convo = new AgentConversation("Rowan", "system prompt");
+        convo.AppendUser("It is your turn.");
+        var mark = convo.Count;
+
+        var call = new FunctionCallContent("c1", "take_action", new Dictionary<string, object?> { ["intent"] = "I guard." });
+        var original = new ChatMessage(ChatRole.Assistant, [call]);
+        convo.Append(original);
+        convo.AppendToolResult("c1", "You raise your guard.");
+
+        convo.CompactTurn(mark);
+
+        Assert.Same(original, Assert.Single(convo.Messages, m => m.Role == ChatRole.Assistant));
+    }
+
+    [Fact]
     public void CompactTurn_is_a_no_op_when_the_turn_added_only_clean_calls()
     {
         var convo = new AgentConversation("Elara", "system");

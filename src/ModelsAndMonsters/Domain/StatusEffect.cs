@@ -1,8 +1,8 @@
 namespace ModelsAndMonsters.Domain;
 
 /// <summary>
-/// The status effects the v0.7 engine understands. Deliberately closed: a status is only ever one of
-/// these five kinds, so narration can never invent one and no model can create a new kind.
+/// The status effects the v0.8 engine understands. Deliberately closed: a status is only ever one of
+/// these six kinds, so narration can never invent one and no model can create a new kind.
 /// </summary>
 public enum StatusEffectKind
 {
@@ -19,7 +19,15 @@ public enum StatusEffectKind
     OffBalance,
 
     /// <summary>Reduces the final damage of the next successful attack against the holder by its modifier.</summary>
-    Defending
+    Defending,
+
+    /// <summary>
+    /// The public shadow of <see cref="Character.Fear"/> at or above <see cref="FearRules.ScaredThreshold"/>.
+    /// It carries no mechanical modifier of its own and it never expires on a clock: the engine applies and
+    /// removes it as the number crosses the threshold, and nothing else may. It exists so that everyone
+    /// present can observe that a character has lost their nerve without ever learning the number behind it.
+    /// </summary>
+    Scared
 }
 
 /// <summary>
@@ -35,7 +43,15 @@ public enum StatusExpiryRule
     StartOfTargetNextTurn,
 
     /// <summary>Removed at the end of the TARGET character's next turn (Rallied, OffBalance).</summary>
-    EndOfTargetNextTurn
+    EndOfTargetNextTurn,
+
+    /// <summary>
+    /// Never swept by the turn clock. The engine removes it when the condition behind it stops holding —
+    /// today that is only <see cref="StatusEffectKind.Scared"/>, which lasts exactly as long as the fear that
+    /// caused it. Turn upkeep matches on the three rules above, so a status carrying this one is simply never
+    /// due, which is what keeps morale out of the expiry sweep without a special case inside it.
+    /// </summary>
+    WhileConditionHolds
 }
 
 /// <summary>Who can see a status effect. Every v0.7 status is applied by a public, observable act.</summary>
@@ -107,6 +123,7 @@ public sealed record StatusEffectInstance
         StatusEffectKind.Rallied => "rallied",
         StatusEffectKind.OffBalance => "off balance",
         StatusEffectKind.Defending => "behind their guard",
+        StatusEffectKind.Scared => "scared",
         _ => Kind.ToString()
     };
 
@@ -118,6 +135,7 @@ public sealed record StatusEffectInstance
         StatusEffectKind.Rallied => $"rallied — next attack is {Modifier:+#;-#;0} to land",
         StatusEffectKind.OffBalance => $"off balance — next attack is {Modifier:+#;-#;0} to land",
         StatusEffectKind.Defending => $"defending — the next blow that lands deals {Math.Abs(Modifier)} less damage",
+        StatusEffectKind.Scared => "scared — shaken, and increasingly concerned with staying alive. It changes no odds by itself",
         _ => Kind.ToString()
     };
 }

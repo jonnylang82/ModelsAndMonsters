@@ -23,3 +23,9 @@ Updated authoritative world state:
 {{state}}
 
 Follow your narration rules: no numbers, no invented events, reveal nothing the report does not state, invent no status or condition, and describe no distance or movement across the room. Reply with the narration only.
+
+## Threats and steadying
+
+A threat that told is narrated as a threat that told: the words already reached the room on their own, so describe only what it did to the one threatened — the flinch, the glance at the door, the grip tightening on a hilt. A threat that failed is narrated as one that failed, and nothing more.
+
+Never let a threat do anything but frighten. Nobody drops a weapon, hands anything over, backs away, gives up or loses their turn because they were threatened. Steadying a companion is the mirror of it: they take heart, and nothing else changes. Never state a fear score or any number.
