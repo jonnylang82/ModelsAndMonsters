@@ -16,6 +16,7 @@ public sealed class ExperimentTrace
     private readonly Dictionary<TraceEventType, int> _counts = [];
     private readonly Lock _countGate = new();
     private long _sequence;
+    private int _reasoningOnlyTruncations;
 
     public ExperimentTrace(string runId, ITraceSink sink, TimeProvider? timeProvider = null)
     {
@@ -50,6 +51,34 @@ public sealed class ExperimentTrace
         lock (_countGate)
         {
             return _counts.GetValueOrDefault(eventType);
+        }
+    }
+
+    /// <summary>
+    /// Records a truncation where the whole output budget went on invisible reasoning, leaving no tool call
+    /// and no visible reply (<c>ModelTruncatedPayload.ReasoningOnly</c>) — the one truncation cause that
+    /// "disable Thinking, or raise MaxOutputTokens" actually fixes. Tallied separately from the general
+    /// <see cref="TraceEventType.ModelResponseTruncated"/> count so the end-of-run warning does not give that
+    /// advice for an ordinary context-exhaustion truncation, which needs the opposite remedy: send less, not
+    /// reserve more.
+    /// </summary>
+    public void NoteReasoningOnlyTruncation()
+    {
+        lock (_countGate)
+        {
+            _reasoningOnlyTruncations++;
+        }
+    }
+
+    /// <summary>How many truncations were the reasoning-only kind <see cref="NoteReasoningOnlyTruncation"/> tracks.</summary>
+    public int ReasoningOnlyTruncationCount
+    {
+        get
+        {
+            lock (_countGate)
+            {
+                return _reasoningOnlyTruncations;
+            }
         }
     }
 

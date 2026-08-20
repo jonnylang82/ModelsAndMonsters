@@ -25,6 +25,12 @@ public sealed class RunSession
 
     public CancellationTokenSource Cancellation { get; } = new();
 
+    /// <summary>
+    /// When this run finished, so <see cref="RunManager"/> can evict it once nobody could still be replaying
+    /// it. Null while the run is live.
+    /// </summary>
+    public DateTimeOffset? CompletedAt { get; private set; }
+
     /// <summary>Records an event and fans it out to every connected viewer.</summary>
     public void Publish(UiEvent uiEvent)
     {
@@ -62,12 +68,26 @@ public sealed class RunSession
         return channel.Reader;
     }
 
+    /// <summary>
+    /// Unsubscribes a viewer that disconnected, so a channel nobody is reading any more stops receiving
+    /// events. Without this an unbounded channel left over from a closed SSE connection keeps queuing every
+    /// event published for the rest of the run, holding them in memory for a reader that will never arrive.
+    /// </summary>
+    public void Unsubscribe(ChannelReader<UiEvent> reader)
+    {
+        lock (_gate)
+        {
+            _subscribers.RemoveAll(subscriber => subscriber.Reader == reader);
+        }
+    }
+
     /// <summary>Marks the run finished and closes every viewer's stream.</summary>
     public void Complete()
     {
         lock (_gate)
         {
             _completed = true;
+            CompletedAt = DateTimeOffset.UtcNow;
             foreach (var subscriber in _subscribers)
             {
                 subscriber.Writer.TryComplete();
@@ -85,6 +105,14 @@ public sealed class RunSession
 /// </summary>
 public sealed class RunManager
 {
+    /// <summary>
+    /// How long a finished run stays reachable by id after it completes — long enough for a viewer to
+    /// reconnect and replay the ending, short enough that a long-lived host does not accumulate every run
+    /// it has ever started. A completed session still holds its whole event buffer in memory, so retaining
+    /// every one indefinitely is unbounded growth for no benefit once nobody is going to ask for it again.
+    /// </summary>
+    private static readonly TimeSpan CompletedRunRetention = TimeSpan.FromMinutes(30);
+
     private readonly ConcurrentDictionary<string, RunSession> _runs = new(StringComparer.OrdinalIgnoreCase);
     private readonly SimulationOptions _options;
     private readonly ScenarioDefinition _scenario;
@@ -114,6 +142,8 @@ public sealed class RunManager
     /// </summary>
     public RunSession Start(string? scenarioId = null)
     {
+        PruneCompletedRuns();
+
         // A provisional id so a viewer can subscribe the instant this returns; replaced with the real run id
         // once the runner reports it in the runHeader event.
         var session = new RunSession($"pending-{Guid.NewGuid():N}");
@@ -163,6 +193,24 @@ public sealed class RunManager
         if (!string.Equals(session.RunId, realRunId, StringComparison.OrdinalIgnoreCase))
         {
             _runs[realRunId] = session;
+        }
+    }
+
+    /// <summary>
+    /// Evicts sessions that finished more than <see cref="CompletedRunRetention"/> ago. A rekeyed run is
+    /// reachable under both its provisional and real id, and each is its own dictionary entry pointing at the
+    /// same <see cref="RunSession"/> — pruning both is just a normal part of this same sweep, since each
+    /// entry is checked against that session's own <see cref="RunSession.CompletedAt"/> independently.
+    /// </summary>
+    private void PruneCompletedRuns()
+    {
+        var cutoff = DateTimeOffset.UtcNow - CompletedRunRetention;
+        foreach (var (id, session) in _runs)
+        {
+            if (session.CompletedAt is { } completedAt && completedAt < cutoff)
+            {
+                _runs.TryRemove(id, out _);
+            }
         }
     }
 }

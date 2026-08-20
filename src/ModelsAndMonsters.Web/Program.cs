@@ -75,6 +75,12 @@ app.MapGet("/api/runs/{id}/events", async (string id, RunManager runs, HttpConte
     {
         // The viewer disconnected; nothing to do — the run keeps going for any other viewer.
     }
+    finally
+    {
+        // Otherwise this viewer's channel lingers in the session's subscriber list for the rest of the run,
+        // still being written to by every subsequent Publish with nothing left to ever read it.
+        session.Unsubscribe(reader);
+    }
 });
 
 app.MapPost("/api/runs/{id}/cancel", (string id, RunManager runs) =>

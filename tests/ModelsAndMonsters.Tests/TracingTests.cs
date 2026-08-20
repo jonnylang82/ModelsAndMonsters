@@ -33,6 +33,32 @@ public sealed class TracingTests
     }
 
     [Fact]
+    public async Task Newly_injected_is_correct_even_when_a_fresh_projection_matches_the_previous_message_count()
+    {
+        // The Dungeon Master's two calls this turn — dm.adjudicate then dm.narrate.outcome — go through the
+        // very same TracingChatClient (one per agent) and each runs on its own fresh, bounded projection: a
+        // system prompt plus one user message, so both requests carry exactly two messages. A count-only diff
+        // would see "2 == 2" on the second call and report nothing newly injected, even though it is an
+        // entirely different conversation with a different system prompt and different content.
+        var harness = new OrchestrationHarness(
+            AcceptedAttackDungeonMaster(),
+            new ScriptedChatClient(ScriptedChatClient.Call("h-1", CharacterTools.TakeActionName, ("intent", "I strike."))),
+            new ScriptedChatClient());
+
+        await harness.RunHeroTurn();
+
+        var dmRequests = harness.Sink.Payloads<ModelRequestPayload>(TraceEventType.ModelRequest)
+            .Where(r => r.AgentName == DungeonMasterAgent.AgentIdentifier)
+            .ToList();
+        var adjudicate = dmRequests.Single(r => r.Purpose == "dm.adjudicate");
+        var narrateOutcome = dmRequests.Single(r => r.Purpose == "dm.narrate.outcome");
+
+        Assert.Equal(adjudicate.Messages.Count, narrateOutcome.Messages.Count);
+        Assert.Equal(narrateOutcome.Messages.Count, narrateOutcome.NewlyInjected.Count);
+        Assert.Contains("damage dealt", narrateOutcome.NewlyInjected[^1].Text!, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task A_model_request_records_the_full_message_collection_options_and_tool_schemas()
     {
         var harness = new OrchestrationHarness(

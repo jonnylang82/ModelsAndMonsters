@@ -955,12 +955,20 @@ public sealed class TurnCoordinator
 
         for (var retry = 0; calls.Count == 0 && retry < _limits.MaxAdjudicationRetries; retry++)
         {
-            var truncated = character.WasReplyCutShort(response);
+            var truncated = _dungeonMaster.WasAdjudicationReplyCutShort(response);
             if (truncated)
             {
-                _console.Notice(
-                    "The Dungeon Master's ruling hit the output-token limit. " +
-                    "Consider raising MaxOutputTokens for the DungeonMaster agent.");
+                // On a shared window (Ollama) the adjudication cap is deliberately tight — see
+                // DungeonMasterAgent.AdjudicationOutputBudget — and raising it steals room from the very
+                // request that carries the largest input, so that is never the advice there. The retry
+                // already in flight is the actual fix for that case.
+                _console.Notice(_dungeonMaster.Profile.BindingContextWindow is not null
+                    ? "The Dungeon Master's ruling hit its adjudication output cap without producing a tool " +
+                      "call — most often a model deliberating in prose instead of calling a tool. Retrying now; " +
+                      "raising MaxOutputTokens would not help here, since the window is shared between input " +
+                      "and output."
+                    : "The Dungeon Master's ruling hit the output-token limit. " +
+                      "Consider raising MaxOutputTokens for the DungeonMaster agent.");
             }
 
             _trace.Emit(TraceEventType.ToolCallError, new ToolCallErrorPayload
@@ -2999,6 +3007,9 @@ public sealed class TurnCoordinator
     /// without revealing anything — a thief with no basis is refused whether or not the target actually
     /// carries the item. Returns false (basis present, let it proceed to the engine) when the item does not
     /// resolve against the target, so the engine gives the ordinary "not carrying it" refusal instead.
+    /// Hearsay counts here exactly as it does for <see cref="TakeLacksKnowledgeBasis"/> — the v0.6
+    /// specification lists "being told about it" as a valid basis for theft specifically, and the two gates
+    /// must not diverge on what counts as a reason to reach for an item.
     /// </summary>
     private bool StealLacksKnowledgeBasis(CharacterAgent character, StealItemAction steal, out string reason)
     {
@@ -3013,7 +3024,8 @@ public sealed class TurnCoordinator
             return false;
         }
 
-        return !_knowledge.KnowsItem(character.CharacterId, item.Id);
+        return !_knowledge.KnowsItem(character.CharacterId, item.Id)
+            && !HeardItemMentioned(character.CharacterId, item.Name);
     }
 
     /// <summary>

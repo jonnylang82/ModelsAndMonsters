@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/ModelsAndMonsters/ModelsAndMonsters.csproj" />
+    <Project Path="src/ModelsAndMonsters.Web/ModelsAndMonsters.Web.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/ModelsAndMonsters.Tests/ModelsAndMonsters.Tests.csproj" />

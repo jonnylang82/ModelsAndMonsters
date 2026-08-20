@@ -99,6 +99,17 @@ public sealed class DungeonMasterAgent : ModelAgent
     private int? AdjudicationOutputBudget =>
         Profile.BindingContextWindow is null ? null : AdjudicationOutputTokens;
 
+    /// <summary>
+    /// Whether a reply from <see cref="ProposeActionAsync"/> or <see cref="RetryProposeActionAsync"/> was cut
+    /// short, checked against the budget actually applied to that call — <see cref="AdjudicationOutputBudget"/>,
+    /// not the agent's general-purpose <c>MaxOutputTokens</c>. The two can differ substantially (the profile's
+    /// configured allowance is sized for narration prose), and diagnosing an adjudication truncation against
+    /// the wrong figure can both miss a real truncation and, on the fallback path used when a provider reports
+    /// no finish reason, misjudge one that did not happen.
+    /// </summary>
+    public bool WasAdjudicationReplyCutShort(ChatResponse response) =>
+        WasReplyCutShort(response, AdjudicationOutputBudget);
+
     private readonly PromptLibrary _prompts;
     private readonly bool _useProjections;
 

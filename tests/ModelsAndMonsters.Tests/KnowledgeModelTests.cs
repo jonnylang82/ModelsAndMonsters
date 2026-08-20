@@ -107,6 +107,20 @@ public sealed class KnowledgeModelTests
         Assert.Equal(EngineRejectionReason.ActorIsDead, result.RejectionReason);
     }
 
+    [Theory]
+    [InlineData(CharacterDisposition.Surrendered)]
+    [InlineData(CharacterDisposition.Escaped)]
+    public void A_surrendered_or_escaped_actor_cannot_inspect(CharacterDisposition disposition)
+    {
+        var inactive = TestWorld.Rowan() with { Disposition = disposition };
+        var engine = EngineWith(TestWorld.StateWith([TestWorld.MedicineCase()], inactive, TestWorld.Vark()));
+
+        var result = engine.Execute(new InspectObjectAction("Rowan", "Faded Shrine Medicine Case"));
+
+        Assert.False(result.Accepted);
+        Assert.Equal(EngineRejectionReason.ActorNotActive, result.RejectionReason);
+    }
+
     // ------------------------------------------------------------------------------------------
     // The ledger: sources, world versions, deduplication, and historical stability (#10, #11, #12)
     // ------------------------------------------------------------------------------------------

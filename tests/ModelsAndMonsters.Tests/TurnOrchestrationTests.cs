@@ -750,6 +750,10 @@ public sealed class TurnOrchestrationTests
         // The turn still recovers on the next reply.
         Assert.Equal(TurnOutcome.ActionResolved, result.Outcome);
         Assert.Contains(harness.Console.Lines, l => l.Contains("output-token limit", StringComparison.Ordinal));
+
+        // An ordinary output-budget truncation with visible text is not a reasoning-only one, so it must not
+        // count toward the dedicated reasoning-starvation tally.
+        Assert.Equal(0, harness.Trace.ReasoningOnlyTruncationCount);
     }
 
     [Fact]
@@ -798,8 +802,28 @@ public sealed class TurnOrchestrationTests
         Assert.False(truncation.HadToolCalls);
         Assert.Contains("thinking", truncation.Effect, StringComparison.OrdinalIgnoreCase);
 
+        // Tallied on the trace's dedicated reasoning-only counter, not just the general truncation count —
+        // this is what lets the end-of-run warning single out reasoning starvation from a plain
+        // context-exhaustion truncation, which needs the opposite fix.
+        Assert.Equal(1, harness.Trace.ReasoningOnlyTruncationCount);
+
         // The turn still recovers on the next, complete reply.
         Assert.Equal(TurnOutcome.ActionResolved, result.Outcome);
+    }
+
+    [Fact]
+    public void Adjudication_truncation_is_diagnosed_against_the_DMs_own_tightened_budget_not_a_characters()
+    {
+        // On a shared window (Ollama, configured here — see OrchestrationHarness.Profile) the Dungeon
+        // Master's adjudication runs on a small 400-token cap (DungeonMasterAgent.AdjudicationOutputBudget),
+        // far below any agent's general-purpose MaxOutputTokens. A provider that reports no finish reason
+        // leaves only the usage numbers to go on, and those must be read against the cap that was actually
+        // applied to the call — never against some other agent's profile, and never against the unbounded
+        // general-purpose allowance, either of which would silently miss this truncation.
+        var harness = new OrchestrationHarness(new ScriptedChatClient(), new ScriptedChatClient(), new ScriptedChatClient());
+        var response = ScriptedChatClient.TruncatedWithoutFinishReason("The blow lands, but", outputTokens: 395);
+
+        Assert.True(harness.DungeonMaster.WasAdjudicationReplyCutShort(response));
     }
 
     [Fact]

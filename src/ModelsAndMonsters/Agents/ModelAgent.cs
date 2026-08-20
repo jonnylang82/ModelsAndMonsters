@@ -233,6 +233,14 @@ public abstract class ModelAgent
     /// True when a reply was cut short — by finish reason where the provider reports one, and otherwise by
     /// its own usage numbers.
     /// </summary>
+    /// <param name="maxOutputTokensOverride">
+    /// The output budget actually applied to the call that produced <paramref name="response"/>, when it
+    /// differs from <see cref="AI.AgentModelProfile.MaxOutputTokens"/> — for example the Dungeon Master's
+    /// tightened adjudication cap. A per-call cap is never written back into <see cref="Profile"/> (see
+    /// <see cref="SendWithTransientRetryAsync"/>), so a caller diagnosing a call made under one must pass it
+    /// explicitly or this falls back to the agent's general-purpose configured limit, which can be
+    /// substantially larger than what the call was actually allowed to spend. Null uses the profile's figure.
+    /// </param>
     /// <remarks>
     /// Not every provider reports a finish reason. An OpenAI-driven run produced 109 responses with
     /// <see cref="ChatResponse.FinishReason"/> null on every one, which left <see cref="WasTruncated"/>
@@ -241,27 +249,29 @@ public abstract class ModelAgent
     /// it answers the question directly — a reply that spent its whole output budget, or that filled the
     /// context window, was cut short whatever the provider chose to say about it.
     /// </remarks>
-    public bool WasReplyCutShort(ChatResponse response)
+    public bool WasReplyCutShort(ChatResponse response, int? maxOutputTokensOverride = null)
     {
         if (WasTruncated(response))
         {
             return true;
         }
 
+        var maxOutputTokens = maxOutputTokensOverride ?? Profile.MaxOutputTokens;
+
         // Only inferred when the provider declined to say. A reported reason is authoritative, so a normal
         // stop is never second-guessed just because the reply happened to be long.
         return response.FinishReason is null
-            && (WasContextExhausted(response)
-                || ContextTruncation.WasOutputBudgetSpent(response.Usage?.OutputTokenCount, Profile.MaxOutputTokens));
+            && (WasContextExhausted(response, maxOutputTokens)
+                || ContextTruncation.WasOutputBudgetSpent(response.Usage?.OutputTokenCount, maxOutputTokens));
     }
 
-    public bool WasContextExhausted(ChatResponse response) =>
+    public bool WasContextExhausted(ChatResponse response, int? maxOutputTokensOverride = null) =>
         (WasTruncated(response) || response.FinishReason is null)
         && ContextTruncation.WasContextExhausted(
             response.Usage?.InputTokenCount,
             response.Usage?.OutputTokenCount,
             Profile.BindingContextWindow,
-            Profile.MaxOutputTokens);
+            maxOutputTokensOverride ?? Profile.MaxOutputTokens);
 
     /// <summary>Records the application's answer to a tool call in this agent's history.</summary>
     public void AppendToolResult(FunctionCallContent call, object? result) =>

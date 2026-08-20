@@ -125,6 +125,36 @@ public sealed class GameEngineTests
         Assert.Equal(EngineRejectionReason.ActorIsDead, deadAttacking.RejectionReason);
     }
 
+    [Theory]
+    [InlineData(CharacterDisposition.Surrendered)]
+    [InlineData(CharacterDisposition.Escaped)]
+    public void A_surrendered_or_escaped_actor_cannot_attack(CharacterDisposition disposition)
+    {
+        var inactive = TestWorld.Hero() with { Disposition = disposition };
+        var engine = TestWorld.Engine(inactive, TestWorld.Monster());
+
+        var result = engine.Execute(new AttackCharacterAction("Aric", "Grik", "Iron Sword"));
+
+        Assert.False(result.Accepted);
+        Assert.Equal(EngineRejectionReason.ActorNotActive, result.RejectionReason);
+    }
+
+    [Theory]
+    [InlineData(CharacterDisposition.Surrendered)]
+    [InlineData(CharacterDisposition.Escaped)]
+    public void A_surrendered_or_escaped_actor_cannot_use_an_item(CharacterDisposition disposition)
+    {
+        var inactive = TestWorld.Hero(inventory: [TestWorld.HealingPotion(4)]) with { Disposition = disposition };
+        var engine = TestWorld.Engine(inactive, TestWorld.Monster());
+
+        var result = engine.Execute(new UseItemAction("Aric", "Small Healing Potion"));
+
+        Assert.False(result.Accepted);
+        Assert.Equal(EngineRejectionReason.ActorNotActive, result.RejectionReason);
+        // Not consumed: a refused attempt from an inactive actor leaves the item in place.
+        Assert.Single(engine.State.RequireById(TestWorld.HeroId).Inventory);
+    }
+
     [Fact]
     public void A_rejected_action_does_not_mutate_state()
     {

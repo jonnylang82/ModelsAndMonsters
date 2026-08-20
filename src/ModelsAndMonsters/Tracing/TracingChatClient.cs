@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Diagnostics;
+using System.Text.Json;
 using Microsoft.Extensions.AI;
 using ModelsAndMonsters.AI;
 
@@ -26,7 +27,7 @@ public sealed class TracingChatClient : DelegatingChatClient
     private readonly ExperimentTrace _trace;
     private readonly AgentModelProfile _profile;
     private CallScopeState _current = CallScopeState.Unspecified;
-    private int _messagesTracedLastCall;
+    private IReadOnlyList<string> _lastTracedMessageFingerprints = [];
     private long _callCounter;
 
     public TracingChatClient(IChatClient innerClient, AgentModelProfile profile, ExperimentTrace trace)
@@ -100,11 +101,25 @@ public sealed class TracingChatClient : DelegatingChatClient
     {
         var traced = ChatTraceMapper.MapMessages(messages);
 
-        // Everything appended since this client's previous call is what was newly injected for this one.
-        IReadOnlyList<TracedMessage> newlyInjected = traced.Count > _messagesTracedLastCall
-            ? [.. traced.Skip(_messagesTracedLastCall)]
-            : [];
-        _messagesTracedLastCall = traced.Count;
+        // What is "newly injected" is everything after the longest run of messages that reads identically to
+        // the previous call, in order — not merely everything past the previous message COUNT. A raw count
+        // comparison silently reports nothing new whenever a fresh projection happens to carry the same
+        // number of messages as whatever this client sent last (routine for the Dungeon Master's bounded
+        // per-task projections, and indistinguishable from history compaction replacing messages in place
+        // without changing how many there are). Comparing content finds the true point of divergence instead:
+        // an unchanged system prompt still matches at index 0 and is correctly not "new", while switching to a
+        // differently-worded projection, or a genuinely appended message, both show up correctly.
+        var fingerprints = traced.Select(m => JsonSerializer.Serialize(m, TraceJson.Compact)).ToList();
+        var commonPrefixLength = 0;
+        while (commonPrefixLength < fingerprints.Count
+            && commonPrefixLength < _lastTracedMessageFingerprints.Count
+            && fingerprints[commonPrefixLength] == _lastTracedMessageFingerprints[commonPrefixLength])
+        {
+            commonPrefixLength++;
+        }
+
+        IReadOnlyList<TracedMessage> newlyInjected = [.. traced.Skip(commonPrefixLength)];
+        _lastTracedMessageFingerprints = fingerprints;
 
         _trace.Emit(TraceEventType.ModelRequest, new ModelRequestPayload
         {
@@ -183,6 +198,11 @@ public sealed class TracingChatClient : DelegatingChatClient
                     ? "A tool call survived, but any text alongside it is incomplete."
                     : "The reply was cut off before any tool call was produced."
         }, _profile.AgentName);
+
+        if (reasoningOnly)
+        {
+            _trace.NoteReasoningOnlyTruncation();
+        }
     }
 
     /// <summary>

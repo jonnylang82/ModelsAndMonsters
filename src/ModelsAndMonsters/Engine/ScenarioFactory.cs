@@ -24,6 +24,21 @@ public static class ScenarioFactory
             throw new InvalidOperationException($"Duplicate character id '{duplicateId.Key}' in scenario '{scenario.Id}'.");
         }
 
+        // Names, not just ids, must be unique: the Dungeon Master and every character refer to one another
+        // by name, and GameState.Resolve accepts a name as an alternative to an id and returns the first
+        // match. A scenario with two same-named characters would make that resolution silently ambiguous
+        // rather than reporting it, so it is refused here instead, at the one place that can still name
+        // the scenario responsible.
+        var duplicateName = scenario.Characters
+            .GroupBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault(g => g.Count() > 1);
+        if (duplicateName is not null)
+        {
+            throw new InvalidOperationException(
+                $"Duplicate character name '{duplicateName.Key}' in scenario '{scenario.Id}'. " +
+                "Every character must be addressable by a unique name.");
+        }
+
         var duplicateContainerId = scenario.Room.Containers
             .GroupBy(c => c.Id, StringComparer.OrdinalIgnoreCase)
             .FirstOrDefault(g => g.Count() > 1);
@@ -54,12 +69,61 @@ public static class ScenarioFactory
 
         var characters = scenario.Characters.Select(ToCharacter).ToImmutableArray();
 
+        ValidateGlobalItemIdentity(room, characters);
+
         return new GameState
         {
             Room = room,
             Characters = characters,
             Version = 0
         };
+    }
+
+    /// <summary>
+    /// Checks that every item id is unique across the whole scenario — not just within the one container or
+    /// inventory it was declared in. <see cref="Knowledge.KnowledgeLedger.KnowsItem"/> tracks what a
+    /// character knows purely by item id, so two unrelated items sharing an id (most easily reached when
+    /// neither is given an explicit id and both default to the same item name) would make discovering one
+    /// silently grant knowledge of the other, wherever it is hidden. Weapons are included for the same
+    /// completeness, even though an equipped weapon is never itself secret.
+    /// </summary>
+    private static void ValidateGlobalItemIdentity(Room room, ImmutableArray<Character> characters)
+    {
+        var seenAt = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        void CheckAndRecord(string itemId, string location)
+        {
+            if (seenAt.TryGetValue(itemId, out var firstLocation))
+            {
+                throw new InvalidOperationException(
+                    $"Item id '{itemId}' is used more than once in the scenario (first in {firstLocation}, " +
+                    $"again in {location}). Every item needs a scenario-wide unique id — knowledge of an item " +
+                    "is tracked by id, so two items sharing one would leak knowledge of one onto the other.");
+            }
+
+            seenAt[itemId] = location;
+        }
+
+        foreach (var container in room.Objects.OfType<Container>())
+        {
+            foreach (var item in container.Contents)
+            {
+                CheckAndRecord(item.Id, $"container '{container.Id}'");
+            }
+        }
+
+        foreach (var character in characters)
+        {
+            foreach (var item in character.Inventory)
+            {
+                CheckAndRecord(item.Id, $"{character.Id}'s inventory");
+            }
+
+            if (character.Weapon is not null)
+            {
+                CheckAndRecord(character.Weapon.Id, $"{character.Id}'s weapon");
+            }
+        }
     }
 
     private static Character ToCharacter(CharacterDefinition definition)

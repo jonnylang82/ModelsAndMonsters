@@ -615,6 +615,14 @@ public sealed class SimulationRunner
     /// Surfaces silent history loss once, at the end, rather than interrupting the transcript. If this
     /// fires, some replies were formed from a conversation the provider had already trimmed.
     /// </summary>
+    /// <remarks>
+    /// This event fires only for a provider whose <see cref="AI.ProviderCapabilities.SilentlyTruncatesHistory"/>
+    /// is true — currently Ollama alone — so every call to this warning is, by construction, about the one
+    /// provider this project's Qwen configuration keeps pinned at an 8,192-token window. "Raise
+    /// ContextWindow" is therefore never the right advice here: on Ollama it forces a second full copy of
+    /// the model's weights into memory rather than trimming anything, which is exactly the residency
+    /// constraint the project is built around.
+    /// </remarks>
     private void WarnAboutContextSaturation(ExperimentTrace trace)
     {
         var saturated = trace.CountOf(TraceEventType.ContextWindowSaturated);
@@ -625,26 +633,33 @@ public sealed class SimulationRunner
 
         _console.Notice(
             $"WARNING: on {saturated} model call(s) the provider reported processing far fewer input " +
-            "tokens than we sent. It silently discarded the oldest messages. Raise ContextWindow, " +
-            "shorten the run, or trim what each call sends.");
+            "tokens than we sent — it silently discarded the oldest messages. Raising ContextWindow is the " +
+            "wrong fix here: it forces a second full copy of the model's weights into memory. Shorten the " +
+            "run, lower RecentTurnsKeptFull, or enable history summarisation instead.");
     }
 
     /// <summary>
     /// Warns when a reasoning model spent its whole output budget thinking. The symptom otherwise is
     /// only "the Dungeon Master said nothing", which reads as a bug rather than a configuration issue.
     /// </summary>
+    /// <remarks>
+    /// Counts only <see cref="ExperimentTrace.ReasoningOnlyTruncationCount"/>, not every
+    /// <see cref="TraceEventType.ModelResponseTruncated"/> — a plain context-exhaustion truncation is
+    /// recorded under the same event type but has nothing to do with reasoning, and "disable Thinking or
+    /// raise MaxOutputTokens" is not a fix for it (that advice wants the opposite: send less).
+    /// </remarks>
     private void WarnAboutReasoningStarvation(ExperimentTrace trace)
     {
-        var starved = trace.CountOf(TraceEventType.ModelResponseTruncated);
+        var starved = trace.ReasoningOnlyTruncationCount;
         if (starved == 0)
         {
             return;
         }
 
         _console.Notice(
-            $"WARNING: {starved} model call(s) hit the output-token limit. If an agent uses a reasoning " +
-            "model, its thinking consumes the output budget and can leave no visible reply — set that " +
-            "agent's Thinking to false, or raise its MaxOutputTokens.");
+            $"WARNING: {starved} model call(s) spent their entire output budget on invisible reasoning and " +
+            "produced no visible reply or tool call. If that agent uses a reasoning model, set its Thinking " +
+            "to false, or raise its MaxOutputTokens.");
     }
 
     private static string DescribeTeams(GameState state)

@@ -650,10 +650,9 @@ public sealed class GameEngine : IGameEngine
                 $"There is no character called '{action.AttackerRef}' in the room.");
         }
 
-        if (!attacker.IsAlive)
+        if (!attacker.CanAct)
         {
-            return EngineResult.Reject(action, state, EngineRejectionReason.ActorIsDead,
-                $"{attacker.Name} is dead and cannot act.");
+            return RejectInactiveActor(action, state, attacker);
         }
 
         var target = state.Resolve(action.TargetRef);
@@ -1048,10 +1047,9 @@ public sealed class GameEngine : IGameEngine
                 $"There is no character called '{action.ActorRef}' in the room.");
         }
 
-        if (!actor.IsAlive)
+        if (!actor.CanAct)
         {
-            return EngineResult.Reject(action, state, EngineRejectionReason.ActorIsDead,
-                $"{actor.Name} is dead and cannot act.");
+            return RejectInactiveActor(action, state, actor);
         }
 
         // v0.1 only supports using an item on oneself.
@@ -1764,10 +1762,9 @@ public sealed class GameEngine : IGameEngine
                 $"There is no character called '{action.ActorRef}' in the room.");
         }
 
-        if (!actor.IsAlive)
+        if (!actor.CanAct)
         {
-            return EngineResult.Reject(action, state, EngineRejectionReason.ActorIsDead,
-                $"{actor.Name} is dead and cannot act.");
+            return RejectInactiveActor(action, state, actor);
         }
 
         var resolution = state.ResolveObject(action.ContainerRef);
@@ -1820,10 +1817,9 @@ public sealed class GameEngine : IGameEngine
                 $"There is no character called '{action.ActorRef}' in the room.");
         }
 
-        if (!actor.IsAlive)
+        if (!actor.CanAct)
         {
-            return EngineResult.Reject(action, state, EngineRejectionReason.ActorIsDead,
-                $"{actor.Name} is dead and cannot act.");
+            return RejectInactiveActor(action, state, actor);
         }
 
         var resolution = state.ResolveObject(action.ContainerRef);
@@ -1897,10 +1893,9 @@ public sealed class GameEngine : IGameEngine
                 $"There is no character called '{action.ActorRef}' in the room.");
         }
 
-        if (!actor.IsAlive)
+        if (!actor.CanAct)
         {
-            return EngineResult.Reject(action, state, EngineRejectionReason.ActorIsDead,
-                $"{actor.Name} is dead and cannot act.");
+            return RejectInactiveActor(action, state, actor);
         }
 
         var resolution = state.ResolveObject(action.ObjectRef);

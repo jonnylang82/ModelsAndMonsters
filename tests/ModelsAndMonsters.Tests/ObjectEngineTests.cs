@@ -75,7 +75,7 @@ public sealed class ObjectEngineTests
                 Name = "Old Iron-Bound Chest",
                 Description = "A squat, iron-banded chest.",
                 IsOpen = false,
-                Contents = [new ItemDefinition { Id = "small-healing-potion", Name = "Small Healing Potion", Description = "A vial.", HealingAmount = 5 }]
+                Contents = [new ItemDefinition { Id = "chest-healing-potion", Name = "Small Healing Potion", Description = "A vial.", HealingAmount = 5 }]
             }
         ];
 
@@ -147,6 +147,20 @@ public sealed class ObjectEngineTests
         Assert.Equal(EngineRejectionReason.ActorIsDead, result.RejectionReason);
     }
 
+    [Theory]
+    [InlineData(CharacterDisposition.Surrendered)]
+    [InlineData(CharacterDisposition.Escaped)]
+    public void A_surrendered_or_escaped_actor_cannot_open_a_chest(CharacterDisposition disposition)
+    {
+        var inactive = TestWorld.Rowan() with { Disposition = disposition };
+        var engine = EngineWith(TestWorld.StateWith([TestWorld.Chest()], inactive, TestWorld.Vark()));
+
+        var result = engine.Execute(new OpenContainerAction("Rowan", "Old Iron-Bound Chest"));
+
+        Assert.False(result.Accepted);
+        Assert.Equal(EngineRejectionReason.ActorNotActive, result.RejectionReason);
+    }
+
     // ------------------------------------------------------------------------------------------
     // Taking (tests #17, #18, #19)
     // ------------------------------------------------------------------------------------------
@@ -203,6 +217,20 @@ public sealed class ObjectEngineTests
         // Only Elara holds it; Rowan's hands stay empty.
         Assert.Single(engine.State.RequireById(TestWorld.ElaraId).Inventory);
         Assert.Empty(engine.State.RequireById(TestWorld.RowanId).Inventory);
+    }
+
+    [Theory]
+    [InlineData(CharacterDisposition.Surrendered)]
+    [InlineData(CharacterDisposition.Escaped)]
+    public void A_surrendered_or_escaped_actor_cannot_take_from_an_open_chest(CharacterDisposition disposition)
+    {
+        var inactive = TestWorld.Elara() with { Disposition = disposition };
+        var engine = EngineWith(TestWorld.StateWith([TestWorld.Chest(open: true)], inactive, TestWorld.Vark()));
+
+        var result = engine.Execute(new TakeItemAction("Elara", "Old Iron-Bound Chest", "Small Healing Potion"));
+
+        Assert.False(result.Accepted);
+        Assert.Equal(EngineRejectionReason.ActorNotActive, result.RejectionReason);
     }
 
     [Fact]
