@@ -45,6 +45,33 @@ public enum EngineRejectionReason
     TargetNotPresent,
     EquippedWeaponCannotBeTransferred,
 
+    // Negotiated surrender (v0.7).
+    OfferHasNoConcession,
+    RecipientIsNotAnOpponent,
+    OfferedItemNotOwned,
+    OfferedItemNotTransferable,
+    OfferedWeaponNotHeld,
+    DuplicatePendingOffer,
+    UnknownOffer,
+    OfferNotAddressedToActor,
+    OfferNoLongerPending,
+    OffererNotAvailable,
+    PromisedAssetNoLongerAvailable,
+
+    // Abilities and statuses (v0.7).
+    UnknownAbility,
+    AbilityNotHeld,
+    AbilityHasNoUsesLeft,
+    AbilityTargetRequired,
+    AbilityTargetNotAllowed,
+    AbilityTargetNotAlly,
+    AbilityTargetNotOpponent,
+    AbilityTargetIsSelf,
+    AbilityTargetNotAvailable,
+    TargetAlreadyAtFullHealth,
+    AbilityAlreadyActive,
+    TargetAlreadyGuarded,
+
     UnsupportedAction
 }
 
@@ -77,6 +104,19 @@ public sealed record EngineResult
     /// </summary>
     public IReadOnlyList<RngDraw> RngDraws { get; init; } = [];
 
+    /// <summary>
+    /// Every status-effect transition this action caused, in order: applied, consumed, expired or removed.
+    /// Empty for actions that touch no status. The orchestration layer traces these so a status is never
+    /// recorded only as its final effect on a number.
+    /// </summary>
+    public IReadOnlyList<StatusEvent> StatusEvents { get; init; } = [];
+
+    /// <summary>
+    /// Every surrender-offer state transition this action caused — an offer created, accepted, rejected by a
+    /// hostile act, or invalidated because a party left active play. Empty when no offer was touched.
+    /// </summary>
+    public IReadOnlyList<OfferTransition> OfferTransitions { get; init; } = [];
+
     public static EngineResult Reject(GameAction action, GameState state, EngineRejectionReason reason, string message) =>
         new()
         {
@@ -89,7 +129,9 @@ public sealed record EngineResult
         };
 
     public static EngineResult Accept(GameAction action, GameState before, GameState after, ActionOutcome outcome,
-        IReadOnlyList<RngDraw>? rngDraws = null) =>
+        IReadOnlyList<RngDraw>? rngDraws = null,
+        IReadOnlyList<StatusEvent>? statusEvents = null,
+        IReadOnlyList<OfferTransition>? offerTransitions = null) =>
         new()
         {
             Action = action,
@@ -97,6 +139,27 @@ public sealed record EngineResult
             StateBefore = before,
             StateAfter = after,
             Outcome = outcome,
-            RngDraws = rngDraws ?? []
+            RngDraws = rngDraws ?? [],
+            StatusEvents = statusEvents ?? [],
+            OfferTransitions = offerTransitions ?? []
         };
+}
+
+/// <summary>
+/// The upkeep the engine performed at the start or end of one actor's turn: the status effects that expired,
+/// and the surrender offers that lapsed. Deterministic and never random.
+/// </summary>
+/// <remarks>
+/// Upkeep is the engine's job, not the orchestration layer's, because expiry is authoritative state change
+/// with exact rules. The orchestration layer only traces what came back and tells the room.
+/// </remarks>
+public sealed record TurnUpkeep
+{
+    public static readonly TurnUpkeep None = new();
+
+    public IReadOnlyList<StatusEvent> StatusEvents { get; init; } = [];
+
+    public IReadOnlyList<OfferTransition> OfferTransitions { get; init; } = [];
+
+    public bool IsEmpty => StatusEvents.Count == 0 && OfferTransitions.Count == 0;
 }

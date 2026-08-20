@@ -84,6 +84,48 @@ internal sealed class ScriptedChatClient : IChatClient
         };
 
     /// <summary>
+    /// A reply cut off at the output budget by a provider that reports NO finish reason — the shape an
+    /// OpenAI-driven run produced on all 109 of its responses. Usage is the only evidence available.
+    /// </summary>
+    public static ChatResponse TruncatedWithoutFinishReason(string partialText, int outputTokens = 1500) =>
+        new(new ChatMessage(ChatRole.Assistant, partialText))
+        {
+            Usage = new UsageDetails { InputTokenCount = 2000, OutputTokenCount = outputTokens }
+        };
+
+    /// <summary>
+    /// A reply cut off with the window full by a provider that reports NO finish reason — the shape an
+    /// OpenAI-driven run produced on all 109 of its responses. Usage is the only evidence available.
+    /// </summary>
+    public static ChatResponse ContextExhaustedWithoutFinishReason(
+        string partialText, int window = 8192, int outputTokens = 40) =>
+        new(new ChatMessage(ChatRole.Assistant, partialText))
+        {
+            Usage = new UsageDetails
+            {
+                InputTokenCount = window - outputTokens,
+                OutputTokenCount = outputTokens,
+                TotalTokenCount = window
+            }
+        };
+
+    /// <summary>
+    /// A reply cut off because the CONTEXT WINDOW was already full: the input and the handful of output
+    /// tokens together account for the whole window, while the output budget sits barely touched.
+    /// </summary>
+    public static ChatResponse ContextExhausted(string partialText, int window = 8192, int outputTokens = 40) =>
+        new(new ChatMessage(ChatRole.Assistant, partialText))
+        {
+            FinishReason = ChatFinishReason.Length,
+            Usage = new UsageDetails
+            {
+                InputTokenCount = window - outputTokens,
+                OutputTokenCount = outputTokens,
+                TotalTokenCount = window
+            }
+        };
+
+    /// <summary>
     /// A reasoning model that spent its whole output budget thinking: the reply is a reasoning block
     /// with no visible text and no tool call, cut off at the token limit.
     /// </summary>

@@ -21,5 +21,11 @@ Weapon:
 Inventory:
 {{inventory}}
 
-Abilities:
+What you can do beyond a plain swing (nothing else is trained into you):
 {{abilities}}
+
+What is affecting you right now:
+{{statuses}}
+
+Terms of surrender on the table:
+{{offers}}

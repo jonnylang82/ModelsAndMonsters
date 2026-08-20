@@ -13,8 +13,30 @@ public sealed class DispositionExitEngineTests
 {
     private static GameEngine EngineWith(bool exitOpen, IRng? rng = null, params Character[] characters) =>
         new(TestWorld.StateWithExit(TestWorld.StairDoor(exitOpen),
-                characters.Length == 0 ? [TestWorld.Rowan(), TestWorld.Elara(health: 6), TestWorld.Vark(), TestWorld.Skrit()] : characters),
+                characters.Length == 0
+                    // Vark carries a purse in these tests because terms of surrender must promise a carried
+                    // item: the weapon alone is not enough (see GameEngine.ResolveOfferSurrender).
+                    ? [TestWorld.Rowan(), TestWorld.Elara(health: 6),
+                        TestWorld.Vark() with { Inventory = [TestWorld.Purse("vark")] }, TestWorld.Skrit()]
+                    : characters),
             rng ?? new SeededRng(1), CombatRules.NoGlancing);
+
+    /// <summary>
+    /// Puts a character out of the fight the only way v0.7 allows: they offer concrete terms to a named
+    /// opponent, and that opponent accepts. Since v0.7 there is no unilateral surrender at all — a character
+    /// cannot make itself untargetable by declaring anything — so every "surrendered" state in these tests is
+    /// reached through the negotiation, two accepted actions and two turns.
+    /// </summary>
+    private static (EngineResult Offer, EngineResult Accepted) NegotiatedSurrender(
+        GameEngine engine, string offerer, string recipient, bool forfeitWeapon = true, params string[] items)
+    {
+        // Terms must promise a carried item, so the offerer's purse stands in when a caller names none.
+        var promised = items.Length > 0 ? items : [$"purse-{offerer.ToLowerInvariant()}"];
+        var offer = engine.Execute(new OfferSurrenderAction(offerer, recipient, promised, forfeitWeapon));
+        var offerId = ((OfferSurrenderOutcome)offer.Outcome!).OfferId;
+        var accepted = engine.Execute(new AcceptSurrenderAction(recipient, offerId));
+        return (offer, accepted);
+    }
 
     // ------------------------------------------------------------------------------------------
     // Disposition derivations (the compatibility predicates all derive from one enum)
@@ -96,12 +118,13 @@ public sealed class DispositionExitEngineTests
 
         var open = engine.Execute(new OpenExitAction("Vark", "Cellar Stair Door"));
         var escape = engine.Execute(new EscapeEncounterAction("Skrit", "Cellar Stair Door"));
-        var surrender = engine.Execute(new SurrenderAction("Vark"));
+        var (offer, accepted) = NegotiatedSurrender(engine, "Vark", "Rowan");
 
-        Assert.True(open.Accepted && escape.Accepted && surrender.Accepted);
+        Assert.True(open.Accepted && escape.Accepted && offer.Accepted && accepted.Accepted);
         Assert.Empty(open.RngDraws);
         Assert.Empty(escape.RngDraws);
-        Assert.Empty(surrender.RngDraws);
+        Assert.Empty(offer.RngDraws);
+        Assert.Empty(accepted.RngDraws);
         // The shared combat generator was never advanced, so seeded replay of the fight is unaffected.
         Assert.Equal(0, rng.DrawCount);
     }
@@ -169,27 +192,51 @@ public sealed class DispositionExitEngineTests
     }
 
     // ------------------------------------------------------------------------------------------
-    // Surrendering (tests #10, #11, #12, #14)
+    // Surrendering, now negotiated (tests #10, #11, #12, #14, carried forward to v0.7)
     // ------------------------------------------------------------------------------------------
 
     [Fact]
-    public void Surrendering_sets_an_active_character_to_surrendered()
+    public void An_accepted_offer_sets_the_offerer_to_surrendered()
     {
         var engine = EngineWith(exitOpen: false);
         var versionBefore = engine.State.Version;
 
-        var result = engine.Execute(new SurrenderAction("Vark"));
+        var (offer, accepted) = NegotiatedSurrender(engine, "Vark", "Rowan");
 
-        Assert.True(result.Accepted);
+        Assert.True(offer.Accepted);
+        Assert.True(accepted.Accepted);
         Assert.Equal(CharacterDisposition.Surrendered, engine.State.RequireById(TestWorld.VarkId).Disposition);
-        Assert.Equal(versionBefore + 1, engine.State.Version);
+
+        // Two accepted state-changing actions on two turns: the offer, then the acceptance.
+        Assert.Equal(versionBefore + 2, engine.State.Version);
+    }
+
+    [Fact]
+    public void An_offer_alone_leaves_the_offerer_active_and_targetable()
+    {
+        var engine = EngineWith(exitOpen: false);
+
+        var offer = engine.Execute(new OfferSurrenderAction("Vark", "Rowan", ["purse-vark"], ForfeitWeapon: true));
+        Assert.True(offer.Accepted);
+
+        var vark = engine.State.RequireById(TestWorld.VarkId);
+        Assert.Equal(CharacterDisposition.Active, vark.Disposition);
+        Assert.True(vark.CanAct);
+        Assert.True(vark.IsCombatTarget);
+
+        // Nothing has been given up yet: the sabre is still in its hand.
+        Assert.NotNull(vark.Weapon);
+
+        // And it can still be cut down where it stands.
+        var attack = engine.Execute(new AttackCharacterAction("Rowan", "Vark", "Longsword"));
+        Assert.True(attack.Accepted);
     }
 
     [Fact]
     public void A_surrendered_character_stays_alive_and_present_but_cannot_act_or_be_targeted()
     {
         var engine = EngineWith(exitOpen: false);
-        engine.Execute(new SurrenderAction("Vark"));
+        NegotiatedSurrender(engine, "Vark", "Rowan");
 
         var vark = engine.State.RequireById(TestWorld.VarkId);
         Assert.True(vark.IsAlive);
@@ -197,8 +244,9 @@ public sealed class DispositionExitEngineTests
         Assert.False(vark.CanAct);
         Assert.False(vark.IsCombatTarget);
 
-        // It keeps its weapon — surrender takes nothing from it.
-        Assert.NotNull(vark.Weapon);
+        // Unlike v0.5's unilateral surrender, an accepted one disarms: the sabre left its hand.
+        Assert.Null(vark.Weapon);
+        Assert.True(vark.IsDisarmed);
 
         var attack = engine.Execute(new AttackCharacterAction("Rowan", "Vark", "Longsword"));
         Assert.False(attack.Accepted);
@@ -209,7 +257,7 @@ public sealed class DispositionExitEngineTests
     public void Surrender_does_not_change_a_teammate_disposition()
     {
         var engine = EngineWith(exitOpen: false);
-        engine.Execute(new SurrenderAction("Vark"));
+        NegotiatedSurrender(engine, "Vark", "Rowan");
 
         Assert.Equal(CharacterDisposition.Active, engine.State.RequireById(TestWorld.SkritId).Disposition);
     }
@@ -222,7 +270,7 @@ public sealed class DispositionExitEngineTests
     public void An_individual_surrender_does_not_end_the_encounter_while_a_teammate_is_active()
     {
         var engine = EngineWith(exitOpen: false);
-        engine.Execute(new SurrenderAction("Vark"));
+        NegotiatedSurrender(engine, "Vark", "Rowan");
 
         Assert.False(TerminalCondition.Evaluate(engine.State).IsOver);
     }
@@ -240,7 +288,7 @@ public sealed class DispositionExitEngineTests
     public void The_encounter_ends_when_one_team_has_no_active_characters_even_though_all_are_alive()
     {
         var engine = EngineWith(exitOpen: true);
-        engine.Execute(new SurrenderAction("Vark"));
+        NegotiatedSurrender(engine, "Vark", "Rowan");
         engine.Execute(new EscapeEncounterAction("Skrit", "Cellar Stair Door"));
 
         var result = TerminalCondition.Evaluate(engine.State);

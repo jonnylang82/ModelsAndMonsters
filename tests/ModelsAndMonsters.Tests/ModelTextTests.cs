@@ -72,29 +72,41 @@ public sealed class ModelTextTests
     }
 
     [Theory]
-    // A shout at another character written as prose instead of calling say — the real qwen/granite shape.
+    // The LEGACY fallback, which now fires only for a reply that produced no tool call at all. Speech is
+    // declared in the `utterances` field of the character's own call; this exists so a bare-prose reply from
+    // an old or very small model is recorded as a communication attempt rather than read as silence.
     [InlineData("I shout: \"Vark! Don't stand there gawking, decide now.\"", "Vark! Don't stand there gawking, decide now.")]
     [InlineData("I'm pressed to the wall. I shout at him: \"Vark, help me or stay silent!\"", "Vark, help me or stay silent!")]
-    [InlineData("say \"Elara, get behind me now\"", "Elara, get behind me now")]
-    [InlineData("Skrit yells, \"We must seize the moment before Rowan moves\"", "We must seize the moment before Rowan moves")]
     [InlineData("I whisper to her: “Stay close and watch the captain”", "Stay close and watch the captain")]
-    // Real qwen shapes from live runs: the speech verb sits a clause before the quote (or after it) rather
-    // than immediately against it, and a bare vocative carries no speech verb at all — both were dropped
-    // silently before the detector was broadened.
-    [InlineData("I shout to rally my companions, then move in with my spear. \"Vark is hurt badly, but he can still fight!\" I shout.", "Vark is hurt badly, but he can still fight!")]
-    [InlineData("I am in pain and can't move much. \"Rowan, keep Vark busy! Skrit, I'm coming for you!\"", "Rowan, keep Vark busy! Skrit, I'm coming for you!")]
-    public void An_attempted_spoken_line_in_prose_is_extracted(string text, string expected) =>
+    [InlineData("I tell Elara \"get the chest open while I hold him\"", "get the chest open while I hold him")]
+    public void The_legacy_fallback_still_recovers_a_plainly_spoken_line(string text, string expected) =>
         Assert.Equal(expected, ModelText.TryExtractSpokenAttempt(text));
 
     [Theory]
-    // Not speech: no quote at all, a tool call written as prose (no speech verb before the quote), or a cry
-    // of fewer than three words, so an action reply is never mistaken for an attempt to talk.
-    [InlineData("I bring my sword down hard on the goblin's shoulder.")]
+    // Not speech. The first four were caught by the old detector and are deliberately no longer: each is
+    // excluded by SHAPE rather than by a word added to a list — either there is no first-person speaker, or
+    // prose sits between the speech verb and the quotation.
+    //
+    // This is the whole point of the change. The old version needed "called" in its verb list, which made
+    // `the blade called "Goblin's Bite"` an utterance; removing the word would have broken a real phrasing.
+    // Requiring a first-person subject and adjacency settles both at once, and settles the ones nobody has
+    // thought of yet.
+    [InlineData("the blade called \"Goblin's Bite\" lies in the case")]
+    [InlineData("I heft the blade named \"Goblin's Bite\" and test its weight.")]
+    [InlineData("I say nothing and inspect the inscription \"Goblin's Bite\" on the lid.")]
+    [InlineData("I read the words \"Goblin's Bite\" burned into the wood.")]
+    // A bare vocative with no speaker at all: indistinguishable from a prose intent, so it is left alone.
+    [InlineData("I am in pain and can't move much. \"Rowan, keep Vark busy!\"")]
+    // A speech verb a whole clause away from the quote — structurally the same as the inscription case above.
+    [InlineData("I shout to rally my companions, then move in. \"Vark is hurt badly!\" I shout.")]
+    // A tool call written as prose, which has its own recovery path and is not loose speech.
+    [InlineData("say \"Elara, get behind me now\"")]
     [InlineData("take_action(\"I bring my sword down on the goblin\")")]
     [InlineData("ask_dm(\"Is the goblin wounded?\")")]
+    // Third-person narration of somebody else, and an ordinary action reply.
+    [InlineData("Skrit yells, \"We must seize the moment before Rowan moves\"")]
+    [InlineData("I bring my sword down hard on the goblin's shoulder.")]
     [InlineData("I swing my axe and yell \"Die!\"")]
-    // A first-person action written in quotes, with no speech verb and no one addressed by name, is an
-    // action attempt (or a prose intent), not speech — the leading-vocative rule must not catch it.
     [InlineData("\"I bring my sword down on the goblin's shoulder\"")]
     [InlineData("")]
     [InlineData(null)]

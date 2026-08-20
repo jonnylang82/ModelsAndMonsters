@@ -338,6 +338,25 @@ public sealed record IntentParsedPayload
 /// A character's older history was compressed into a running summary. Carries the estimated token size before
 /// and after and the summary text, so the compression and its effect on context size can be audited.
 /// </summary>
+/// <summary>
+/// History shed from a character's conversation after its request filled the context window, recorded so a
+/// run can be audited for whether reclaiming actually recovered room or the request is simply too large.
+/// </summary>
+public sealed record ContextRoomReclaimedPayload
+{
+    public required string CharacterId { get; init; }
+
+    public required string CharacterName { get; init; }
+
+    public required int EstimatedTokensBefore { get; init; }
+
+    public required int EstimatedTokensAfter { get; init; }
+
+    public int Round { get; init; }
+
+    public int Turn { get; init; }
+}
+
 public sealed record HistorySummarisedPayload
 {
     public required string CharacterId { get; init; }
@@ -408,6 +427,19 @@ public sealed record DungeonMasterAnswerPayload
     /// to reveal something. Private to the asking character; the answer must respect this boundary.
     /// </summary>
     public string? AskingCharacterKnowledge { get; init; }
+
+    /// <summary>
+    /// The complete deterministic <c>AnswerFacts</c> projection the Dungeon Master was given, and nothing
+    /// else. It replaces the authoritative state block for this task: the DM rephrases these facts rather
+    /// than deciding what is true, so an answer that names something outside them is visibly ungrounded.
+    /// </summary>
+    public string? ProjectedFacts { get; init; }
+
+    /// <summary>What the projection withheld from the model. Recorded here so the boundary is provable.</summary>
+    public string? OmittedHiddenFacts { get; init; }
+
+    /// <summary>The DM's raw reply before any in-world correction, when a correction was applied.</summary>
+    public string? RawAnswer { get; init; }
 
     public string Visibility => "private";
 
@@ -1238,4 +1270,333 @@ public sealed record RunFailedPayload
     public required string Message { get; init; }
 
     public string? StackTrace { get; init; }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Negotiated surrender, abilities and status effects (v0.7)
+// ---------------------------------------------------------------------------------------------
+
+/// <summary>
+/// A surrender offer being put on the table. It records the enforceable terms and, separately, the public
+/// speech that accompanied them — because the speech is the persuasion and the terms are the contract, and
+/// conflating the two is exactly the mistake this release exists to prevent.
+/// </summary>
+public sealed record SurrenderOfferMadePayload
+{
+    public required string OfferId { get; init; }
+
+    public required string OffererId { get; init; }
+
+    public required string OffererName { get; init; }
+
+    public required string RecipientId { get; init; }
+
+    public required string RecipientName { get; init; }
+
+    /// <summary>The stable ids of the ordinary items promised.</summary>
+    public IReadOnlyList<string> OfferedItemIds { get; init; } = [];
+
+    public IReadOnlyList<string> OfferedItemNames { get; init; } = [];
+
+    public required bool ForfeitWeapon { get; init; }
+
+    public string? WeaponName { get; init; }
+
+    /// <summary>The public-channel id of the offerer's speech this turn, when they spoke before offering.</summary>
+    public int? AssociatedSpeechEventId { get; init; }
+
+    /// <summary>The exact words of that speech, for the persuasion report. Never authoritative contract state.</summary>
+    public string? AssociatedSpeech { get; init; }
+
+    public required int Round { get; init; }
+
+    public required int Turn { get; init; }
+
+    /// <summary>The visible battle state when the offer was made, so it can be read against the odds it was made under.</summary>
+    public required string BattleStateSummary { get; init; }
+
+    /// <summary>Confirms the offer itself moved nothing: always true for a created offer.</summary>
+    public bool NothingTransferred { get; init; } = true;
+
+    /// <summary>Confirms the offerer is still active and targetable while the offer stands.</summary>
+    public bool OffererRemainsTargetable { get; init; } = true;
+
+    public IReadOnlyList<string> PublicRecipients { get; init; } = [];
+}
+
+/// <summary>A surrender offer leaving Pending: accepted, rejected, expired or invalidated, with its cause.</summary>
+public sealed record SurrenderOfferResolvedPayload
+{
+    public required string OfferId { get; init; }
+
+    public required string OffererId { get; init; }
+
+    public required string OffererName { get; init; }
+
+    public required string RecipientId { get; init; }
+
+    public required string RecipientName { get; init; }
+
+    public required string PreviousState { get; init; }
+
+    public required string NewState { get; init; }
+
+    public required string Cause { get; init; }
+
+    public required int CreatedRound { get; init; }
+
+    public required int CreatedTurn { get; init; }
+
+    public required int ResolvedRound { get; init; }
+
+    public required int ResolvedTurn { get; init; }
+
+    /// <summary>How many turns the offer stood before it was resolved — the recipient's response time.</summary>
+    public required int TurnsToRespond { get; init; }
+
+    /// <summary>True only for an accepted offer. Every other resolution transfers nothing at all.</summary>
+    public required bool AssetsTransferred { get; init; }
+}
+
+/// <summary>The durable record of an accepted surrender, as struck.</summary>
+public sealed record SurrenderAgreementPayload
+{
+    public required string AgreementId { get; init; }
+
+    public required string OfferId { get; init; }
+
+    public required string OffererId { get; init; }
+
+    public required string OffererName { get; init; }
+
+    public required string AcceptedById { get; init; }
+
+    public required string AcceptedByName { get; init; }
+
+    public IReadOnlyList<string> TransferredItemIds { get; init; } = [];
+
+    public IReadOnlyList<string> TransferredItemNames { get; init; } = [];
+
+    /// <summary>The stable id of the forfeited weapon, when weapon forfeiture was a promised term.</summary>
+    public string? ForfeitedWeaponId { get; init; }
+
+    public string? ForfeitedWeaponName { get; init; }
+
+    /// <summary>Where the weapon now is: the room's floor, as an inert item that can be looted as a trophy.</summary>
+    public string? WeaponDisposition { get; init; }
+
+    public required bool OffererDisarmed { get; init; }
+
+    public required int AcceptedRound { get; init; }
+
+    public required int AcceptedTurn { get; init; }
+
+    public int? AssociatedSpeechEventId { get; init; }
+
+    public string? AssociatedSpeech { get; init; }
+
+    public IReadOnlyList<string> PublicRecipients { get; init; } = [];
+}
+
+/// <summary>
+/// One ability use, accepted or refused. Refusals matter as much as successes here: a refused use must be
+/// visible as having spent no charge, so "the charge is not consumed if validation fails" is auditable.
+/// </summary>
+public sealed record AbilityUsedPayload
+{
+    public required string ActorId { get; init; }
+
+    public required string ActorName { get; init; }
+
+    public required string AbilityId { get; init; }
+
+    public required string AbilityName { get; init; }
+
+    public required string Category { get; init; }
+
+    /// <summary>The ability reference the Dungeon Master supplied, before resolution.</summary>
+    public string? RequestedAbilityRef { get; init; }
+
+    public string? TargetId { get; init; }
+
+    public string? TargetName { get; init; }
+
+    public required string ValidationResult { get; init; }
+
+    public string? RejectionReason { get; init; }
+
+    /// <summary>Charges left before the attempt, or null for an unlimited ability.</summary>
+    public int? RemainingUsesBefore { get; init; }
+
+    /// <summary>Charges left after it, or null for an unlimited ability. Unchanged when the attempt was refused.</summary>
+    public int? RemainingUsesAfter { get; init; }
+
+    /// <summary>Health restored, when the ability heals. Null otherwise.</summary>
+    public int? HealingPerformed { get; init; }
+
+    /// <summary>The status kinds this use applied, if any.</summary>
+    public IReadOnlyList<string> StatusesApplied { get; init; } = [];
+
+    /// <summary>Whether this use made the ordinary attack draws.</summary>
+    public required bool RngConsulted { get; init; }
+
+    public required int WorldVersionBefore { get; init; }
+
+    public required int WorldVersionAfter { get; init; }
+
+    public required bool TurnConsumed { get; init; }
+
+    /// <summary>The rulebook consultation that led here, so guidance and outcome can be cross-referenced.</summary>
+    public string? ConsultationId { get; init; }
+}
+
+/// <summary>
+/// One status-effect transition: applied, consumed, expired or removed. Every field the release requires of a
+/// status instance is carried, so the whole status timeline can be reconstructed from the trace alone.
+/// </summary>
+public sealed record StatusEffectPayload
+{
+    public required string StatusId { get; init; }
+
+    public required string Kind { get; init; }
+
+    public required string Transition { get; init; }
+
+    public required string Cause { get; init; }
+
+    public required string SourceCharacterId { get; init; }
+
+    public string? SourceCharacterName { get; init; }
+
+    public required string TargetCharacterId { get; init; }
+
+    public string? TargetCharacterName { get; init; }
+
+    public required int AppliedRound { get; init; }
+
+    public required int AppliedTurn { get; init; }
+
+    public required int Modifier { get; init; }
+
+    public required string ExpiryRule { get; init; }
+
+    public required string Visibility { get; init; }
+
+    /// <summary>Links the two halves of a paired effect (Guarding/Guarded). Null for an unpaired status.</summary>
+    public string? RelationshipId { get; init; }
+
+    /// <summary>The ability that applied it, when one did.</summary>
+    public string? SourceAbilityId { get; init; }
+
+    public required int Round { get; init; }
+
+    public required int Turn { get; init; }
+
+    public required int WorldVersion { get; init; }
+
+    /// <summary>The action that caused the transition, e.g. "use_ability" or "turn-upkeep".</summary>
+    public string? RelatedAction { get; init; }
+
+    /// <summary>The RNG draw this status modified, when it was folded into one. Null otherwise.</summary>
+    public string? AffectedRngPurpose { get; init; }
+}
+
+/// <summary>
+/// A guard relationship moving an attack from its intended target onto the guardian. It names both targets and
+/// records how many draws the whole attack made, so it is provable that redirection added no roll of its own.
+/// </summary>
+public sealed record AttackRedirectedPayload
+{
+    public required string AttackerId { get; init; }
+
+    public required string AttackerName { get; init; }
+
+    public required string IntendedTargetId { get; init; }
+
+    public required string IntendedTargetName { get; init; }
+
+    public required string AuthoritativeTargetId { get; init; }
+
+    public required string AuthoritativeTargetName { get; init; }
+
+    /// <summary>The armour the damage was actually applied against — the guardian's, not the intended target's.</summary>
+    public required int TargetArmourUsed { get; init; }
+
+    public required int TargetHealthBefore { get; init; }
+
+    public required int TargetHealthAfter { get; init; }
+
+    /// <summary>How many draws this whole attack made. Always the ordinary count: one to hit, plus one on a hit.</summary>
+    public required int RngDrawCount { get; init; }
+
+    public required int Round { get; init; }
+
+    public required int Turn { get; init; }
+}
+
+/// <summary>
+/// The deterministic projection a character's question was answered from, and what it withheld. This is the
+/// evidence that the Dungeon Master was never handed the material for an ungrounded answer.
+/// </summary>
+public sealed record AnswerFactsPayload
+{
+    public required string CharacterId { get; init; }
+
+    public required string CharacterName { get; init; }
+
+    public required string Question { get; init; }
+
+    /// <summary>The exact text handed to the Dungeon Master.</summary>
+    public required string ProjectedFacts { get; init; }
+
+    /// <summary>What the projection deliberately left out. Never sent to any model.</summary>
+    public required string OmittedHiddenFacts { get; init; }
+
+    public required int ProjectedFactCount { get; init; }
+
+    public required int OmittedFactCount { get; init; }
+
+    /// <summary>How many affordances the character actually had — the closed list an answer may draw on.</summary>
+    public required int AffordanceCount { get; init; }
+
+    public required int WorldVersion { get; init; }
+
+    /// <summary>Confirms the authoritative state block was NOT sent for this task.</summary>
+    public bool FullStateWithheld { get; init; } = true;
+}
+
+/// <summary>
+/// Model output produced after the turn had already been resolved, discarded rather than acted on. Recorded
+/// so a model that attacks and then declares a theft is visible as having done so, without the declaration
+/// reaching the world, the transcript or the knowledge ledger.
+/// </summary>
+public sealed record PostResolutionOutputDiscardedPayload
+{
+    public required string CharacterId { get; init; }
+
+    public required string CharacterName { get; init; }
+
+    /// <summary>The action that had already resolved the turn.</summary>
+    public string? ResolvedAction { get; init; }
+
+    /// <summary>
+    /// What kind of output was discarded. "tool-call" is a further action the model asked for once its turn
+    /// was already resolved — the case that matters, a model trying to act twice. "trailing-text" is loose
+    /// prose in the same reply as the accepted call, which the world never reads as an action; it is recorded
+    /// because a report that showed silence there would be lying about what the model produced.
+    /// </summary>
+    public required string DiscardedKind { get; init; }
+
+    /// <summary>The tool the model asked for, when the discarded output was a call.</summary>
+    public string? ToolName { get; init; }
+
+    /// <summary>The discarded content verbatim, so nothing the model produced is hidden.</summary>
+    public required string DiscardedContent { get; init; }
+
+    /// <summary>Always true: discarded output never becomes state, knowledge or transcript.</summary>
+    public bool StateUnchanged { get; init; } = true;
+
+    public required int Round { get; init; }
+
+    public required int Turn { get; init; }
 }

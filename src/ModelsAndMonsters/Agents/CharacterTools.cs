@@ -21,6 +21,31 @@ public static class CharacterTools
     public const string MessageParameter = "message";
     public const string ReasonParameter = "reason";
 
+    /// <summary>
+    /// The optional structured-speech field carried by every turn-taking tool. A character that wants to
+    /// speak while it acts, asks or passes puts the exact words here, in its ONE model call.
+    /// </summary>
+    /// <remarks>
+    /// Speech used to be recoverable only two ways: a separate <c>say</c> call, or — when a small model
+    /// replied in prose without calling anything — a heuristic that hunted for quoted text near a speech
+    /// verb. That heuristic could not be made right. It needed a growing list of verbs, it read
+    /// <c>the blade called "Goblin's Bite"</c> as somebody speaking, and it could not see speech that used
+    /// no verb at all. Declaring speech as a field makes the character's own reply authoritative: what is
+    /// in <c>utterances</c> is spoken, and nothing else is, whatever quotation marks appear elsewhere.
+    /// </remarks>
+    public const string UtterancesParameter = "utterances";
+
+    private const string UtterancesSchema = $$"""
+        "{{UtterancesParameter}}": {
+          "type": "array",
+          "description": "Anything you say ALOUD as you do this, if anything. Put the exact words you speak here — not a description of speaking, and not any other quoted text. Everyone still alive in the room hears them. Leave this out entirely if you say nothing. Speaking costs you nothing, and you may say at most one thing in a turn.",
+          "items": {
+            "type": "string",
+            "description": "The exact words you speak aloud. For example: 'Elara, get whatever is in that chest — I will hold off the captain.'"
+          }
+        }
+        """;
+
     public static readonly AIFunctionDeclaration AskDm = AIFunctionFactory.CreateDeclaration(
         AskDmName,
         "Ask the Dungeon Master something about what you can currently perceive. Asking does not use up your turn.",
@@ -31,7 +56,8 @@ public static class CharacterTools
             "{{QuestionParameter}}": {
               "type": "string",
               "description": "The question you want to ask, in your own words. For example: 'Does the goblin look badly wounded?'"
-            }
+            },
+            {{UtterancesSchema}}
           },
           "required": ["{{QuestionParameter}}"]
         }
@@ -48,7 +74,8 @@ public static class CharacterTools
             "{{IntentParameter}}": {
               "type": "string",
               "description": "What you attempt to do, as you would say it. For example: 'I bring my sword down hard on the goblin's shoulder.'"
-            }
+            },
+            {{UtterancesSchema}}
           },
           "required": ["{{IntentParameter}}"]
         }
@@ -91,7 +118,8 @@ public static class CharacterTools
             "{{ReasonParameter}}": {
               "type": "string",
               "description": "Why you do nothing, in your own words. For example: 'I have no strength left, and I stay where I am.'"
-            }
+            },
+            {{UtterancesSchema}}
           },
           "required": ["{{ReasonParameter}}"]
         }

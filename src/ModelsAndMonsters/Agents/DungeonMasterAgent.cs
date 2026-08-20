@@ -34,6 +34,19 @@ public sealed class DungeonMasterAgent : ModelAgent
 {
     public const string AgentIdentifier = "DungeonMaster";
 
+    /// <summary>
+    /// The output budget for an adjudication, which is far smaller than the agent's configured allowance.
+    /// </summary>
+    /// <remarks>
+    /// An adjudication's entire reply is one structured tool call — a handful of short arguments, well under
+    /// a hundred tokens even for an offer of surrender with an item list. The DM's configured
+    /// <c>MaxOutputTokens</c> is sized for narration prose, and on Ollama the context window covers input and
+    /// output together, so leaving it at that figure holds back a fifth of the window from the one call that
+    /// carries the largest input. Capping it here is free: it removes nothing from the request and cannot
+    /// truncate a reply that was never going to be that long. Narration keeps the full allowance.
+    /// </remarks>
+    private const int AdjudicationOutputTokens = 400;
+
     private readonly PromptLibrary _prompts;
     private readonly bool _useProjections;
 
@@ -179,27 +192,34 @@ public sealed class DungeonMasterAgent : ModelAgent
             cancellationToken);
 
     /// <summary>
-    /// Answers one character's question within that character's information boundary. The DM holds
-    /// omniscient state, but <paramref name="characterKnowledge"/> is what that character actually knows —
-    /// first-hand and by hearsay — and the answer must respect it: direct knowledge may be confirmed,
-    /// hearsay must be described as something another character said, and what the character has not
-    /// observed must not be revealed just because the DM can see it.
+    /// Answers one character's question by rephrasing a bounded, deterministic fact projection.
     /// </summary>
-    public async Task<string> AnswerQuestionAsync(
-        string authoritativeState,
+    /// <remarks>
+    /// <para>
+    /// The Dungeon Master is deliberately <em>not</em> given the authoritative state for this task. It gets
+    /// only <paramref name="projectedFacts"/> — the complete set of facts that character may be answered from,
+    /// worked out by the harness from current state and that character's own knowledge ledger. Its job is
+    /// reduced from deciding what is true to saying it naturally.
+    /// </para>
+    /// <para>
+    /// This is a boundary, not an instruction. Measured weaker-model runs answered from hidden state, said
+    /// consumed items were still carried, and promised tactical manoeuvres the engine has no representation
+    /// for. A prompt cannot reliably stop that; withholding the material can.
+    /// </para>
+    /// </remarks>
+    public async Task<string> AnswerFromFactsAsync(
         string characterName,
-        string characterKnowledge,
+        string projectedFacts,
         string question,
         CancellationToken cancellationToken)
     {
-        // Answers come from authoritative state, not from remembered prior questions, so each runs on
-        // its own fresh context and carries no continuity forward.
+        // Each answer runs on its own fresh context and carries no continuity forward, so a previous answer
+        // can never become the source of the next.
         var conversation = AnswerContext();
         conversation.AppendUser(_prompts.Render("dungeon-master.answer", new Dictionary<string, string?>
         {
-            ["state"] = authoritativeState,
             ["character"] = characterName,
-            ["knowledge"] = characterKnowledge,
+            ["facts"] = projectedFacts,
             ["question"] = question
         }));
 
@@ -286,7 +306,7 @@ public sealed class DungeonMasterAgent : ModelAgent
                 : ruleGuidance
         }));
 
-        return CallModelAsync(conversation, "dm.adjudicate", _adjudicationTools, cancellationToken);
+        return CallModelAsync(conversation, "dm.adjudicate", _adjudicationTools, cancellationToken, AdjudicationOutputTokens);
     }
 
     /// <summary>Re-asks for a tool call after the DM replied with prose instead, re-exposing the same tool surface.</summary>
@@ -297,7 +317,8 @@ public sealed class DungeonMasterAgent : ModelAgent
             ["character"] = characterName
         }));
 
-        return CallModelAsync(AdjudicationContext(), "dm.adjudicate.retry", _adjudicationTools ?? DungeonMasterTools.All, cancellationToken);
+        return CallModelAsync(AdjudicationContext(), "dm.adjudicate.retry",
+            _adjudicationTools ?? DungeonMasterTools.All, cancellationToken, AdjudicationOutputTokens);
     }
 
     /// <summary>
@@ -347,26 +368,6 @@ public sealed class DungeonMasterAgent : ModelAgent
         }));
 
         var response = await CallModelAsync(conversation, "dm.rephrase.answer", tools: null, cancellationToken).ConfigureAwait(false);
-        return ModelText.Clean(response);
-    }
-
-    /// <summary>
-    /// Turns an engine rejection into an in-world explanation the character can act on. Runs on the
-    /// same adjudication context, so it can see the intent and the engine's verdict it is explaining.
-    /// </summary>
-    public async Task<string> ExplainEngineRejectionAsync(
-        string rejectionReason,
-        string characterName,
-        CancellationToken cancellationToken)
-    {
-        var conversation = AdjudicationContext();
-        conversation.AppendUser(_prompts.Render("dungeon-master.engine-rejection", new Dictionary<string, string?>
-        {
-            ["reason"] = rejectionReason,
-            ["character"] = characterName
-        }));
-
-        var response = await CallModelAsync(conversation, "dm.explain.rejection", tools: null, cancellationToken).ConfigureAwait(false);
         return ModelText.Clean(response);
     }
 

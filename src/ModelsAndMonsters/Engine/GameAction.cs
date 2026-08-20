@@ -93,15 +93,65 @@ public sealed record EscapeEncounterAction(string ActorRef, string ExitRef) : Ga
 }
 
 /// <summary>
-/// A character yielding and taking no further part in the fight. Uses no randomness and is unilateral: it
-/// needs no opponent's approval, no roll and no prior demand. It does not disarm the character or transfer
-/// any item; it only changes their disposition.
+/// The current actor offering to surrender to one named opponent on concrete, enforceable terms: ordinary
+/// inventory items handed over, the weapon in their hand given up, or both.
 /// </summary>
-public sealed record SurrenderAction(string ActorRef) : GameAction
+/// <remarks>
+/// Making the offer transfers nothing, disarms nobody, changes no disposition and grants no protection — the
+/// offerer stays active and targetable while it is pending. It only creates the pending
+/// <see cref="Domain.SurrenderOffer"/> the named recipient may accept on their own turn. It consumes the
+/// offerer's turn, and uses no randomness. The plea or threat that accompanies it is ordinary speech, carried
+/// only as <paramref name="AssociatedSpeechEventId"/>; speech is never contract state.
+/// </remarks>
+public sealed record OfferSurrenderAction(
+    string OffererRef,
+    string RecipientRef,
+    IReadOnlyList<string> OfferedItemRefs,
+    bool ForfeitWeapon,
+    int? AssociatedSpeechEventId = null) : GameAction
 {
-    public override string ActionType => "surrender";
+    public override string ActionType => "offer_surrender";
 
-    public override string Describe() => $"Surrender(actor={ActorRef})";
+    public override string Describe() =>
+        $"OfferSurrender(offerer={OffererRef}, recipient={RecipientRef}, " +
+        $"items=[{string.Join(", ", OfferedItemRefs)}], forfeitWeapon={ForfeitWeapon})";
+}
+
+/// <summary>
+/// The current actor accepting a pending surrender offer addressed to them. Uses no randomness. Acceptance is
+/// all-or-nothing: every promised item and the promised weapon move in one atomic state change, or nothing
+/// does and the offer is refused or invalidated. It consumes the accepter's turn.
+/// </summary>
+public sealed record AcceptSurrenderAction(string RecipientRef, string OfferRef) : GameAction
+{
+    public override string ActionType => "accept_surrender";
+
+    public override string Describe() => $"AcceptSurrender(recipient={RecipientRef}, offer={OfferRef})";
+}
+
+/// <summary>
+/// The current actor using one of their own abilities, optionally on a target. One generic action covers every
+/// ability; the engine dispatches on the ability's <see cref="Domain.AbilityEffectKind"/> to a concrete
+/// handler. Whether it consults randomness depends on the ability — only an ability that performs a weapon
+/// attack draws, and then only the ordinary attack draws.
+/// </summary>
+public sealed record UseAbilityAction(string ActorRef, string AbilityRef, string? TargetRef = null) : GameAction
+{
+    public override string ActionType => "use_ability";
+
+    public override string Describe() => $"UseAbility(actor={ActorRef}, ability={AbilityRef}, target={TargetRef ?? "none"})";
+}
+
+/// <summary>
+/// The current actor bracing behind their guard instead of striking. Available to every active character, as
+/// often as they like; it consumes the turn, uses no randomness, and applies
+/// <see cref="Domain.StatusEffectKind.Defending"/>.
+/// </summary>
+public sealed record DefendAction(string ActorRef) : GameAction
+{
+    public override string ActionType => "defend";
+
+    public override string Describe() => $"Defend(actor={ActorRef})";
 }
 
 /// <summary>

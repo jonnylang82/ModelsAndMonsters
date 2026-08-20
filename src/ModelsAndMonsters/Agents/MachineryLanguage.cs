@@ -3,45 +3,62 @@ using System.Text.RegularExpressions;
 namespace ModelsAndMonsters.Agents;
 
 /// <summary>
-/// Detects when text breaks the fiction by describing the harness's framing — the engine and rules, what
-/// "can be resolved", the character's own knowledge bookkeeping ("you directly know", "you have not been
-/// told"), or by using answer/document formatting (bold, bullets) rather than spoken words.
+/// A final defensive lint over text about to be spoken to a character, matching only vocabulary that belongs
+/// to the machine and could not occur in the fiction: tool names, stable identifiers, and the harness's own
+/// nouns for itself (the engine, the rulebook, a hit chance).
 /// </summary>
 /// <remarks>
-/// The Dungeon Master's system prompt forbids this, but a local model does not reliably obey it. Across
-/// live runs its refusals said things like "the world cannot resolve that" and listed the supported
-/// actions, and — with a weaker instruct model as DM (granite4.1) — its <em>answers</em> parroted the
-/// knowledge-view scaffolding back verbatim ("Rowan directly knows… he has not been told…", state words
-/// like "**CLOSED**" in bold). A prompt alone cannot guarantee it, so both rejection reasons and question
-/// answers are checked against this detector before they reach a character, and rephrased in-world when it
-/// trips.
+/// <para>
+/// This used to be the primary means of keeping refusals and answers in the fiction, and it grew a synonym at
+/// a time — "not allowed", "another character", "the facts", "a living ally", "item transfer" — because every
+/// run found a phrasing it did not have. That approach cannot converge: the space of ways to describe a rule
+/// in English is unbounded, while the space of phrases it could wrongly catch in ordinary fiction is not.
+/// Broad matches also cost more than they saved. Each catch triggered a rephrasing model call, and a rewrite
+/// is free to be worse than what it replaced — live runs produced refusals that invented obstacles which were
+/// not true and narrated events inside a refusal that by definition changes nothing.
+/// </para>
+/// <para>
+/// The fix was structural, not lexical. Engine refusals now render deterministically from the rejection code
+/// and its bound facts (<see cref="ModelsAndMonsters.Engine.InWorldRefusal"/>), so the common paths are
+/// in-world by construction and never reach this class at all. Answers are already bounded by the
+/// <c>AnswerFacts</c> projection. What remains here is a lint for the one path still made of model prose —
+/// the Dungeon Master's own <c>reject_action</c> wording — and it now matches only terms that are
+/// unmistakably machine: an ordinary sentence of fiction can no longer trip it by accident.
+/// </para>
+/// <para>
+/// Formatting is deliberately <em>not</em> handled here. Markdown in a spoken line is a presentation defect
+/// with a deterministic fix, so it is cleaned by <see cref="ModelText.StripPresentationMarkup"/> rather than
+/// triggering a rewrite of the words themselves.
+/// </para>
 /// </remarks>
 public static partial class MachineryLanguage
 {
     /// <summary>
-    /// True when the text names the machinery (engine/rules/what can be resolved), narrates the character's
-    /// knowledge state, or uses markdown formatting — anything a person in the world would never say.
+    /// True when the text contains vocabulary that only exists inside the harness — a tool name, a stable
+    /// id, or one of the machine's own nouns. Never true for ordinary in-world prose.
     /// </summary>
     public static bool IsLeak(string? text) =>
         !string.IsNullOrWhiteSpace(text) && MachineryPattern().IsMatch(text);
 
-    // Focused on phrases and markers that only ever describe the framing, so an ordinary in-world line
-    // ("there is nowhere to back away to", "the goblin looks wounded") never trips it. Erring toward
-    // catching is cheap — a false positive only costs one unnecessary rephrase — and false positives are
-    // kept rare by matching framing-specific wording, not everyday words. Three groups:
-    //   1. the machinery — the engine, the rules, what the world can/can't resolve;
-    //   2. knowledge bookkeeping — the info-view language a weak DM parrots into an answer;
-    //   3. formatting — bold markers, which a spoken reply never contains.
+    // Three closed groups, all of them things that exist only in the implementation:
+    //   1. the harness's nouns for itself and its numbers;
+    //   2. stable identifiers, which are generated and can never occur in speech;
+    //   3. tool names, which are snake_case and equally impossible in speech.
+    // Every entry here is a term with no in-world meaning. Nothing is included because it *often* signals a
+    // leak — that judgement is what made the old list grow without ever becoming reliable.
     [GeneratedRegex(
-        @"the world can|the world has no way|no way to resolve|to be resolved|be resolved by|can be resolved|only resolve|not supported|unsupported|isn't supported|the engine\b|the game (engine|system|rules)|what the world can|the world's rules|action the world" +
-        // Further machinery variants seen leaking through refusals: "not a supported action", "resolve the
-        // encounter", enumerated permitted-action framings.
-        @"|supported action|permitted action|allowed action|resolve the (?:encounter|combat|fight|battle|situation)|list of (?:actions|moves|things you can)" +
-        @"|directly knows?|has not been told|have not been told|no one has told|nor has anyone told|has not inspected|have not inspected|has not observed|have not observed" +
-        // Take/container mechanics that leaked through refusals: the one-at-a-time rule, "a separate action",
-        // the open-before-take precondition, and the "you can only act on what you know is there" framing.
-        @"|one item at a time|separate action|without first opening|only act on (?:things|what) you" +
-        @"|\*\*",
+        // 1. The machine talking about itself. "Rulebook" and "engine" are its own names; "hit chance",
+        // "world version", "status effect", "turn cost" and "disposition" are its own quantities, none of
+        // which any person in a cellar has a word for.
+        @"\brulebook\b|\bthe engine\b|\bgame engine\b|\bhit chance\b|\bworld version\b|\bstatus effect\b" +
+        @"|\bturn cost\b|\bdisposition\b|\bd100\b|\battack roll\b|\bdamage roll\b|\bglancing roll\b" +
+        // 2. Stable identifiers: the counter ids the harness mints, the ability ids, and the rulebook hash.
+        @"|\b(?:offer|agreement|status|guard)-\d+\b|\bcorpse-[a-z0-9-]+\b|\brulebook-[0-9a-f]{6,}\b" +
+        @"|\bguard-ally\b|\bhealing-prayer\b|\brally-grunt\b|\bdirty-strike\b" +
+        // 3. Tool names. snake_case is not a thing anybody says out loud.
+        @"|\b(?:attack_character|use_item|use_ability|open_container|take_item|inspect_object|open_exit" +
+        @"|escape_encounter|offer_surrender|accept_surrender|give_item|drop_item|steal_item|reject_action" +
+        @"|ask_dm|take_action|end_turn)\b",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex MachineryPattern();
 }

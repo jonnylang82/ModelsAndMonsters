@@ -25,20 +25,44 @@ namespace ModelsAndMonsters.Orchestration;
 public static class CharacterKnowledgeView
 {
     /// <summary>
+    /// How many of a character's most recent first-hand facts a projection carries.
+    /// </summary>
+    /// <remarks>
+    /// This bound is the difference between a projection and a transcript. Both views used to render the
+    /// character's whole lifetime ledger, so they grew every round — measured on a 12-round v0.7 run, the
+    /// Dungeon Master's adjudication knowledge block went from 759 to 5,529 characters, which is the only
+    /// part of that request that grows with encounter length and the reason it stopped fitting a small
+    /// context window. Recency is what adjudication needs; the complete ledger is in the trace and the
+    /// report, and the number of omitted facts is stated so nothing looks like it never happened.
+    /// </remarks>
+    private const int MaxProjectedFacts = 12;
+
+    /// <summary>How many of the most recent things a character has been told a projection carries.</summary>
+    private const int MaxProjectedHearsay = 6;
+
+    /// <summary>
     /// A first-person reminder of what this character has discovered first-hand, for injection into its
     /// own turn context. Empty when it has learned nothing beyond what anyone in the room can see. Hearsay
     /// is deliberately excluded: things others said already reach the character verbatim on the public
-    /// channel, and must not be restated here as if they were the character's own knowledge.
+    /// channel, and must not be restated here as if they were the character's own knowledge. Bounded to the
+    /// most recent <see cref="MaxProjectedFacts"/> facts, so a long fight does not grow every turn context.
     /// </summary>
     public static string RenderSelfSummary(string characterId, KnowledgeLedger ledger, GameState state)
     {
-        var records = ledger.RecordsFor(characterId).ToList();
-        if (records.Count == 0)
+        var all = ledger.RecordsFor(characterId).ToList();
+        if (all.Count == 0)
         {
             return "";
         }
 
+        var (records, omitted) = MostRecent(all, MaxProjectedFacts);
+
         var builder = new StringBuilder();
+        if (omitted > 0)
+        {
+            builder.AppendLine($"- (and {omitted} older thing(s) you found out earlier, no longer front of mind)");
+        }
+
         foreach (var record in records)
         {
             var fact = ledger.FindFact(record.FactId);
@@ -52,6 +76,13 @@ public static class CharacterKnowledgeView
 
         return builder.ToString().TrimEnd();
     }
+
+    /// <summary>
+    /// The last <paramref name="keep"/> items of a list, with how many were left out. Recency, not
+    /// importance: the ledger has no notion of importance, and inventing one would be a guess.
+    /// </summary>
+    private static (IReadOnlyList<T> Kept, int Omitted) MostRecent<T>(IReadOnlyList<T> all, int keep) =>
+        all.Count <= keep ? (all, 0) : ([.. all.Skip(all.Count - keep)], all.Count - keep);
 
     /// <summary>
     /// The character's information view for the Dungeon Master: what it directly knows (first-hand, with
@@ -69,13 +100,21 @@ public static class CharacterKnowledgeView
         var builder = new StringBuilder();
 
         builder.AppendLine($"WHAT {characterName} DIRECTLY KNOWS (observed first-hand — treat as true, but as of the moment stated):");
-        var records = ledger.RecordsFor(characterId).ToList();
-        if (records.Count == 0)
+        var allRecords = ledger.RecordsFor(characterId).ToList();
+        if (allRecords.Count == 0)
         {
             builder.AppendLine("- Nothing beyond what anyone standing in the room can plainly see.");
         }
         else
         {
+            var (records, omittedFacts) = MostRecent(allRecords, MaxProjectedFacts);
+            if (omittedFacts > 0)
+            {
+                builder.AppendLine(
+                    $"- (the {omittedFacts} oldest of {characterName}'s discoveries are omitted from this " +
+                    "projection to keep it bounded; the most recent are below)");
+            }
+
             foreach (var record in records)
             {
                 var fact = ledger.FindFact(record.FactId);
@@ -90,13 +129,19 @@ public static class CharacterKnowledgeView
 
         builder.AppendLine();
         builder.AppendLine($"WHAT {characterName} HAS ONLY HEARD OTHERS SAY (hearsay — this is a claim someone made, NOT something {characterName} has verified):");
-        var heard = narrationLog.SpeechHeardBy(characterId);
-        if (heard.Count == 0)
+        var allHeard = narrationLog.SpeechHeardBy(characterId);
+        if (allHeard.Count == 0)
         {
             builder.AppendLine("- Nothing.");
         }
         else
         {
+            var (heard, omittedHearsay) = MostRecent(allHeard, MaxProjectedHearsay);
+            if (omittedHearsay > 0)
+            {
+                builder.AppendLine($"- (and {omittedHearsay} earlier thing(s) said, omitted to keep this projection bounded)");
+            }
+
             foreach (var entry in heard)
             {
                 builder.AppendLine($"- {SingleLine(entry.Text)}");

@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text;
 
 namespace ModelsAndMonsters.Presentation;
@@ -7,9 +8,17 @@ public sealed class ConsolePresenter : IGameConsole
 {
     private const int FallbackWidth = 100;
 
+    /// <summary>
+    /// The release, read from the assembly rather than written out here — a hard-coded banner went a whole
+    /// release out of date, which makes a saved console log claim the wrong version of the harness.
+    /// </summary>
+    private static readonly string Version = Assembly.GetExecutingAssembly().GetName().Version is { } v
+        ? $"v{v.Major}.{v.Minor}"
+        : "";
+
     public void RunHeader(string runId, string scenarioName, string outputDirectory)
     {
-        Write(ConsoleColor.DarkGray, $"Models & Monsters v0.6 — {scenarioName}");
+        Write(ConsoleColor.DarkGray, $"Models & Monsters {Version} — {scenarioName}");
         Write(ConsoleColor.DarkGray, $"run {runId} → {outputDirectory}");
         Console.WriteLine();
     }

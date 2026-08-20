@@ -192,11 +192,22 @@ public sealed class TurnOrchestrationTests
         Assert.Equal(1, result.ModelCalls);
         Assert.Equal(0, result.QuestionsAsked);
 
-        // Both calls were answered exactly once.
+        // Both calls were answered exactly once — the surplus one with a refusal, so the history stays valid.
         var results = harness.Sink.Payloads<ToolCallResultPayload>(TraceEventType.ToolCallResult)
             .Where(r => r.AgentName == "Aric").ToList();
         Assert.Equal(2, results.Count);
-        Assert.Contains(results, r => r.CallId == "h-2" && r.Result!.ToString()!.StartsWith("Ignored", StringComparison.Ordinal));
+        Assert.Contains(results, r => r.CallId == "h-2"
+            && r.Result!.ToString()!.Contains("set aside", StringComparison.Ordinal));
+
+        // And the surplus call is recorded as post-resolution output that was discarded: it never reached the
+        // world, the transcript or the knowledge ledger.
+        var discarded = Assert.Single(
+            harness.Sink.Payloads<PostResolutionOutputDiscardedPayload>(TraceEventType.PostResolutionOutputDiscarded));
+        Assert.Equal("tool-call", discarded.DiscardedKind);
+        Assert.Equal(CharacterTools.AskDmName, discarded.ToolName);
+        Assert.Contains("Did that work?", discarded.DiscardedContent, StringComparison.Ordinal);
+        Assert.True(discarded.StateUnchanged);
+        Assert.Empty(harness.Sink.OfType(TraceEventType.CharacterQuestion));
     }
 
     [Fact]
@@ -287,7 +298,9 @@ public sealed class TurnOrchestrationTests
                 DungeonMasterTools.AttackCharacterName, DungeonMasterTools.UseItemName,
                 DungeonMasterTools.OpenContainerName, DungeonMasterTools.TakeItemName,
                 DungeonMasterTools.InspectObjectName, DungeonMasterTools.OpenExitName,
-                DungeonMasterTools.EscapeEncounterName, DungeonMasterTools.SurrenderName,
+                DungeonMasterTools.EscapeEncounterName, DungeonMasterTools.OfferSurrenderName,
+                DungeonMasterTools.AcceptSurrenderName, DungeonMasterTools.UseAbilityName,
+                DungeonMasterTools.DefendName,
                 DungeonMasterTools.GiveItemName, DungeonMasterTools.DropItemName,
                 DungeonMasterTools.StealItemName, DungeonMasterTools.RejectActionName
             ],
@@ -373,7 +386,7 @@ public sealed class TurnOrchestrationTests
     [Fact]
     public async Task A_rejection_that_leaks_the_machinery_is_rephrased_in_world_before_reaching_the_character()
     {
-        const string leak = "You cannot shove it; the world can only resolve a direct weapon strike.";
+        const string leak = "You cannot shove it; use_ability and attack_character are all the engine has here.";
         const string inWorld = "It is too heavy and slick with water to shift; it does not move for you.";
 
         var harness = new OrchestrationHarness(
@@ -408,7 +421,7 @@ public sealed class TurnOrchestrationTests
     [Fact]
     public async Task An_answer_that_parrots_the_knowledge_scaffolding_is_rephrased_in_world_before_reaching_the_character()
     {
-        const string leak = "Aric directly knows the goblin is **wounded**; he has not been told anything more.";
+        const string leak = "His hit chance is lower now, and status effect guard-1 is still on him.";
         const string inWorld = "The goblin looks wounded, favouring one side.";
 
         var harness = new OrchestrationHarness(
@@ -444,8 +457,8 @@ public sealed class TurnOrchestrationTests
         var harness = new OrchestrationHarness(
             new ScriptedChatClient(
                 ScriptedChatClient.Call("dm-1", DungeonMasterTools.RejectActionName,
-                    ("category", "unsupported"), ("reason", "the world cannot resolve that")),
-                ScriptedChatClient.Text("That attempt is not supported by the engine."), // the rephrase leaks again
+                    ("category", "unsupported"), ("reason", "the rulebook has no card for that")),
+                ScriptedChatClient.Text("The engine has no handler for it either."), // the rephrase leaks again
                 ScriptedChatClient.Text("Aric stands down.")),
             new ScriptedChatClient(
                 ScriptedChatClient.Call("h-1", CharacterTools.TakeActionName, ("intent", "I do something strange.")),
@@ -459,7 +472,7 @@ public sealed class TurnOrchestrationTests
 
         // Even a rephrase that still leaks never reaches the character: a neutral in-world line is used.
         Assert.False(MachineryLanguage.IsLeak(adjudication.Reason));
-        Assert.Contains("finds no purchase", adjudication.Reason, StringComparison.Ordinal);
+        Assert.Equal(InWorldRefusal.Generic, adjudication.Reason);
     }
 
     [Fact]
@@ -976,6 +989,70 @@ public sealed class TurnOrchestrationTests
         // ...but nothing was delivered as speech, and it was not silently recovered as a tool call.
         Assert.Empty(harness.Sink.OfType(TraceEventType.CharacterSpeech));
         Assert.Empty(harness.Sink.OfType(TraceEventType.ToolCallRecovered));
+    }
+
+    [Fact]
+    public async Task A_cut_off_reply_is_recognised_even_when_the_provider_reports_no_finish_reason()
+    {
+        // An OpenAI-driven run returned 109 responses with FinishReason null on every one, which left the
+        // finish-reason check permanently false for that provider: a cut-off reply would have gone to the
+        // intent parser as though it were complete. Usage answers the question directly.
+        var harness = new OrchestrationHarness(
+            new ScriptedChatClient(ScriptedChatClient.Text("Aric steadies himself.")),
+            new ScriptedChatClient(
+                // Usage that fills the window exactly, with no finish reason to go on.
+                ScriptedChatClient.ContextExhaustedWithoutFinishReason(
+                    "I raise my sword and begin to", OrchestrationHarness.TestContextWindow),
+                ScriptedChatClient.Call("h-2", CharacterTools.EndTurnName, ("reason", "Lost my thread."))),
+            new ScriptedChatClient(),
+            new HarnessOptions
+            {
+                RecoverTextToolCalls = false,
+                MaxQuestionsPerTurn = 2,
+                MaxActionAttemptsPerTurn = 3,
+                MaxModelCallsPerTurn = 8
+            });
+
+        await harness.RunHeroTurn();
+
+        // Treated as truncated: the fragment was neither parsed as an intent nor read as speech.
+        Assert.Empty(harness.Sink.OfType(TraceEventType.IntentParsed));
+        Assert.Empty(harness.Sink.OfType(TraceEventType.UnstructuredSpeechAttempt));
+        Assert.Contains(harness.Sink.Payloads<ToolCallErrorPayload>(TraceEventType.ToolCallError),
+            p => p.Error.Contains("truncated", StringComparison.OrdinalIgnoreCase)
+                 || p.Error.Contains("cut off", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task A_reply_cut_off_mid_sentence_is_never_read_as_an_attempt_to_speak()
+    {
+        // A live run ended a character's reply at "...barely standing against the wall with blood welling
+        // from the deep wound in his torso." — a fragment, cut mid-thought — and the extractor took it for a
+        // spoken line, so the console announced a prose speech nudge on a turn where nobody had tried to
+        // speak. A fragment is not evidence of intent; the same rule already keeps the intent parser away
+        // from truncated replies.
+        var harness = new OrchestrationHarness(
+            new ScriptedChatClient(ScriptedChatClient.Text("Aric steadies himself.")),
+            new ScriptedChatClient(
+                ScriptedChatClient.Truncated("I shout: \"Grik, back off or I'll"),
+                ScriptedChatClient.Call("h-2", CharacterTools.EndTurnName, ("reason", "Lost my words."))),
+            new ScriptedChatClient(),
+            new HarnessOptions
+            {
+                RecoverTextToolCalls = true,
+                MaxQuestionsPerTurn = 2,
+                MaxActionAttemptsPerTurn = 3,
+                MaxModelCallsPerTurn = 8
+            });
+
+        await harness.RunHeroTurn();
+
+        // Nothing was recorded as an attempt to speak, and nothing was delivered.
+        Assert.Empty(harness.Sink.OfType(TraceEventType.UnstructuredSpeechAttempt));
+        Assert.Empty(harness.Sink.OfType(TraceEventType.CharacterSpeech));
+
+        // The truncation itself is still reported, as a truncation.
+        Assert.NotEmpty(harness.Sink.OfType(TraceEventType.ModelResponseTruncated));
     }
 
     [Fact]

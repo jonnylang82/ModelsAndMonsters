@@ -44,7 +44,20 @@ public enum FactType
     ItemDropped,
 
     /// <summary>A theft was attempted in plain view — always noticed in v0.6, whether it succeeded or failed.</summary>
-    ItemTheftAttempted
+    ItemTheftAttempted,
+
+    /// <summary>
+    /// Terms of surrender were offered aloud, in plain hearing of the room: who offered, to whom, and exactly
+    /// what was promised. The offer is public because the terms have to be, or nobody could weigh them — but it
+    /// is a proposal, not a transfer, and the offerer stays an active combatant while it stands.
+    /// </summary>
+    SurrenderOfferMade,
+
+    /// <summary>
+    /// A surrender offer stopped being open — taken up, refused by a hostile act, or simply lapsed. Public,
+    /// because everyone who heard the terms can see they came to nothing.
+    /// </summary>
+    SurrenderOfferSettled
 }
 
 /// <summary>

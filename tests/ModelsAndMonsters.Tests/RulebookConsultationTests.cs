@@ -32,10 +32,10 @@ public sealed class RulebookConsultationTests
         var trace = new ExperimentTrace("t", new RecordingTraceSink());
         var resolverClient = new ScriptedChatClient(resolverResponses);
         var resolver = new RulebookResolver(profile, new TracingChatClient(resolverClient, profile, trace), Prompts);
-        var retriever = new RuleRetriever(Catalog, maxCards: 16, maxInputChars: 16000);
+        var retriever = new RuleRetriever(Catalog, maxCards: 32, maxInputChars: 32000);
         var consultant = new RulebookConsultant(
             Catalog, retriever, resolver, new RuleGuidanceValidator(Catalog), new RuleGuidanceCache(), trace,
-            new RulebookConsultationOptions(MaxCards: 16, MaxInputChars: 16000, OutputTokenLimit: 600, CacheEnabled: false));
+            new RulebookConsultationOptions(MaxCards: 32, MaxInputChars: 32000, OutputTokenLimit: 600, CacheEnabled: false));
         return (consultant, resolverClient);
     }
 
@@ -100,9 +100,9 @@ public sealed class RulebookConsultationTests
         var give = await giveConsultant.ConsultAsync("hero-rowan", "Rowan", "I want Elara to have the thing I am carrying, so I put it in her hands.", CancellationToken.None);
         Assert.Equal(["give_item", "reject_action"], give.CandidateTools.Select(t => t.Name));
 
-        var (surrenderConsultant, _) = Build(ScriptedChatClient.Text(GuidanceJson("surrender", "encounter.surrender")));
-        var surrender = await surrenderConsultant.ConsultAsync("hero-rowan", "Rowan", "I want Elara to have the thing I am carrying, so I put it in her hands.", CancellationToken.None);
-        Assert.Equal(["surrender", "reject_action"], surrender.CandidateTools.Select(t => t.Name));
+        var (offerConsultant, _) = Build(ScriptedChatClient.Text(GuidanceJson("offer_surrender", "encounter.offer-surrender")));
+        var offer = await offerConsultant.ConsultAsync("hero-rowan", "Rowan", "I want Elara to have the thing I am carrying, so I put it in her hands.", CancellationToken.None);
+        Assert.Equal(["offer_surrender", "reject_action"], offer.CandidateTools.Select(t => t.Name));
     }
 
     [Fact]

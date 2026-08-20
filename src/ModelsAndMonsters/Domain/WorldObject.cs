@@ -108,7 +108,10 @@ public sealed record Container : WorldObject
 
     public override string Kind => "container";
 
-    /// <summary>Finds an item inside this container by id or name, case-insensitively.</summary>
+    /// <summary>
+    /// Finds an item inside this container by id, qualified display name, or plain name, case-insensitively
+    /// — the qualified name first, so two same-named items can still be told apart.
+    /// </summary>
     public InventoryItem? FindItem(string idOrName)
     {
         if (string.IsNullOrWhiteSpace(idOrName))
@@ -117,8 +120,9 @@ public sealed record Container : WorldObject
         }
 
         var needle = idOrName.Trim();
-        return Contents.FirstOrDefault(i =>
-            string.Equals(i.Id, needle, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(i.Name, needle, StringComparison.OrdinalIgnoreCase));
+        return Contents.FirstOrDefault(i => string.Equals(i.Id, needle, StringComparison.OrdinalIgnoreCase))
+            ?? Contents.FirstOrDefault(i => string.Equals(i.DisplayName, needle, StringComparison.OrdinalIgnoreCase))
+            ?? Contents.FirstOrDefault(i => string.Equals(i.Name, needle, StringComparison.OrdinalIgnoreCase))
+            ?? Contents.FirstOrDefault(i => i.MatchesReference(needle));
     }
 }

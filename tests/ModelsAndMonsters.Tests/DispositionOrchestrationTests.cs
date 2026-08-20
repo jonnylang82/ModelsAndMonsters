@@ -16,8 +16,15 @@ namespace ModelsAndMonsters.Tests;
 /// </summary>
 public sealed class DispositionOrchestrationTests
 {
-    private static ChatResponse DmSurrender(string actor) =>
-        ScriptedChatClient.Call("dm-surrender", DungeonMasterTools.SurrenderName, ("actor", actor));
+    private static ChatResponse DmOfferSurrender(string offerer, string recipient, bool forfeitWeapon = true) =>
+        ScriptedChatClient.Call("dm-offer", DungeonMasterTools.OfferSurrenderName,
+            ("offerer", offerer), ("recipient", recipient), ("forfeit_weapon", forfeitWeapon),
+            // A carried item is required: terms promising only the weapon are refused.
+            ("offered_items", new[] { $"purse-{offerer.ToLowerInvariant()}" }));
+
+    private static ChatResponse DmAcceptSurrender(string recipient, string offerId) =>
+        ScriptedChatClient.Call("dm-accept", DungeonMasterTools.AcceptSurrenderName,
+            ("recipient", recipient), ("offer", offerId));
 
     private static ChatResponse DmOpenExit(string actor) =>
         ScriptedChatClient.Call("dm-open", DungeonMasterTools.OpenExitName, ("actor", actor), ("exit", "Cellar Stair Door"));
@@ -97,22 +104,33 @@ public sealed class DispositionOrchestrationTests
         Assert.Equal(CharacterDisposition.Active, harness.Engine.State.RequireById(TestWorld.SkritId).Disposition);
         // No surrender was applied to anyone off the back of speech.
         Assert.Empty(harness.Sink.Payloads<CharacterSurrenderedPayload>(TraceEventType.CharacterSurrendered));
+
+        // Nor did the words become negotiation state. Speech carries the argument; only a structured offer
+        // carries terms, so there is nothing on the table for anybody to accept.
+        Assert.Empty(harness.Engine.State.SurrenderOffers);
+        Assert.Empty(harness.Engine.State.SurrenderAgreements);
+        Assert.Empty(harness.Sink.OfType(TraceEventType.SurrenderOfferMade));
     }
 
     [Fact]
-    public async Task Skrit_can_independently_surrender_on_its_own_turn_after_being_told_to()
+    public async Task Skrit_offers_terms_on_its_own_turn_and_stays_in_the_fight_until_Rowan_accepts()
     {
-        // Rowan tells Skrit to surrender (turn 1), then on Skrit's turn (turn 2) Skrit chooses to yield.
+        // Rowan demands surrender (turn 1). On Skrit's turn it offers concrete terms — which changes nothing
+        // by itself. Only when Rowan accepts, on a later turn of his own, is Skrit out of the fight.
         var harness = new MultiActorHarness(
             new ScriptedChatClient(
-                ScriptedChatClient.Text("Rowan levels his blade and speaks low."),   // Rowan's end_turn narration
-                DmSurrender("Skrit"),                                                  // Skrit's intent → surrender
-                ScriptedChatClient.Text("Skrit lowers his spear and yields, making no further attempt to fight.")),
+                ScriptedChatClient.Text("Rowan levels his blade and speaks low."),      // Rowan's end_turn narration
+                DmOfferSurrender("Skrit", "Rowan"),                                      // Skrit's intent → offer
+                ScriptedChatClient.Text("Skrit holds out empty hands and offers up his spear to be spared."),
+                DmAcceptSurrender("Rowan", "offer-1"),                                   // Rowan's intent → accept
+                ScriptedChatClient.Text("Rowan takes the spear from Skrit's hands and lets it fall.")),
             MultiActorHarness.Clients(
-                ("Rowan", new ScriptedChatClient(ScriptedChatClient.Calls(
-                    ScriptedChatClient.CallContent("r-say", CharacterTools.SayName, ("message", "Skrit, yield now and you'll live.")),
-                    ScriptedChatClient.CallContent("r-end", CharacterTools.EndTurnName, ("reason", "Offered mercy."))))),
-                ("Skrit", new ScriptedChatClient(Act("s-1", "I drop my spear and surrender; I'll fight no more.")))),
+                ("Rowan", new ScriptedChatClient(
+                    ScriptedChatClient.Calls(
+                        ScriptedChatClient.CallContent("r-say", CharacterTools.SayName, ("message", "Skrit, yield now and you'll live.")),
+                        ScriptedChatClient.CallContent("r-end", CharacterTools.EndTurnName, ("reason", "Offered mercy."))),
+                    Act("r-2", "I take his spear and tell him he can live."))),
+                ("Skrit", new ScriptedChatClient(Act("s-1", "I offer Rowan my spear if he'll let me live.")))),
             initialState: TestWorld.TwoVsTwoStateWithExit());
 
         await harness.RunTurn("Rowan", round: 1, turn: 1);
@@ -121,9 +139,24 @@ public sealed class DispositionOrchestrationTests
         var skritTurn = await harness.RunTurn("Skrit", round: 1, turn: 4);
         Assert.Equal(TurnOutcome.ActionResolved, skritTurn.Outcome);
 
+        // The offer alone leaves Skrit fighting: still active, still armed, still a target. Nobody has
+        // surrendered yet, so no surrender event has been recorded.
+        var afterOffer = harness.Engine.State.RequireById(TestWorld.SkritId);
+        Assert.Equal(CharacterDisposition.Active, afterOffer.Disposition);
+        Assert.NotNull(afterOffer.Weapon);
+        Assert.Empty(harness.Sink.Payloads<CharacterSurrenderedPayload>(TraceEventType.CharacterSurrendered));
+        var offered = Assert.Single(harness.Sink.Payloads<SurrenderOfferMadePayload>(TraceEventType.SurrenderOfferMade));
+        Assert.True(offered.NothingTransferred);
+        Assert.True(offered.OffererRemainsTargetable);
+
+        // Rowan accepts on his own turn, and only now is Skrit out of the fight and disarmed.
+        var rowanAccepts = await harness.RunTurn("Rowan", round: 2, turn: 5);
+        Assert.Equal(TurnOutcome.ActionResolved, rowanAccepts.Outcome);
+
         var skrit = harness.Engine.State.RequireById(TestWorld.SkritId);
         Assert.Equal(CharacterDisposition.Surrendered, skrit.Disposition);
         Assert.True(skrit.IsAlive);
+        Assert.True(skrit.IsDisarmed);
 
         // A later turn is now skipped without a model call, and Skrit stays alive and present.
         var later = await harness.RunTurn("Skrit", round: 2, turn: 8);
@@ -131,12 +164,17 @@ public sealed class DispositionOrchestrationTests
         Assert.Equal(0, later.ModelCalls);
         Assert.True(harness.Engine.State.RequireById(TestWorld.SkritId).IsAlive);
 
-        // The surrender was recorded as both a semantic event and a disposition change.
+        // The accepted surrender was recorded as a semantic event, a disposition change and a durable agreement.
         Assert.Single(harness.Sink.Payloads<CharacterSurrenderedPayload>(TraceEventType.CharacterSurrendered));
         var change = Assert.Single(harness.Sink.Payloads<DispositionChangedPayload>(TraceEventType.DispositionChanged));
         Assert.Equal("Active", change.PreviousDisposition);
         Assert.Equal("Surrendered", change.NewDisposition);
-        Assert.Equal("surrender", change.Cause);
+        Assert.Equal("accepted surrender", change.Cause);
+
+        var agreement = Assert.Single(harness.Sink.Payloads<SurrenderAgreementPayload>(TraceEventType.SurrenderAgreementRecorded));
+        Assert.Equal("Skrit", agreement.OffererName);
+        Assert.Equal("Rowan", agreement.AcceptedByName);
+        Assert.True(agreement.OffererDisarmed);
     }
 
     // ------------------------------------------------------------------------------------------
@@ -185,23 +223,25 @@ public sealed class DispositionOrchestrationTests
     [Fact]
     public async Task An_escaped_character_stops_receiving_public_events()
     {
-        // Skrit has already escaped; Vark then surrenders publicly. Skrit must not learn of it.
+        // Skrit has already escaped; Vark then offers terms publicly. Skrit must not learn of it.
         var skritGone = TestWorld.Skrit() with { Disposition = CharacterDisposition.Escaped, EscapedThroughExitId = TestWorld.StairDoorId };
         var harness = new MultiActorHarness(
             new ScriptedChatClient(
-                DmSurrender("Vark"),
-                ScriptedChatClient.Text("Vark lowers his sabre and yields.")),
+                DmOfferSurrender("Vark", "Rowan"),
+                ScriptedChatClient.Text("Vark holds his sabre out hilt-first and offers it up to be spared.")),
             MultiActorHarness.Clients(
-                ("Vark", new ScriptedChatClient(Act("v-1", "I lower my sabre and give up.")))),
+                ("Vark", new ScriptedChatClient(Act("v-1", "I offer Rowan my purse and my sabre if he lets me live.")))),
             initialState: TestWorld.StateWithExit(TestWorld.StairDoor(open: true),
-                TestWorld.Rowan(), TestWorld.Elara(health: 6), TestWorld.Vark(), skritGone));
+                TestWorld.Rowan(), TestWorld.Elara(health: 6),
+                // Terms must promise a carried item, so Vark has a purse to put on the table.
+                TestWorld.Vark() with { Inventory = [TestWorld.Purse("vark")] }, skritGone));
 
         await harness.RunTurn("Vark", round: 2, turn: 7);
 
-        var surrenderFact = Assert.Single(harness.Ledger.Facts, f => f.FactType == FactType.CharacterSurrendered);
+        var offerFact = Assert.Single(harness.Ledger.Facts, f => f.FactType == FactType.SurrenderOfferMade);
         // A present character learned it; the escaped one did not.
-        Assert.True(harness.Ledger.Knows(TestWorld.RowanId, surrenderFact.Id));
-        Assert.False(harness.Ledger.Knows(TestWorld.SkritId, surrenderFact.Id));
+        Assert.True(harness.Ledger.Knows(TestWorld.RowanId, offerFact.Id));
+        Assert.False(harness.Ledger.Knows(TestWorld.SkritId, offerFact.Id));
 
         var delivered = Assert.Single(harness.Sink.Payloads<PublicFactDeliveredPayload>(TraceEventType.PublicFactDelivered));
         Assert.DoesNotContain(TestWorld.SkritId, delivered.Recipients);

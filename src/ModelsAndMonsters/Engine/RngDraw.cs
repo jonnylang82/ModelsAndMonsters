@@ -58,6 +58,14 @@ public sealed record RngDraw
     /// </summary>
     public IReadOnlyList<string> Modifiers { get; init; } = [];
 
+    /// <summary>
+    /// The same modifiers in structured form — the status or ability that caused each, its source character,
+    /// its signed value, the order it was applied in, and whether it was consumed by this draw. Recorded
+    /// alongside the readable notes so a draw's effective chance can be recomputed exactly rather than parsed
+    /// out of prose, which is what makes a status-modified roll reproducible across runs.
+    /// </summary>
+    public IReadOnlyList<RngModifier> ModifierDetails { get; init; } = [];
+
     /// <summary>How the raw roll was turned into the result, e.g. "roll &lt;= 80 lands".</summary>
     public required string Comparison { get; init; }
 
@@ -72,4 +80,19 @@ public sealed record RngDraw
 
     /// <summary>The generator's draw count immediately after this draw.</summary>
     public required long SequenceAfter { get; init; }
+}
+
+/// <summary>
+/// One signed modifier applied to a draw's base chance, with everything needed to reconstruct it.
+/// </summary>
+/// <param name="SourceId">The status kind or ability id that caused it, e.g. "Rallied" or "dirty-strike".</param>
+/// <param name="SourceCharacterId">The character who put it there.</param>
+/// <param name="Value">The signed value added to the base chance.</param>
+/// <param name="Order">Its position in the deterministic application order, starting at 1.</param>
+/// <param name="Consumed">Whether this draw used the modifier up.</param>
+public sealed record RngModifier(string SourceId, string SourceCharacterId, int Value, int Order, bool Consumed)
+{
+    /// <summary>A short readable note, e.g. "Rallied +15 from goblin-vark (order 1, consumed)".</summary>
+    public string Note =>
+        $"{SourceId} {Value:+#;-#;0} from {SourceCharacterId} (order {Order}, {(Consumed ? "consumed" : "retained")})";
 }

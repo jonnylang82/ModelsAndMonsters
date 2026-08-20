@@ -116,6 +116,11 @@ public sealed class CharacterDefinition
     /// <summary>Seeded descriptive injuries present before the scenario begins.</summary>
     public List<string> Injuries { get; set; } = [];
 
+    /// <summary>
+    /// The stable ids (or names) of abilities from the built-in ability book this character starts with, each
+    /// with its charges full. Defend is added to everyone regardless, so it need not be listed. An id the
+    /// ability book does not know is a scenario error and fails at startup rather than silently doing nothing.
+    /// </summary>
     public List<string> Abilities { get; set; } = [];
 
     /// <summary>
@@ -149,6 +154,13 @@ public sealed class PersonaDefinition
 
 public sealed class WeaponDefinition
 {
+    /// <summary>
+    /// Stable identifier. Left blank it defaults to a slug of <see cref="Name"/>. It exists because an
+    /// accepted surrender can move a weapon out of a hand onto the room's floor, and that movement is recorded
+    /// against one identity rather than a display name.
+    /// </summary>
+    public string Id { get; set; } = "";
+
     public string Name { get; set; } = "";
 
     public int Damage { get; set; }
@@ -164,4 +176,11 @@ public sealed class ItemDefinition
 
     /// <summary>When set, the engine treats this as a healing item.</summary>
     public int? HealingAmount { get; set; }
+
+    /// <summary>
+    /// Optional short in-world tag distinguishing this item from others that share its name — "Rowan's".
+    /// Set it on any item the scenario deliberately duplicates, or characters holding two cannot tell
+    /// them apart.
+    /// </summary>
+    public string Qualifier { get; set; } = "";
 }

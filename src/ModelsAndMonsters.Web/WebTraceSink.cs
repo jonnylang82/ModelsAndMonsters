@@ -51,9 +51,69 @@ public sealed class WebTraceSink : ITraceSink
                         case StealItemOutcome steal:
                             _publish(UiEvent.StoleAttempt(steal.ThiefName, steal.TargetName, steal.ItemName, steal.Succeeded));
                             break;
+                        case OfferSurrenderOutcome offer:
+                            _publish(UiEvent.SurrenderOffered(
+                                offer.OfferId, offer.OffererName, offer.RecipientName, offer.TermsDescription));
+                            break;
+                        case AcceptSurrenderOutcome accepted:
+                            _publish(UiEvent.SurrenderAccepted(
+                                accepted.AccepterName, accepted.OffererName, accepted.TransferredItemNames,
+                                accepted.ForfeitedWeaponName,
+                                accepted.ForfeitedWeaponName is null ? null : accepted.GroundContainerName));
+                            break;
+                        case GuardAllyOutcome guard:
+                            _publish(UiEvent.AbilityUsed(
+                                guard.GuardianName, "Guard Ally", guard.AllyName, "accepted", null, null));
+                            break;
+                        case HealingPrayerOutcome heal:
+                            _publish(UiEvent.AbilityUsed(
+                                heal.CasterName, heal.AbilityName, heal.TargetName, "accepted",
+                                heal.RemainingUses, heal.HealthAfter - heal.HealthBefore));
+                            break;
+                        case RallyOutcome rally:
+                            _publish(UiEvent.AbilityUsed(
+                                rally.CommanderName, rally.AbilityName, rally.AllyName, "accepted",
+                                rally.RemainingUses, null));
+                            break;
+                        case DefendOutcome defend:
+                            _publish(UiEvent.AbilityUsed(defend.ActorName, "Defend", null, "accepted", null, null));
+                            break;
+                    }
+
+                    // An attack that a guard moved onto the guardian, and one a braced guard softened, each get
+                    // their own line: both are mechanically decisive and invisible in the attack line alone.
+                    if (engine.Outcome is AttackOutcome resolved)
+                    {
+                        if (resolved is { Redirected: true, IntendedTargetName: { } intended })
+                        {
+                            _publish(UiEvent.AttackRedirected(resolved.AttackerName, intended, resolved.TargetName));
+                        }
+
+                        if (resolved.DefendReduction > 0)
+                        {
+                            _publish(UiEvent.DefendReduced(resolved.TargetName, resolved.DefendReduction));
+                        }
                     }
 
                     _publish(UiEvent.State(StateDto.From(engine.StateAfter)));
+                    break;
+
+                // Status transitions and offer resolutions are their own lines: a guard that simply timed out,
+                // or an offer nobody answered, otherwise vanishes from the view with no explanation.
+                case TraceEventType.StatusApplied or TraceEventType.StatusConsumed
+                    or TraceEventType.StatusExpired or TraceEventType.StatusRemoved
+                    when traceEvent.Data is StatusEffectPayload status:
+                    _publish(UiEvent.StatusChanged(
+                        status.Transition, status.Kind,
+                        status.TargetCharacterName ?? status.TargetCharacterId,
+                        status.SourceCharacterName ?? status.SourceCharacterId,
+                        status.Modifier, status.Cause));
+                    break;
+
+                case TraceEventType.SurrenderOfferResolved when traceEvent.Data is SurrenderOfferResolvedPayload resolvedOffer:
+                    _publish(UiEvent.SurrenderOfferSettled(
+                        resolvedOffer.OfferId, resolvedOffer.OffererName, resolvedOffer.RecipientName,
+                        resolvedOffer.NewState, resolvedOffer.Cause));
                     break;
 
                 // Surrender and escape are structured departures from combat, so the transcript can read them

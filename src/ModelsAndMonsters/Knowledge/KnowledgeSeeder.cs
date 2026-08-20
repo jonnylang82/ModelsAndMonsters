@@ -47,7 +47,7 @@ public static class KnowledgeSeeder
         {
             foreach (var item in owner.Inventory)
             {
-                var possession = ledger.GetOrAddItemPossessionFact(item.Id, item.Name, owner.Name, 0);
+                var possession = ledger.GetOrAddItemPossessionFact(item.Id, item.DisplayName, owner.Name, 0);
                 if (possession.WasCreated)
                 {
                     created.Add(possession.Fact);

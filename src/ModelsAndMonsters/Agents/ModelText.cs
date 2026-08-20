@@ -183,18 +183,26 @@ public static partial class ModelText
         knownToolNames.FirstOrDefault(n => string.Equals(n, matched, StringComparison.OrdinalIgnoreCase)) ?? matched;
 
     /// <summary>
-    /// Detects a spoken line a character wrote as prose instead of calling <c>say</c>, returning the
-    /// attempted utterance or null.
+    /// LEGACY FALLBACK ONLY. Detects a spoken line a character wrote as prose in a reply that carried no
+    /// tool call at all, returning the attempted utterance or null.
     /// </summary>
     /// <remarks>
-    /// Small models under the immersive character prompt sometimes reply with first-person prose that
-    /// contains a shout at another character — <c>I shout: "Vark! decide now…"</c> — and never call a tool.
-    /// This finds such an utterance so the orchestration can record the communication attempt and nudge the
-    /// character to speak properly, rather than silently ignoring it. It is deliberately conservative: it
-    /// wants a quoted span of at least a few words that is introduced by a speech verb, so an action reply
-    /// that merely ends on a battle-cry ("…and yell 'Die!'") and — crucially — a tool call written as prose
-    /// (<c>take_action("I strike")</c>, whose quote is not preceded by a speech verb) do not trip it. No
-    /// model call — a plain heuristic, so it adds no latency.
+    /// <para>
+    /// Speech is declared, not detected: a character puts what it says in the <c>utterances</c> field of its
+    /// own call, and that is authoritative. This remains only for a reply that produced no structured call
+    /// whatsoever — an old or very small model replying in bare prose — so that a genuine attempt to talk is
+    /// recorded rather than read as silence. Every use is traced as
+    /// <see cref="ModelsAndMonsters.Tracing.TraceEventType.UnstructuredSpeechAttempt"/>.
+    /// </para>
+    /// <para>
+    /// It is narrowed by SHAPE rather than by vocabulary, because widening the vocabulary is what made the
+    /// old version wrong. Two structural requirements do the work that a growing verb list could not:
+    /// the speaker must be <em>the character themselves</em> ("I say", "I shout"), and the quotation must
+    /// follow that verb <em>immediately</em>. Together these exclude the two cases that mattered —
+    /// <c>the blade called "Goblin's Bite"</c> has no first-person speaker, and
+    /// <c>I say nothing and inspect the inscription "Goblin's Bite"</c> has words between the verb and the
+    /// quote — without either being special-cased.
+    /// </para>
     /// </remarks>
     public static string? TryExtractSpokenAttempt(string? text)
     {
@@ -209,59 +217,29 @@ public static partial class ModelText
             return null;
         }
 
-        // A speech verb anywhere in the reply is a strong sign the character was talking, wherever it sits
-        // relative to the quote — models write both "I shout … 'line'" and "'line' … I shout".
-        var hasSpeechVerb = SpeechVerb().IsMatch(cleaned);
-
-        foreach (Match match in QuotedSpan().Matches(cleaned))
+        var match = FirstPersonSpeech().Match(cleaned);
+        if (!match.Success)
         {
-            var utterance = match.Groups[1].Value.Trim();
-            var words = utterance.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
-            if (words < 3)
-            {
-                continue;
-            }
-
-            // A tool call written as prose — take_action("…"), ask_dm("…") — has its own recovery path and
-            // is not loose speech; leave those to TryRecoverCharacterToolCall rather than nudging to say.
-            var before = cleaned[..match.Index];
-            var tail = before.Length <= 40 ? before : before[^40..];
-            if (ToolCallLead().IsMatch(tail))
-            {
-                continue;
-            }
-
-            // Speech when the reply uses a speech verb, or the quoted line opens by naming who it is aimed
-            // at ("Rowan, keep Vark busy") — a bare vocative a character would only ever say aloud.
-            if (hasSpeechVerb || LeadingVocative().IsMatch(utterance))
-            {
-                return utterance;
-            }
+            return null;
         }
 
-        return null;
+        var utterance = match.Groups["said"].Value.Trim();
+        return utterance.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length >= 3 ? utterance : null;
     }
 
-    // A span between straight or curly double quotes, capturing at least three characters inside.
-    [GeneratedRegex("[\"“”]([^\"“”]{3,})[\"“”]")]
-    private static partial Regex QuotedSpan();
-
-    // A speech verb anywhere in the reply — the signal that a quoted span is an utterance meant to be said,
-    // not incidental quoted text. Deliberately not anchored to the quote: the verb often sits a clause away.
+    // The character speaking in its own voice, with the words immediately after the verb:
+    //   `I` (+ at most one adverb) + a speech verb (+ at most one addressee) + optional colon/comma + a quote.
+    // The verb list is small and FIXED; it is not what does the discriminating and it is not to be grown.
+    // The work is done by the two structural requirements — a FIRST-PERSON subject, and the quotation
+    // following the verb with nothing but an addressee in between. Those are what exclude
+    // `the blade called "Goblin's Bite"` (no first-person speaker) and
+    // `I say nothing and inspect the inscription "Goblin's Bite"` (prose between the verb and the quote)
+    // without either needing to be special-cased.
     [GeneratedRegex(
-        @"\b(say|says|said|shout|shouts|shouted|yell|yells|yelled|call|calls|called|cry|cries|cried|tell|tells|told|whisper|whispers|whispered|hiss|hisses|hissed|snarl|snarls|snarled|growl|growls|growled|bark|barks|barked|roar|roars|roared|declare|declares|announce|announces)\b",
+        """\bI\s+(?:\w+\s+)?(?:say|shout|yell|cry|whisper|hiss|snarl|growl|bark|roar|tell)(?:\s+(?:to|at)?\s*\w+)?\s*[:,]?\s*["“](?<said>[^"“”]{3,})["”]""",
         RegexOptions.IgnoreCase)]
-    private static partial Regex SpeechVerb();
+    private static partial Regex FirstPersonSpeech();
 
-    // A tool call written as prose right before a quote — its quoted argument is an intent, not speech.
-    [GeneratedRegex(
-        @"\b(take_action|ask_dm|use_item|inspect_object|open_container|take_item|end_turn)\b\W{0,4}$",
-        RegexOptions.IgnoreCase)]
-    private static partial Regex ToolCallLead();
-
-    // A quoted line that opens by addressing someone by name — "Rowan, …" — which a character only says aloud.
-    [GeneratedRegex(@"^[A-Z][a-zA-Z]+,")]
-    private static partial Regex LeadingVocative();
 
     /// <summary>
     /// Returns the assistant's prose. Reasoning models that emit literal think blocks in their text
@@ -289,6 +267,42 @@ public static partial class ModelText
         return cleaned.Trim();
     }
 
+    /// <summary>
+    /// Strips document formatting — bold/italic markers, bullet leaders, headings — from a line meant to be
+    /// spoken to a character, leaving the words themselves untouched.
+    /// </summary>
+    /// <remarks>
+    /// Formatting is a <em>presentation</em> defect, not a semantic one: "the case is **CLOSED**" says a true
+    /// and permitted thing in the wrong register. It used to be folded into the machinery-leak detector, which
+    /// meant a stray asterisk triggered a whole rephrasing model call and risked a worse rewrite than the
+    /// original. Cleaning is deterministic, cannot change meaning, and needs no model, so the two concerns are
+    /// now separate: markup is cleaned here, and only genuine machine vocabulary is treated as a leak.
+    /// </remarks>
+    public static string StripPresentationMarkup(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return "";
+        }
+
+        var cleaned = EmphasisMarker().Replace(text, "");
+        cleaned = HeadingOrBulletLeader().Replace(cleaned, "");
+        cleaned = RepeatedWhitespace().Replace(cleaned, " ");
+        return cleaned.Trim();
+    }
+
     [GeneratedRegex(@"<think>.*?</think>", RegexOptions.Singleline | RegexOptions.IgnoreCase)]
     private static partial Regex ThinkBlock();
+
+    // Bold and italic markers, and backticks. Underscores are left alone: they occur inside identifiers far
+    // more often than as emphasis, and an identifier reaching a character is a leak to be caught, not tidied.
+    [GeneratedRegex(@"\*{1,3}|`{1,3}")]
+    private static partial Regex EmphasisMarker();
+
+    // A markdown heading or list leader at the start of a line.
+    [GeneratedRegex(@"(?m)^[ \t]*(?:#{1,6}[ \t]+|[-*+][ \t]+|\d+\.[ \t]+)")]
+    private static partial Regex HeadingOrBulletLeader();
+
+    [GeneratedRegex(@"[ \t]{2,}")]
+    private static partial Regex RepeatedWhitespace();
 }

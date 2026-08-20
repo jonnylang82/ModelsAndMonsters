@@ -282,13 +282,31 @@ public sealed class HarnessOptions
     public bool SummariseHistory { get; set; } = true;
 
     /// <summary>
-    /// The estimated request-token size, per character, past which older turns are summarised. Set well below
-    /// the context window so a trim happens before the provider starts silently discarding history.
+    /// The estimated request-token size, per character, past which older turns are summarised. It is an UPPER
+    /// BOUND, not the working figure: the effective budget is derived from the agent's own context window,
+    /// output reserve and measured prompt overhead, and the smaller of the two wins
+    /// (<see cref="AI.ContextTruncation.EffectiveHistoryBudget"/>).
     /// </summary>
-    public int HistoryTokenBudget { get; set; } = 5500;
+    /// <remarks>
+    /// It sits above what an 8k window can hold on purpose. Calibrated to 5500 for an 8192-token window, this
+    /// number silently became the binding constraint on a larger window too — so a run with plenty of room
+    /// still summarised early and lost fidelity for nothing. The derived figure already protects the window;
+    /// this only needs to stop a very large window licensing an unbounded history.
+    /// </remarks>
+    public int HistoryTokenBudget { get; set; } = 9000;
 
-    /// <summary>How many of a character's most recent turns are kept verbatim when older ones are summarised.</summary>
-    public int RecentTurnsKeptFull { get; set; } = 2;
+    /// <summary>
+    /// How many of a character's most recent turns are kept verbatim when older ones are summarised.
+    /// </summary>
+    /// <remarks>
+    /// One, not two, since v0.7. Every kept turn carries a full turn context — the character's whole
+    /// self-state, its knowledge and the narration it heard — which measured 4,250 characters a turn once
+    /// abilities, statuses and surrender offers joined it. Keeping two verbatim therefore re-sent two
+    /// superseded copies of that state on every call, and a measured peak character request of 8,160 tokens
+    /// against an 8,192-token window (five replies truncated). The newest context supersedes the older ones
+    /// by definition; what happened in them survives in the running recap.
+    /// </remarks>
+    public int RecentTurnsKeptFull { get; set; } = 1;
 
     /// <summary>
     /// When true, every <c>take_action</c> is preceded by a bounded, stateless rulebook consultation that
@@ -304,10 +322,10 @@ public sealed class HarnessOptions
     /// this many cards the retriever throws at startup (fails visibly) rather than silently dropping cards,
     /// which would risk hiding the one action an intent needs. Set with headroom above the current catalog.
     /// </summary>
-    public int RulebookMaxCards { get; set; } = 16;
+    public int RulebookMaxCards { get; set; } = 32;
 
     /// <summary>A hard CEILING (not a budget) on the total size, in characters, of the cards sent to the resolver. Exceeding it fails visibly at startup rather than trimming.</summary>
-    public int RulebookMaxInputChars { get; set; } = 16000;
+    public int RulebookMaxInputChars { get; set; } = 32000;
 
     /// <summary>The output-token limit applied to the resolver's reply — it only ever emits a small JSON object.</summary>
     public int RulebookOutputTokens { get; set; } = 500;

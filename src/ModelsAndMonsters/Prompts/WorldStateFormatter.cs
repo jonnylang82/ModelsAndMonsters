@@ -51,8 +51,11 @@ public sealed class WorldStateFormatter
             builder.AppendLine($"  Currently holding: {FormatWeapon(character.Weapon)}");
             builder.AppendLine($"  Carrying: {FormatInventory(character.Inventory)}");
             builder.AppendLine($"  Injuries: {FormatInjuries(character.Injuries)}");
-            builder.AppendLine($"  Abilities: {(character.Abilities.Length == 0 ? "none" : string.Join(", ", character.Abilities))}");
+            builder.AppendLine($"  Abilities: {FormatAbilitiesInline(character.Abilities)}");
+            builder.AppendLine($"  Status effects: {FormatStatusesInline(state, character.Id)}");
         }
+
+        AppendSurrenderNegotiation(builder, state);
 
         if (state.Room.Objects.Length > 0)
         {
@@ -80,30 +83,171 @@ public sealed class WorldStateFormatter
             }
         }
 
+        // These notes are about how to READ the snapshot above — what its fields are and are not. The rules
+        // of the world itself live once, in the Dungeon Master's constitution, which every call already
+        // carries: repeating them here put the same paragraphs in the same request twice, and the state
+        // block's notes had grown to 4,877 characters, more than half the block, on every DM call.
         builder.AppendLine();
-        builder.AppendLine("STATE NOTES:");
-        builder.AppendLine("- Condition is already a description, not a number. There are no hit points, health totals or armour values to reveal — state condition only in words.");
-        builder.AppendLine("- There is no position, distance, facing or movement state. No character has a location; everyone is already within reach of everyone else. Do not describe or track distance, approaching, or backing away.");
-        builder.AppendLine("- The only state that exists is what is listed above: each character's condition, the weapon they hold, what they carry, their injuries, and the room's objects.");
-        if (state.Room.Objects.OfType<Container>().Any(c => !c.IsOpen))
-        {
-            builder.AppendLine("- A CLOSED container hides its contents. Its listed contents are authoritative knowledge for you alone: never reveal, name, hint at, or narrate what is inside a closed container, even if a character asks directly.");
-        }
+        builder.AppendLine("HOW TO READ THIS SNAPSHOT:");
+        builder.AppendLine("- Condition is already a description, not a number. There are no hit points, health totals or armour values here to reveal — state condition only in words.");
+        builder.AppendLine("- There is no position, distance, facing or movement in this state, because the world has none. Never describe or track distance, approaching, or backing away.");
+        builder.AppendLine("- Nothing exists that is not listed above. Every character's condition, weapon, belongings, injuries, abilities-with-uses and status effects; every object; every way out; every offer of surrender and every agreement. If it is not here, it is not in the world.");
         if (state.Room.Objects.OfType<Container>().Any())
         {
-            builder.AppendLine("- A container being open or closed is public: everyone in the room sees which, and you may always say so. Its contents are not. Opening does NOT make them public: only the character who opened it, who knew what it held from before the fight, who has since inspected it while open, who saw an item carried out of it, or who was told, knows what is inside. Being in the room is not enough. When you answer or adjudicate for a character, you are told exactly what THAT character knows; never hand them contents they have not discovered, even for an open container.");
-            builder.AppendLine("- An exterior marking on a container is legible only to a character who spends a turn inspecting it closely. Never reveal a marking in an answer or narration; it is discovered only through inspection, and then only by the one inspecting.");
+            builder.AppendLine("- A container's listed contents, and any exterior marking marked FOR YOU ONLY, are yours alone. Open or closed is public; what is inside is not, and opening does not make it so. You are told exactly what the character you are serving knows — never hand them contents or a marking they have not discovered.");
         }
-        if (state.Room.Exits.Length > 0)
-        {
-            builder.AppendLine("- An exit being open or closed is public: everyone present sees which, and you may always say so. A closed exit must be opened (open_exit) before anyone can pass through it; passing through an open exit to leave the encounter is escape_encounter. These are two separate acts and are never resolved together.");
-            builder.AppendLine("- A SURRENDERED or ESCAPED character is out of the fight and is not a valid target: never resolve an attack against them. A surrendered character is still in the room; an escaped one is gone. Surrender and escape are each a character's own choice — never make one character surrender, open an exit or escape because another told, threatened or asked them to.");
-        }
-        builder.AppendLine("- Ordinary inventory items CAN change hands: a character may give one of their own items to another present character (give_item), drop one on the floor for anyone to pick up (drop_item), or try to snatch one from another active character (steal_item — a noticed attempt that may fail). Items are also gained by take_item from an open container or the floor, and used with use_item on oneself. An EQUIPPED WEAPON is not an ordinary item and can never be given, dropped or stolen.");
-        builder.AppendLine("- A theft is always noticed by everyone present, whether it succeeds or fails. A character may only attempt to steal an item it has a legitimate reason to know the target carries (seen it carried, or seen it taken, given or dropped, or been told of it). Never let a character reach for an item it has no way of knowing exists, and never reveal what someone privately carries to justify a theft.");
-        builder.AppendLine("- ACTIONS THE WORLD CAN RESOLVE: attack_character, use_item, open_container, take_item, inspect_object, open_exit, escape_encounter, surrender, give_item, drop_item, steal_item. Nothing else exists.");
+        builder.AppendLine("- ACTIONS THE WORLD CAN RESOLVE: attack_character, use_item, use_ability, defend, open_container, take_item, inspect_object, open_exit, escape_encounter, offer_surrender, accept_surrender, give_item, drop_item, steal_item. Nothing else exists.");
 
         return builder.ToString().TrimEnd();
+    }
+
+    /// <summary>
+    /// Writes the surrender-negotiation state: every offer still awaiting an answer, and the agreements
+    /// already struck. Pending offers are public facts everyone present heard, so they are stated plainly
+    /// with their stable ids — the id is what an acceptance has to name.
+    /// </summary>
+    private static void AppendSurrenderNegotiation(StringBuilder builder, GameState state)
+    {
+        var pending = state.PendingOffers().ToList();
+        if (pending.Count > 0)
+        {
+            builder.AppendLine();
+            builder.AppendLine("SURRENDER OFFERS AWAITING AN ANSWER (public — everyone present heard the terms):");
+            foreach (var offer in pending)
+            {
+                var offerer = state.FindById(offer.OffererId)?.Name ?? offer.OffererId;
+                var recipient = state.FindById(offer.RecipientId)?.Name ?? offer.RecipientId;
+                builder.AppendLine(
+                    $"{offer.Id} (round {offer.CreatedRound}): {offerer} offered to give up the fight to {recipient}, " +
+                    $"promising {DescribeTerms(state, offer)}. NOTHING has changed hands; {offerer} is still ACTIVE and " +
+                    $"a valid target. Only {recipient} may accept it (accept_surrender, offer '{offer.Id}'), on their " +
+                    "own turn; it lapses at the end of that turn otherwise.");
+            }
+        }
+
+        var resolved = state.SurrenderOffers.Where(o => !o.IsPending).ToList();
+        if (resolved.Count > 0)
+        {
+            builder.AppendLine();
+            builder.AppendLine("SURRENDER OFFERS ALREADY SETTLED (no longer open — never treat one of these as live):");
+            foreach (var offer in resolved)
+            {
+                var offerer = state.FindById(offer.OffererId)?.Name ?? offer.OffererId;
+                var recipient = state.FindById(offer.RecipientId)?.Name ?? offer.RecipientId;
+                builder.AppendLine(
+                    $"- {offer.Id}: {offerer} to {recipient} — {offer.State.ToString().ToUpperInvariant()}" +
+                    (offer.ResolutionCause is null ? "." : $" ({offer.ResolutionCause})."));
+            }
+        }
+
+        if (state.SurrenderAgreements.Length > 0)
+        {
+            builder.AppendLine();
+            builder.AppendLine("SURRENDERS ACCEPTED (binding — the one who yielded is out of the fight for good):");
+            foreach (var agreement in state.SurrenderAgreements)
+            {
+                var offerer = state.FindById(agreement.OffererId)?.Name ?? agreement.OffererId;
+                var accepter = state.FindById(agreement.AcceptedById)?.Name ?? agreement.AcceptedById;
+                var tribute = agreement.TransferredItemIds.Length == 0
+                    ? "no items"
+                    : string.Join(", ", agreement.TransferredItemIds.Select(id => ItemDisplayName(state, id)));
+                var weapon = agreement.ForfeitedWeaponId is null
+                    ? "no weapon was promised"
+                    : $"the {ItemDisplayName(state, agreement.ForfeitedWeaponId)} was forfeited and now lies on the floor";
+                builder.AppendLine(
+                    $"- {agreement.Id}: {offerer} yielded to {accepter} on round {agreement.AcceptedRound}. " +
+                    $"Tribute: {tribute}. Weapon: {weapon}.");
+            }
+        }
+    }
+
+    /// <summary>The exact terms of an offer, named as the state names them, for the DM to read out or bind against.</summary>
+    private static string DescribeTerms(GameState state, SurrenderOffer offer)
+    {
+        var parts = new List<string>();
+        if (offer.OfferedItemIds.Length > 0)
+        {
+            parts.Add(string.Join(", ", offer.OfferedItemIds.Select(id => ItemDisplayName(state, id))));
+        }
+
+        if (offer.ForfeitWeapon)
+        {
+            var weapon = state.FindById(offer.OffererId)?.Weapon?.Name;
+            parts.Add(weapon is null ? "the weapon in their hand" : $"their {weapon}");
+        }
+
+        return parts.Count == 0 ? "nothing" : string.Join(" and ", parts);
+    }
+
+    /// <summary>
+    /// Resolves an item or weapon id to the name it is known by, wherever it currently sits — an inventory, a
+    /// container, the floor, or a hand. Falls back to the id, so a record never renders as blank.
+    /// </summary>
+    private static string ItemDisplayName(GameState state, string id)
+    {
+        foreach (var character in state.Characters)
+        {
+            var carried = character.Inventory.FirstOrDefault(i => string.Equals(i.Id, id, StringComparison.OrdinalIgnoreCase));
+            if (carried is not null)
+            {
+                return carried.DisplayName;
+            }
+
+            if (character.Weapon is not null && string.Equals(character.Weapon.Id, id, StringComparison.OrdinalIgnoreCase))
+            {
+                return character.Weapon.Name;
+            }
+        }
+
+        foreach (var container in state.Room.Objects.OfType<Container>())
+        {
+            var inside = container.Contents.FirstOrDefault(i => string.Equals(i.Id, id, StringComparison.OrdinalIgnoreCase));
+            if (inside is not null)
+            {
+                return inside.Name;
+            }
+        }
+
+        return id;
+    }
+
+    /// <summary>A character's abilities with their remaining uses, on one line, for the authoritative block.</summary>
+    private static string FormatAbilitiesInline(IReadOnlyList<CharacterAbility> abilities) =>
+        abilities.Count == 0
+            ? "none"
+            : string.Join("; ", abilities.Select(a => $"{a.AbilityId} ({a.Name}, {a.DescribeUses()})"));
+
+    /// <summary>The live status effects on one character, on one line, naming each source so it is auditable.</summary>
+    private static string FormatStatusesInline(GameState state, string characterId)
+    {
+        var statuses = state.StatusesOn(characterId).ToList();
+        if (statuses.Count == 0)
+        {
+            return "none";
+        }
+
+        return string.Join("; ", statuses.Select(s =>
+        {
+            var source = state.FindById(s.SourceCharacterId)?.Name ?? s.SourceCharacterId;
+            var partner = s.Kind is StatusEffectKind.Guarding
+                ? PartnerName(state, s)
+                : null;
+            var about = partner is null ? "" : $" ({partner})";
+            return $"{s.Kind}{about} — {s.Describe()} [from {source}]";
+        }));
+    }
+
+    /// <summary>The other half of a linked status relationship, by name — who is being guarded, or by whom.</summary>
+    private static string? PartnerName(GameState state, StatusEffectInstance status)
+    {
+        if (status.RelationshipId is null)
+        {
+            return null;
+        }
+
+        var other = state.Statuses.FirstOrDefault(s =>
+            string.Equals(s.RelationshipId, status.RelationshipId, StringComparison.OrdinalIgnoreCase) && s.Id != status.Id);
+        return other is null ? null : state.FindById(other.TargetCharacterId)?.Name ?? other.TargetCharacterId;
     }
 
     /// <summary>
@@ -201,9 +345,146 @@ public sealed class WorldStateFormatter
                 ? "None"
                 : $"{character.Weapon.Name}\nDamage: {character.Weapon.Damage}",
             ["inventory"] = FormatBulletList(character.Inventory.Select(FormatItem)),
-            ["abilities"] = FormatBulletList(character.Abilities)
+            ["abilities"] = FormatAbilitiesForSelf(character.Abilities),
+            ["statuses"] = FormatStatusesForSelf(character, state),
+            ["offers"] = FormatOffersForSelf(character, state)
         }).TrimEnd();
     }
+
+    /// <summary>
+    /// A character's own abilities, in their own terms, with what is left of each. Handed to them every turn so
+    /// they never have to guess whether a limited ability is spent — a model that guesses wrong burns its turn
+    /// on an attempt the engine refuses.
+    /// </summary>
+    private static string FormatAbilitiesForSelf(IReadOnlyList<CharacterAbility> abilities)
+    {
+        if (abilities.Count == 0)
+        {
+            return "- None beyond what anyone can do with a weapon in hand.";
+        }
+
+        return string.Join("\n", abilities.Select(a =>
+        {
+            var definition = AbilityCatalog.Find(a.AbilityId);
+            var spent = a.HasChargeLeft ? "" : " — SPENT, you cannot use it again in this fight";
+            var uses = a.RemainingUses is null ? "as often as you like" : a.DescribeUses();
+            var what = definition is null ? "" : $" {definition.Description}";
+            return $"- {a.Name} ({uses}{spent}).{what}";
+        }));
+    }
+
+    /// <summary>
+    /// The live status effects on this character, phrased for them. These are mechanical facts the world is
+    /// enforcing, so a character is told them plainly rather than left to infer them from narration.
+    /// </summary>
+    private static string FormatStatusesForSelf(Character character, GameState state)
+    {
+        var lines = new List<string>();
+
+        foreach (var status in state.StatusesOn(character.Id))
+        {
+            var source = state.FindById(status.SourceCharacterId)?.Name ?? status.SourceCharacterId;
+            lines.Add(status.Kind switch
+            {
+                StatusEffectKind.Guarding =>
+                    $"- You are standing over {PartnerName(state, status) ?? "a companion"}: the next blow an enemy " +
+                    "aims at them will fall on you instead. It lasts until your next turn begins, or until that one blow.",
+                StatusEffectKind.Guarded =>
+                    $"- {source} is standing over you: the next blow an enemy aims at you will fall on {source} instead.",
+                StatusEffectKind.Rallied =>
+                    $"- {source} has steadied you: your next attack is markedly more likely to land. It is used up by " +
+                    "that attack, land or miss.",
+                StatusEffectKind.OffBalance =>
+                    $"- {source} has left you off balance: your next attack is markedly less likely to land. It is used " +
+                    "up by that attack, land or miss.",
+                StatusEffectKind.Defending =>
+                    "- Your guard is up: the next blow that lands on you will do less harm. It falls away when your " +
+                    "next turn begins.",
+                _ => $"- {status.Describe()}"
+            });
+        }
+
+        return lines.Count == 0 ? "- Nothing is affecting you right now." : string.Join("\n", lines);
+    }
+
+    /// <summary>
+    /// The surrender offers this character is party to, phrased for them: one they have made and is awaiting an
+    /// answer, and any made to them that they alone may take up. Offers are public, so nothing here is hidden
+    /// from anybody — but a character has to know the terms and whose decision it is.
+    /// </summary>
+    private static string FormatOffersForSelf(Character character, GameState state)
+    {
+        var lines = new List<string>();
+
+        foreach (var offer in state.PendingOffersTo(character.Id))
+        {
+            var offerer = state.FindById(offer.OffererId)?.Name ?? offer.OffererId;
+            lines.Add(
+                $"- {offerer} has offered to give up the fight to YOU, promising {DescribeTerms(state, offer)}. " +
+                "Nothing has changed hands and they are still fighting. You alone can take it up, and only this " +
+                "turn — say plainly that you accept their terms, and the world will hand you what was promised and " +
+                "put them out of the fight. Do anything else and the offer lapses.");
+        }
+
+        if (state.PendingOfferFrom(character.Id) is { } mine)
+        {
+            var recipient = state.FindById(mine.RecipientId)?.Name ?? mine.RecipientId;
+            lines.Add(
+                $"- You have offered to give up the fight to {recipient}, promising {DescribeTerms(state, mine)}. " +
+                "It is not settled: you have handed over nothing, you still hold what you carry, and you can still " +
+                $"be struck. It is {recipient}'s decision, on their turn.");
+        }
+
+        // An offer that came to nothing has to be said out loud, or the offerer waits for an answer that
+        // already came. In a live v0.7 run a character offered terms in round 4, was refused in the same
+        // round, and then spent rounds 9, 10 and 11 doing nothing but bracing "while Vark considers my
+        // offer" — her self-state had silently gone back to "you have offered none", and the one narration
+        // that told her had long since been summarised out of her history. State that contradicts a stale
+        // belief has to contradict it explicitly; going quiet reads as "still waiting".
+        else if (LastResolvedOfferFrom(character.Id, state) is { } settled)
+        {
+            var recipient = state.FindById(settled.RecipientId)?.Name ?? settled.RecipientId;
+            lines.Add(settled.State switch
+            {
+                SurrenderOfferState.Rejected =>
+                    $"- The terms you put to {recipient} are DEAD: they answered with violence instead of taking " +
+                    "them. Nothing changed hands, nobody is waiting on anybody, and you are still in this fight. " +
+                    "Do not wait for an answer — decide again from where you stand now.",
+                SurrenderOfferState.Expired =>
+                    $"- The terms you put to {recipient} LAPSED: their turn passed and they did not take them. " +
+                    "Nothing changed hands, and you are still in this fight. Do not wait for an answer — you may " +
+                    "offer again on better terms, or do something else entirely.",
+                _ => $"- Your offer to {recipient} is no longer open."
+            });
+        }
+
+        foreach (var agreement in state.SurrenderAgreements)
+        {
+            if (string.Equals(agreement.AcceptedById, character.Id, StringComparison.OrdinalIgnoreCase))
+            {
+                var offerer = state.FindById(agreement.OffererId)?.Name ?? agreement.OffererId;
+                lines.Add($"- You accepted {offerer}'s surrender. They are out of the fight and must not be struck.");
+            }
+            else if (string.Equals(agreement.OffererId, character.Id, StringComparison.OrdinalIgnoreCase))
+            {
+                var accepter = state.FindById(agreement.AcceptedById)?.Name ?? agreement.AcceptedById;
+                lines.Add($"- You gave up the fight to {accepter} on agreed terms. Your part in the battle is over.");
+            }
+        }
+
+        return lines.Count == 0 ? "- None. Nobody has offered terms, and you have offered none." : string.Join("\n", lines);
+    }
+
+    /// <summary>
+    /// The character's own most recently settled offer, when it came to nothing. An accepted offer is not
+    /// returned: that is already reported as an agreement, and it ends their part in the fight.
+    /// </summary>
+    private static SurrenderOffer? LastResolvedOfferFrom(string offererId, GameState state) =>
+        state.SurrenderOffers
+            .Where(o => string.Equals(o.OffererId, offererId, StringComparison.OrdinalIgnoreCase)
+                        && o.State is SurrenderOfferState.Rejected or SurrenderOfferState.Expired)
+            .OrderBy(o => o.ResolvedRound ?? 0).ThenBy(o => o.ResolvedTurn ?? 0)
+            .LastOrDefault();
 
     /// <summary>
     /// Turns exact health into a descriptive band. The Dungeon Master narrates wounds and never needs
@@ -269,7 +550,7 @@ public sealed class WorldStateFormatter
         injuries.Count == 0 ? "none" : string.Join("; ", injuries.Select(i => i.Description));
 
     private static string FormatItem(InventoryItem item) =>
-        item.HealingAmount is { } healing ? $"{item.Name} (restores {healing} health)" : item.Name;
+        item.HealingAmount is { } healing ? $"{item.DisplayName} (restores {healing} health)" : item.DisplayName;
 
     private static string FormatBulletList(IEnumerable<string> values)
     {

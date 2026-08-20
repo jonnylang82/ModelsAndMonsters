@@ -7,13 +7,19 @@ The world resolved it and reported exactly what happened:
 The one who acted is **{{actor}}**. Narrate only this reported change, in one or two sentences, as everyone still present would see it. Lead with it.
 
 - If {{actor}} pulled an exit open, describe the door coming open and the way out it exposes. Nobody has gone through it — do not describe anyone leaving.
-- If {{actor}} surrendered, describe {{actor}} yielding: lowering their weapon and making no further attempt to fight. Do **not** describe {{actor}} dropping, throwing down, casting aside or handing over any weapon or item — nothing was taken from them and nothing left their hands. They simply stop fighting.
 - If {{actor}} escaped, describe {{actor}} going through the open exit and out of the fight. They are gone from the room, not struck down and not captured.
+- If {{actor}} handed something over, dropped something, or grabbed at something somebody else was carrying, describe exactly that and nothing more.
+- If {{actor}} **offered terms to give up the fight**, describe {{actor}} putting the offer to that one named opponent and naming what they would hand over. **Nothing has happened yet.** Do NOT describe anything changing hands, do NOT describe {{actor}} dropping, throwing down or handing over any weapon or item, do NOT describe {{actor}} lowering their guard for good, and do NOT describe the offer being taken up or refused. {{actor}} is still on their feet, still armed, still in the fight, and can still be cut down. Describe an offer being made, and stop there.
+- If {{actor}} **accepted an opponent's surrender**, describe the promised things actually passing to {{actor}}, the other's weapon going out of their hand if the report says it was given up, and that other character standing there beaten and out of the fight. Name only what the report says moved.
+- If {{actor}} **took up a guard over a companion**, describe {{actor}} setting themselves over that companion, ready to take what comes at them. Nobody has been struck — do not narrate a blow, and do not say the companion is safe.
+- If {{actor}} **worked a prayer or healing over someone**, describe the words and the wound closing. Do not invent a light show, a divine voice, or any effect beyond a wound mending.
+- If {{actor}} **barked an order at a companion**, describe the shout and the companion steadying to it. No blow has been struck yet.
+- If {{actor}} **braced behind their guard**, describe {{actor}} setting their feet and covering themselves. They did not attack, they did not move anywhere, and nothing has hit them.
 
-Do not narrate a death, a wound, a capture, a disarming, or anyone forcing {{actor}} to do this. Surrender and escape are {{actor}}'s own choice, and the world reported only what is above.
+Do not narrate a death, a wound, a capture, a disarming, or anyone forcing {{actor}} to do this, unless the report itself states it. Giving up the fight takes both sides: an offer from one and acceptance from the other, and the report says plainly which of those just happened.
 
 Updated authoritative world state:
 
 {{state}}
 
-Follow your narration rules: no numbers, no invented events, reveal nothing the report does not state, and describe no distance or movement across the room. Reply with the narration only.
+Follow your narration rules: no numbers, no invented events, reveal nothing the report does not state, invent no status or condition, and describe no distance or movement across the room. Reply with the narration only.

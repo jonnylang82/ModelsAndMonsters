@@ -109,3 +109,43 @@ button.ghost { background: transparent; color: var(--muted); border: 1px solid v
 /* v0.5 — the cellar exit chip, alongside the object chips. Dashed while shut, solid + accented once open. */
 .obj.exit { border-style: dashed; }
 .obj.exit.open { border-style: solid; }
+
+/* v0.7 — status badges, ability charges, and the surrender-negotiation panel. */
+.statuses { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.badge {
+  font-size: 10px; letter-spacing: 0.3px; padding: 2px 6px; border-radius: 10px;
+  border: 1px solid var(--line); color: var(--muted); background: rgba(255, 255, 255, 0.03);
+}
+.badge.guarding, .badge.guarded { color: var(--heroes); border-color: var(--heroes); }
+.badge.rallied { color: var(--accent); border-color: var(--accent); }
+.badge.offbalance { color: var(--monsters); border-color: var(--monsters); }
+.badge.defending { color: #cfe3ff; border-color: #6f86a8; }
+
+.abilities { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.ability {
+  font-size: 10px; padding: 2px 6px; border-radius: 4px;
+  border: 1px dashed var(--line); color: var(--muted);
+}
+.ability.spent { opacity: 0.45; text-decoration: line-through; }
+.disarmed { color: var(--monsters); font-weight: 600; }
+
+/* An offer and an accepted surrender must never look alike: only one of them ends a fight. */
+.negotiation { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.offer {
+  display: flex; flex-direction: column; gap: 2px; min-width: 240px; max-width: 340px;
+  background: var(--panel); border: 1px solid var(--line); border-left-width: 3px; border-radius: 6px; padding: 8px 10px;
+}
+.offer-head { font-size: 13px; color: var(--ink); font-weight: 600; }
+.offer-terms { font-size: 12px; color: var(--accent); }
+.offer-note { font-size: 10px; color: var(--muted); }
+.offer.pending { border-left-color: var(--accent); border-style: dashed; border-left-style: solid; }
+.offer.accepted { border-left-color: var(--heroes); }
+.offer.settled { opacity: 0.6; border-left-color: var(--muted); }
+
+.line.offerline { color: var(--accent); font-size: 13px; }
+.line.offerline.settled { color: var(--muted); }
+.line.outcome.accepted { color: var(--heroes); }
+.line.ability { color: #d7b9ff; font-size: 13px; }
+.line.status { color: var(--muted); font-size: 12px; }
+.line.redirect { color: var(--heroes); font-size: 13px; }
+.line .sub { color: var(--muted); font-size: 11px; }

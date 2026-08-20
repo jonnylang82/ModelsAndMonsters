@@ -7,7 +7,11 @@ const API = 'http://localhost:5170'
 const LOG_KINDS = new Set([
   'runHeader', 'notice', 'round', 'narration', 'asks', 'acts', 'speaks',
   'passes', 'refused', 'privateObservation', 'attack',
-  'surrendered', 'escaped', 'exitOpened', 'gave', 'dropped', 'stole', 'completed', 'ending'
+  'surrendered', 'escaped', 'exitOpened', 'gave', 'dropped', 'stole', 'completed', 'ending',
+  // v0.7: negotiation, abilities, statuses. Deliberately distinct kinds — an offer and an accepted
+  // surrender must never read alike, because only one of them ends a fight.
+  'surrenderOffered', 'surrenderOfferSettled', 'surrenderAccepted',
+  'abilityUsed', 'statusChanged', 'attackRedirected', 'defendReduced'
 ])
 
 export default function App() {
@@ -17,6 +21,9 @@ export default function App() {
   const [objects, setObjects] = useState([])
   const [exits, setExits] = useState([])
   const [ground, setGround] = useState([])
+  const [pendingOffers, setPendingOffers] = useState([])
+  const [settledOffers, setSettledOffers] = useState([])
+  const [agreements, setAgreements] = useState([])
   const [turn, setTurn] = useState(null)
   const [round, setRound] = useState(null)
   const [log, setLog] = useState([])
@@ -33,6 +40,9 @@ export default function App() {
       setObjects(p.objects || [])
       setExits(p.exits || [])
       setGround(p.ground || [])
+      setPendingOffers(p.pendingOffers || [])
+      setSettledOffers(p.settledOffers || [])
+      setAgreements(p.agreements || [])
       return
     }
     if (evt.type === 'turnStarted') { setTurn(p.character); return }
@@ -43,7 +53,9 @@ export default function App() {
 
   const start = useCallback(async () => {
     esRef.current?.close()
-    setCharacters([]); setObjects([]); setExits([]); setGround([]); setTurn(null); setRound(null); setLog([]); setStatus('running')
+    setCharacters([]); setObjects([]); setExits([]); setGround([])
+    setPendingOffers([]); setSettledOffers([]); setAgreements([])
+    setTurn(null); setRound(null); setLog([]); setStatus('running')
     const res = await fetch(`${API}/api/runs`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
     })
@@ -62,7 +74,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="top">
-        <h1>🎲 Models &amp; Monsters 🧌 <span className="version">v0.6</span></h1>
+        <h1>🎲 Models &amp; Monsters 🧌 <span className="version">v0.7</span></h1>
         <div className="controls">
           {round != null && <span className="round">Round {round}</span>}
           <span className={`status ${status}`}>{status}</span>
@@ -99,12 +111,53 @@ export default function App() {
         </section>
       )}
 
+      {(pendingOffers.length > 0 || agreements.length > 0 || settledOffers.length > 0) && (
+        <section className="negotiation">
+          {pendingOffers.map((o) => (
+            <div key={o.id} className="offer pending">
+              <span className="offer-head">🏳️ {o.offerer} → {o.recipient}</span>
+              <span className="offer-terms">offers: {o.terms}</span>
+              <span className="offer-note">
+                awaiting {o.recipient}’s answer · nothing transferred · {o.offerer} still a target · lapses at end of their turn
+              </span>
+            </div>
+          ))}
+          {agreements.map((a) => (
+            <div key={a.id} className="offer accepted">
+              <span className="offer-head">🤝 {a.offerer} yielded to {a.acceptedBy}</span>
+              <span className="offer-terms">
+                tribute: {a.transferredItems.length ? a.transferredItems.join(', ') : 'none'}
+                {a.forfeitedWeapon ? ` · weapon forfeited: ${a.forfeitedWeapon}` : ' · no weapon promised'}
+              </span>
+              <span className="offer-note">binding · {a.offerer} disarmed and out of the fight (round {a.acceptedRound})</span>
+            </div>
+          ))}
+          {settledOffers.map((o) => (
+            <div key={o.id} className={`offer settled ${o.state.toLowerCase()}`}>
+              <span className="offer-head">{o.offerer} → {o.recipient}</span>
+              <span className="offer-terms">{o.terms}</span>
+              <span className="offer-note">{o.state.toLowerCase()}{o.resolutionCause ? ` — ${o.resolutionCause}` : ''} · nothing transferred</span>
+            </div>
+          ))}
+        </section>
+      )}
+
       <section className="stream">
         {log.map((e, i) => <LogLine key={i} evt={e} />)}
         <div ref={bottomRef} />
       </section>
     </div>
   )
+}
+
+// Status badges. Each one is a mechanical fact the engine is enforcing, so it is shown as its own badge
+// rather than folded into prose that a reader has to infer it from.
+const STATUS_BADGE = {
+  Guarding: (s) => `🛡 guarding${s.partnerName ? ` ${s.partnerName}` : ''}`,
+  Guarded: (s) => `🛡 guarded by ${s.source}`,
+  Rallied: (s) => `📣 rallied ${s.modifier >= 0 ? '+' : ''}${s.modifier}`,
+  OffBalance: (s) => `💫 off balance ${s.modifier >= 0 ? '+' : ''}${s.modifier}`,
+  Defending: () => '🪨 guard up (−1 next hit)'
 }
 
 // Disposition drives how a card reads. Only the dead are "fallen"; a surrendered or escaped character is
@@ -128,7 +181,27 @@ function CharacterCard({ c, active }) {
       {status && <div className={`disposition ${dispositionCls}`}>{status}</div>}
       <div className="hpbar"><div className="hpfill" style={{ width: `${pct}%` }} /></div>
       <div className="hptext">{disposition === 'Dead' ? 'fallen' : `${c.health} / ${c.maxHealth}`}</div>
-      <div className="meta">{c.weapon || 'unarmed'} · armour {c.armour}</div>
+      <div className="meta">
+        {c.disarmed ? <span className="disarmed">disarmed</span> : (c.weapon || 'unarmed')} · armour {c.armour}
+      </div>
+      {(c.statuses || []).length > 0 && (
+        <div className="statuses">
+          {c.statuses.map((s) => (
+            <span key={s.id} className={`badge ${s.kind.toLowerCase()}`} title={s.description}>
+              {(STATUS_BADGE[s.kind] || ((x) => x.kind))(s)}
+            </span>
+          ))}
+        </div>
+      )}
+      {(c.abilities || []).length > 0 && (
+        <div className="abilities">
+          {c.abilities.map((a) => (
+            <span key={a.id} className={`ability ${a.remainingUses === 0 ? 'spent' : ''}`}>
+              {a.name} {a.maxUses == null ? '∞' : `${a.remainingUses}/${a.maxUses}`}
+            </span>
+          ))}
+        </div>
+      )}
       {c.inventory.length > 0 && <div className="inv">carrying: {c.inventory.join(', ')}</div>}
       {c.injuries.length > 0 && <div className="injuries">{c.injuries.join('; ')}</div>}
     </div>
@@ -155,6 +228,46 @@ function LogLine({ evt }) {
     case 'gave': return <div className="line outcome">🤝 {p.character} gives the {p.item} to {p.recipient}.</div>
     case 'dropped': return <div className="line outcome">🟫 {p.character} drops the {p.item} on the floor.</div>
     case 'stole': return <div className="line outcome">{p.succeeded ? `🖐️ ${p.character} snatches the ${p.item} from ${p.target}!` : `✋ ${p.character} lunges for ${p.target}'s ${p.item} — but fails.`}</div>
+    // An offer is a proposal and must never read like a surrender: the line says so explicitly.
+    case 'surrenderOffered': return (
+      <div className="line offerline">
+        🏳️ {p.character} offers {p.recipient} terms to end their fight — {p.terms}.
+        <span className="sub"> Nothing has changed hands; {p.character} is still armed and still a target. Only {p.recipient} can accept.</span>
+      </div>
+    )
+    case 'surrenderOfferSettled': return (
+      <div className="line offerline settled">
+        ⛔ {p.character}’s offer to {p.recipient} is {p.state.toLowerCase()} — {p.cause}. Nothing transferred.
+      </div>
+    )
+    case 'surrenderAccepted': return (
+      <div className="line outcome accepted">
+        🤝 {p.character} accepts {p.offerer}’s surrender
+        {p.tribute && p.tribute.length ? ` and takes ${p.tribute.join(', ')}` : ''}
+        {p.weapon ? `; ${p.offerer}’s ${p.weapon} goes to ${p.weaponDisposition || 'the floor'}` : ''}.
+        <span className="sub"> {p.offerer} is disarmed and out of the fight.</span>
+      </div>
+    )
+    case 'abilityUsed': return (
+      <div className="line ability">
+        ✨ {p.character} uses {p.ability}{p.target ? ` on ${p.target}` : ''}
+        {p.healing ? ` — ${p.healing} health restored` : ''}
+        {p.remainingUses != null ? ` (${p.remainingUses} left)` : ''}.
+      </div>
+    )
+    case 'statusChanged': return (
+      <div className="line status">
+        {statusIcon(p.transition)} {p.target}: {p.kind} {p.transition.toLowerCase()} — {p.cause}.
+      </div>
+    )
+    case 'attackRedirected': return (
+      <div className="line redirect">
+        🛡 {p.attacker} struck at {p.intendedTarget}, but {p.guardian} took the blow instead (no extra roll).
+      </div>
+    )
+    case 'defendReduced': return (
+      <div className="line status">🪨 {p.target}’s guard turned aside {p.reduction} damage.</div>
+    )
     case 'completed': {
       const suffix = p.outcome && p.outcome !== 'Ongoing' ? ` — ${p.outcome}` : ''
       return <div className="line divider end">── {p.terminalCondition}{suffix} ──</div>
@@ -171,6 +284,15 @@ function LogLine({ evt }) {
 
 function Line({ label, cls, text }) {
   return <div className={`line ${cls}`}><span className="who">{label}:</span> {text}</div>
+}
+
+function statusIcon(transition) {
+  switch (transition) {
+    case 'Applied': return '➕'
+    case 'Consumed': return '➖'
+    case 'Expired': return '⏱'
+    default: return '✖'
+  }
 }
 
 function attackText(p) {

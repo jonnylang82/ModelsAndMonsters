@@ -39,10 +39,76 @@ public sealed record UiEvent(string Type, object? Payload)
     public static UiEvent StoleAttempt(string character, string target, string item, bool succeeded) =>
         new("stole", new { character, target, item, succeeded });
 
+    // Negotiated surrender, abilities and statuses (v0.7). Each reads distinctly in the transcript, because
+    // conflating an offer with an accepted surrender is exactly the thing this release exists to separate.
+    public static UiEvent SurrenderOffered(string offerId, string character, string recipient, string terms) =>
+        new("surrenderOffered", new { offerId, character, recipient, terms });
+
+    public static UiEvent SurrenderOfferSettled(string offerId, string character, string recipient, string state, string cause) =>
+        new("surrenderOfferSettled", new { offerId, character, recipient, state, cause });
+
+    public static UiEvent SurrenderAccepted(
+        string character, string offerer, IReadOnlyList<string> tribute, string? weapon, string? weaponDisposition) =>
+        new("surrenderAccepted", new { character, offerer, tribute, weapon, weaponDisposition });
+
+    public static UiEvent AbilityUsed(
+        string character, string ability, string? target, string result, int? remainingUses, int? healing) =>
+        new("abilityUsed", new { character, ability, target, result, remainingUses, healing });
+
+    public static UiEvent StatusChanged(
+        string transition, string kind, string target, string source, int modifier, string cause) =>
+        new("statusChanged", new { transition, kind, target, source, modifier, cause });
+
+    public static UiEvent AttackRedirected(string attacker, string intendedTarget, string guardian) =>
+        new("attackRedirected", new { attacker, intendedTarget, guardian });
+
+    public static UiEvent DefendReduced(string target, int reduction) => new("defendReduced", new { target, reduction });
+
     public static UiEvent Completed(
         string terminalCondition, string? outcome, IReadOnlyList<string> winningTeams, IReadOnlyList<string> survivors) =>
         new("completed", new { terminalCondition, outcome, winningTeams, survivors });
 }
+
+/// <summary>An ability on a character card: its name and what is left of it.</summary>
+public sealed record AbilityDto(string Id, string Name, string Category, int? RemainingUses, int? MaxUses);
+
+/// <summary>
+/// A live status effect as the cards render it. The partner is the other half of a linked relationship, so a
+/// guarding pair reads as a pair rather than as two unrelated badges.
+/// </summary>
+public sealed record StatusDto(
+    string Id,
+    string Kind,
+    string Source,
+    string Target,
+    int Modifier,
+    string Description,
+    string? PartnerName);
+
+/// <summary>
+/// A surrender offer as the negotiation panel renders it. Offers and agreements are deliberately separate
+/// DTOs: an offer has moved nothing and protects nobody, and the UI must never let the two look alike.
+/// </summary>
+public sealed record SurrenderOfferDto(
+    string Id,
+    string Offerer,
+    string Recipient,
+    IReadOnlyList<string> OfferedItems,
+    bool ForfeitWeapon,
+    string? WeaponName,
+    string Terms,
+    string State,
+    string? ResolutionCause,
+    int CreatedRound);
+
+/// <summary>An accepted surrender as the negotiation panel renders it: what actually changed hands.</summary>
+public sealed record SurrenderAgreementDto(
+    string Id,
+    string Offerer,
+    string AcceptedBy,
+    IReadOnlyList<string> TransferredItems,
+    string? ForfeitedWeapon,
+    int AcceptedRound);
 
 /// <summary>A character as the cards render it.</summary>
 public sealed record CharacterDto(
@@ -57,7 +123,10 @@ public sealed record CharacterDto(
     IReadOnlyList<string> Inventory,
     IReadOnlyList<string> Injuries,
     bool Alive,
-    string Disposition);
+    string Disposition,
+    IReadOnlyList<AbilityDto> Abilities,
+    IReadOnlyList<StatusDto> Statuses,
+    bool Disarmed);
 
 /// <summary>
 /// A room object as the object panel renders it: its name and, for a container, whether it stands open —
@@ -79,22 +148,114 @@ public sealed record StateDto(
     IReadOnlyList<CharacterDto> Characters,
     IReadOnlyList<ObjectDto> Objects,
     IReadOnlyList<ExitDto> Exits,
-    IReadOnlyList<string> Ground)
+    IReadOnlyList<string> Ground,
+    IReadOnlyList<SurrenderOfferDto> PendingOffers,
+    IReadOnlyList<SurrenderOfferDto> SettledOffers,
+    IReadOnlyList<SurrenderAgreementDto> Agreements)
 {
     public static StateDto From(GameState state) => new(
         state.Version,
         [.. state.Characters.Select(c => new CharacterDto(
             c.Id, c.Name, c.Team, c.Role.ToString(), c.Health, c.MaxHealth, c.Armour,
             c.Weapon?.Name,
-            [.. c.Inventory.Select(i => i.Name)],
+            [.. c.Inventory.Select(i => i.DisplayName)],
             [.. c.Injuries.Select(i => i.Description)],
             c.IsAlive,
-            c.Disposition.ToString()))],
+            c.Disposition.ToString(),
+            [.. c.Abilities.Select(a => new AbilityDto(a.AbilityId, a.Name, a.Category.ToString(), a.RemainingUses, a.MaxUses))],
+            [.. state.StatusesOn(c.Id).Select(s => ToStatusDto(state, s))],
+            c.IsDisarmed))],
         // The floor is surfaced separately as Ground, so exclude it from the ordinary object list.
         [.. state.Room.Objects.Where(o => o is not Container { IsGround: true }).Select(o => new ObjectDto(
             o.Id, o.Name, o is Container, o is Container { IsOpen: true }))],
         [.. state.Room.Exits.Select(e => new ExitDto(e.Id, e.Name, e.IsOpen))],
-        [.. state.Room.Objects.OfType<Container>().Where(c => c.IsGround).SelectMany(c => c.Contents).Select(i => i.Name)]);
+        [.. state.Room.Objects.OfType<Container>().Where(c => c.IsGround).SelectMany(c => c.Contents).Select(i => i.DisplayName)],
+        [.. state.PendingOffers().Select(o => ToOfferDto(state, o))],
+        [.. state.SurrenderOffers.Where(o => !o.IsPending).Select(o => ToOfferDto(state, o))],
+        [.. state.SurrenderAgreements.Select(a => ToAgreementDto(state, a))]);
+
+    private static StatusDto ToStatusDto(GameState state, StatusEffectInstance status)
+    {
+        string? partner = null;
+        if (status.RelationshipId is not null)
+        {
+            var other = state.Statuses.FirstOrDefault(s =>
+                s.RelationshipId == status.RelationshipId && s.Id != status.Id);
+            partner = other is null ? null : NameOf(state, other.TargetCharacterId);
+        }
+
+        return new StatusDto(
+            status.Id,
+            status.Kind.ToString(),
+            NameOf(state, status.SourceCharacterId),
+            NameOf(state, status.TargetCharacterId),
+            status.Modifier,
+            status.Describe(),
+            partner);
+    }
+
+    private static SurrenderOfferDto ToOfferDto(GameState state, SurrenderOffer offer)
+    {
+        var items = offer.OfferedItemIds.Select(id => ItemName(state, id)).ToList();
+        var weapon = offer.ForfeitWeapon ? state.FindById(offer.OffererId)?.Weapon?.Name : null;
+        var terms = new List<string>(items);
+        if (offer.ForfeitWeapon)
+        {
+            terms.Add(weapon ?? "their weapon");
+        }
+
+        return new SurrenderOfferDto(
+            offer.Id,
+            NameOf(state, offer.OffererId),
+            NameOf(state, offer.RecipientId),
+            items,
+            offer.ForfeitWeapon,
+            weapon,
+            terms.Count == 0 ? "nothing" : string.Join(" + ", terms),
+            offer.State.ToString(),
+            offer.ResolutionCause,
+            offer.CreatedRound);
+    }
+
+    private static SurrenderAgreementDto ToAgreementDto(GameState state, SurrenderAgreement agreement) => new(
+        agreement.Id,
+        NameOf(state, agreement.OffererId),
+        NameOf(state, agreement.AcceptedById),
+        [.. agreement.TransferredItemIds.Select(id => ItemName(state, id))],
+        agreement.ForfeitedWeaponId is null ? null : ItemName(state, agreement.ForfeitedWeaponId),
+        agreement.AcceptedRound);
+
+    private static string NameOf(GameState state, string characterId) =>
+        state.FindById(characterId)?.Name ?? characterId;
+
+    /// <summary>An item's display name wherever it now sits, so a record of a moved thing never renders as an id.</summary>
+    private static string ItemName(GameState state, string itemId)
+    {
+        foreach (var character in state.Characters)
+        {
+            var carried = character.Inventory.FirstOrDefault(i => i.Id == itemId);
+            if (carried is not null)
+            {
+                return carried.Name;
+            }
+
+            if (character.Weapon?.Id == itemId)
+            {
+                return character.Weapon.Name;
+            }
+        }
+
+        foreach (var container in state.Room.Objects.OfType<Container>())
+        {
+            var inside = container.Contents.FirstOrDefault(i => i.Id == itemId);
+            if (inside is not null)
+            {
+                return inside.Name;
+            }
+        }
+
+        return itemId;
+    }
 }
 
 /// <summary>One resolved attack, for the combat ticker and card damage flashes.</summary>

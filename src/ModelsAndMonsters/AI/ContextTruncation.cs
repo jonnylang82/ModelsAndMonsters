@@ -54,6 +54,25 @@ public static class ContextTruncation
     /// <summary>Output room reserved when an agent's MaxOutputTokens is unknown.</summary>
     private const int DefaultOutputReserveTokens = 1024;
 
+    /// <summary>
+    /// How close input+output must come to the window to count as having filled it. Small, because the
+    /// measured cases land exactly on the ceiling (8152 + 40 = 8192); the slack only absorbs a provider
+    /// counting a stop token or two differently.
+    /// </summary>
+    private const int ContextCeilingSlackTokens = 16;
+
+    /// <summary>
+    /// Below this fraction of its output budget, a reply that finished with Length plainly did not stop
+    /// because of that budget. Deliberately generous: half a budget left unused is not an output limit.
+    /// </summary>
+    private const double OutputBudgetSpentFraction = 0.5;
+
+    /// <summary>
+    /// How near the output budget counts as having spent it. A few tokens, because a provider may stop on a
+    /// token boundary just short of the cap.
+    /// </summary>
+    private const int OutputBudgetSlackTokens = 8;
+
     /// <summary>A safety margin subtracted from a derived budget, absorbing residual estimation error.</summary>
     private const int HistoryBudgetSafetyMarginTokens = 256;
 
@@ -122,6 +141,48 @@ public static class ContextTruncation
         var threshold = Math.Max(MinimumDroppedTokens, (int)(estimatedSentTokens * DroppedFractionThreshold));
         return estimatedDroppedTokens > threshold;
     }
+
+    /// <summary>
+    /// Distinguishes the two very different reasons a reply can finish with <c>Length</c>: the model used up
+    /// the output budget it was given, or the input had already filled the context window so there was
+    /// almost nothing left to generate into. Only the first is fixed by raising MaxOutputTokens.
+    /// </summary>
+    /// <remarks>
+    /// A live run showed the difference starkly — <c>input 8152 + output 40 = 8192</c>, exactly the window,
+    /// with the output budget nowhere near spent. The harness reported "truncated at the output-token limit"
+    /// and advised raising MaxOutputTokens, which would have made it worse: the window is shared, so a larger
+    /// output reservation leaves *less* room for the prompt. The real remedy is a smaller request.
+    /// </remarks>
+    /// <param name="inputTokens">Input tokens the provider reported.</param>
+    /// <param name="outputTokens">Output tokens the provider reported.</param>
+    /// <param name="contextWindow">The window the agent is configured for, when known.</param>
+    /// <param name="maxOutputTokens">The per-call output budget, when set.</param>
+    public static bool WasContextExhausted(long? inputTokens, long? outputTokens, int? contextWindow, int? maxOutputTokens)
+    {
+        if (inputTokens is not { } input || outputTokens is not { } output || contextWindow is not { } window || window <= 0)
+        {
+            return false;
+        }
+
+        // Right at the ceiling: input and output together account for the whole window.
+        if (input + output < window - ContextCeilingSlackTokens)
+        {
+            return false;
+        }
+
+        // And the output budget was plainly not the binding constraint — the reply stopped far short of it.
+        return maxOutputTokens is not { } cap || output < cap * OutputBudgetSpentFraction;
+    }
+
+    /// <summary>
+    /// True when a reply used up essentially all of the output budget it was given — the signature of a
+    /// reply cut off at that budget, usable when the provider reports no finish reason.
+    /// </summary>
+    public static bool WasOutputBudgetSpent(long? outputTokens, int? maxOutputTokens) =>
+        outputTokens is { } output
+        && maxOutputTokens is { } cap
+        && cap > 0
+        && output >= cap - OutputBudgetSlackTokens;
 
     private static int EstimateMessageTokens(ChatMessage message)
     {

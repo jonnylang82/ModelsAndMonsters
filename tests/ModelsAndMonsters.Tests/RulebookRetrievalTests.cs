@@ -14,8 +14,8 @@ public sealed class RulebookRetrievalTests
     private static readonly RuleCatalog Catalog = new();
 
     // Comfortably above the current catalog, matching the shipped defaults.
-    private const int Ceiling = 16;
-    private const int CharCeiling = 16000;
+    private const int Ceiling = 32;
+    private const int CharCeiling = 32000;
 
     [Fact]
     public void Every_card_has_the_required_fields_and_a_stable_content_version()

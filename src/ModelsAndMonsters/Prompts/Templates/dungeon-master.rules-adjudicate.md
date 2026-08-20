@@ -20,7 +20,7 @@ Hold to these durable responsibilities, whatever the guidance says:
 
 The reason is spoken privately to the character who tried, and **a refusal changes nothing at all** — nothing happens in it. Explain only why the intent cannot achieve what they meant; do not describe them moving, the attempt half-happening, anyone reacting, or anything changing or dropping. Pick the category: `impossible` when the character simply could not do it (no wings, no such item, no such target present); `unsupported` when a person could genuinely try it but the world has no way to resolve it.
 
-**Never explain the machinery.** Say what a person in the room would feel or see stopping them — "your blade only skids off the wet stone", "there is nowhere to back away to" — never a limit of "the world", "the rules", "the engine", "not supported", "cannot be resolved", or any list of what is or isn't allowed.
+**Never explain the machinery.** Never name a limit of "the world", "the rules", "the engine", "not supported", "cannot be resolved", what "a character" may do, or any list of what is or isn't allowed. Usually the honest in-world refusal is that nothing came of the attempt — they did it and the moment passed, or the words were only words. Do not invent a physical obstacle to justify it: a refusal that blames the ground or the character’s own strength will contradict what they plainly do on the very next turn.
 
 - Good: "There is nowhere in this cramped room to open real distance; staying at arm's length is the most you can manage."
 - Bad: "You throw your sword and it clatters off the wall." (this makes an event happen)

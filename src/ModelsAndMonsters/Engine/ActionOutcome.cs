@@ -22,10 +22,19 @@ public sealed record AttackOutcome : ActionOutcome
     public required int WeaponDamage { get; init; }
     public required int TargetArmour { get; init; }
 
-    /// <summary>The d100 hit roll and the attacker's chance, so the outcome is fully reconstructable.</summary>
+    /// <summary>The d100 hit roll and the attacker's EFFECTIVE chance, so the outcome is fully reconstructable.</summary>
     public required int HitRoll { get; init; }
     public required int HitChance { get; init; }
     public required bool Hit { get; init; }
+
+    /// <summary>
+    /// The attacker's own hit chance before any status modifier. Equal to <see cref="HitChance"/> when no
+    /// status applied, so a pre-v0.7-shaped attack reads identically.
+    /// </summary>
+    public int BaseHitChance { get; init; }
+
+    /// <summary>Every status modifier folded into the effective hit chance, in deterministic application order.</summary>
+    public IReadOnlyList<RngModifier> HitModifiers { get; init; } = [];
 
     /// <summary>The glancing roll and chance, null when the attack missed (no glancing roll was made).</summary>
     public int? GlancingRoll { get; init; }
@@ -52,17 +61,56 @@ public sealed record AttackOutcome : ActionOutcome
 
     public IReadOnlyList<string> DroppedItems { get; init; } = [];
 
+    /// <summary>
+    /// The ability this blow was delivered through, when it was not a plain attack (Dirty Strike). Null for an
+    /// ordinary <c>attack_character</c>. Recorded so an ability-driven strike is never mistaken for a second
+    /// combat path — it uses the very same resolution and the very same draws.
+    /// </summary>
+    public string? ViaAbilityId { get; init; }
+
+    public string? ViaAbilityName { get; init; }
+
+    /// <summary>
+    /// The status this blow applied on landing, when the ability applies one (OffBalance). Null when none was
+    /// applied, including when the blow missed.
+    /// </summary>
+    public string? StatusApplied { get; init; }
+
+    /// <summary>
+    /// Who the attacker actually aimed at. Differs from <see cref="TargetId"/> only when a guardian's Guard
+    /// Ally relationship redirected the blow, in which case the target fields are the guardian who took it.
+    /// </summary>
+    public string? IntendedTargetId { get; init; }
+
+    public string? IntendedTargetName { get; init; }
+
+    /// <summary>True when a guard relationship moved this blow from the intended target onto a guardian.</summary>
+    public bool Redirected { get; init; }
+
+    /// <summary>The damage a Defending status turned aside, after armour and glancing. 0 when none applied.</summary>
+    public int DefendReduction { get; init; }
+
     public override string OutcomeType => "attack";
 
     public override string Summary
     {
         get
         {
+            var via = ViaAbilityName is null ? "" : $" using {ViaAbilityName}";
+            var redirect = Redirected
+                ? $" {AttackerName} aimed at {IntendedTargetName}, but {TargetName} was guarding them, so the " +
+                  $"blow fell on {TargetName} instead."
+                : "";
+            var chance = HitModifiers.Count == 0
+                ? $"a hit chance of {HitChance}"
+                : $"an effective hit chance of {HitChance} (base {BaseHitChance}, " +
+                  $"{string.Join(", ", HitModifiers.Select(m => m.Note))})";
+
             if (!Hit)
             {
-                return $"{AttackerName} attacked {TargetName} with {WeaponName} but MISSED " +
-                       $"(rolled {HitRoll} against a hit chance of {HitChance}). No damage. " +
-                       $"{TargetName} is unharmed with {TargetHealthAfter}/{TargetMaxHealth} health.";
+                return $"{AttackerName} attacked {TargetName}{via} with {WeaponName} but MISSED " +
+                       $"(rolled {HitRoll} against {chance}). No damage. " +
+                       $"{TargetName} is unharmed with {TargetHealthAfter}/{TargetMaxHealth} health.{redirect}";
             }
 
             var quality = Glancing ? "a GLANCING blow (half damage)" : "a solid hit";
@@ -70,14 +118,20 @@ public sealed record AttackOutcome : ActionOutcome
                 ? $"{TargetName} is dead."
                 : $"{TargetName} is alive with {TargetHealthAfter}/{TargetMaxHealth} health.";
             var injury = InjuryInflicted is null ? "" : $" New lasting injury recorded: {InjuryInflicted}.";
+            var defended = DefendReduction > 0
+                ? $" {TargetName} was braced behind their guard, turning aside {DefendReduction} of the damage."
+                : "";
+            var applied = StatusApplied is null
+                ? ""
+                : $" The blow left {TargetName} {StatusApplied} — their next attack is less likely to land.";
             var loot = TargetDied && DroppedItems.Count > 0
                 ? $" As {TargetName} falls, what they carried — {string.Join(", ", DroppedItems)} — spills from " +
                   $"their body and can be taken from {CorpseContainerName}."
                 : "";
-            return $"{AttackerName} hit {TargetName} with {WeaponName} — {quality}. " +
+            return $"{AttackerName} hit {TargetName}{via} with {WeaponName} — {quality} (rolled {HitRoll} against {chance}). " +
                    $"Weapon damage {WeaponDamage} minus armour {TargetArmour} = {BaseDamage}, " +
                    $"{DamageDealt} damage dealt. " +
-                   $"{TargetName} health {TargetHealthBefore} -> {TargetHealthAfter}. {status}{injury}{loot}";
+                   $"{TargetName} health {TargetHealthBefore} -> {TargetHealthAfter}. {status}{defended}{applied}{injury}{loot}{redirect}";
         }
     }
 }
@@ -198,21 +252,197 @@ public sealed record EscapeOutcome : ActionOutcome
 }
 
 /// <summary>
-/// The result of a character surrendering. Public: everyone present sees them yield. The character is now
-/// <see cref="Domain.CharacterDisposition.Surrendered"/> — alive, still present, but out of the fight and no
-/// longer a valid target. No weapon or item is taken from them.
+/// The result of making a surrender offer. Public: everyone present hears the terms. Nothing has changed
+/// hands, nobody is disarmed, and the offerer is still an active, targetable combatant — the offer is a
+/// proposal the named recipient may accept on their own turn, and nothing more.
 /// </summary>
-public sealed record SurrenderOutcome : ActionOutcome
+public sealed record OfferSurrenderOutcome : ActionOutcome
+{
+    public required string OfferId { get; init; }
+    public required string OffererId { get; init; }
+    public required string OffererName { get; init; }
+    public required string RecipientId { get; init; }
+    public required string RecipientName { get; init; }
+
+    /// <summary>The names of the ordinary inventory items promised, in offer order.</summary>
+    public required IReadOnlyList<string> OfferedItemNames { get; init; }
+
+    public required bool ForfeitWeapon { get; init; }
+
+    /// <summary>The name of the weapon promised, or null when no weapon was offered.</summary>
+    public string? WeaponName { get; init; }
+
+    /// <summary>The public-channel id of the plea or threat made on the same turn, when there was one.</summary>
+    public int? AssociatedSpeechEventId { get; init; }
+
+    public override string OutcomeType => "offer_surrender";
+
+    /// <summary>The exact terms, rendered for narration. The plea itself was already spoken publicly.</summary>
+    public string TermsDescription
+    {
+        get
+        {
+            var parts = new List<string>();
+            if (OfferedItemNames.Count > 0)
+            {
+                parts.Add(string.Join(", ", OfferedItemNames));
+            }
+
+            if (ForfeitWeapon && WeaponName is not null)
+            {
+                parts.Add($"their {WeaponName}");
+            }
+
+            return parts.Count == 0 ? "nothing" : string.Join(" and ", parts);
+        }
+    }
+
+    public override string Summary =>
+        $"{OffererName} offered to give up the fight to {RecipientName}, promising {TermsDescription} in return " +
+        $"for being spared. NOTHING has changed hands yet and {OffererName} is NOT disarmed: the offer is only a " +
+        $"proposal. {OffererName} is still an active combatant and can still be attacked. Only {RecipientName} " +
+        $"may accept it, on {RecipientName}'s own turn; if {RecipientName} does anything else, the offer lapses.";
+}
+
+/// <summary>
+/// The result of an accepted surrender. Public: everyone present sees the tribute change hands and the
+/// weapon, if promised, hit the floor. The offerer is now
+/// <see cref="Domain.CharacterDisposition.Surrendered"/> — alive, still present, out of the fight and no
+/// longer a valid target — and their promised assets have moved atomically to the accepter.
+/// </summary>
+public sealed record AcceptSurrenderOutcome : ActionOutcome
+{
+    public required string OfferId { get; init; }
+    public required string AgreementId { get; init; }
+    public required string OffererId { get; init; }
+    public required string OffererName { get; init; }
+    public required string AccepterId { get; init; }
+    public required string AccepterName { get; init; }
+
+    /// <summary>The names of the items that actually moved to the accepter.</summary>
+    public required IReadOnlyList<string> TransferredItemNames { get; init; }
+
+    /// <summary>The name of the forfeited weapon, or null when none was promised.</summary>
+    public string? ForfeitedWeaponName { get; init; }
+
+    /// <summary>Where a forfeited weapon now lies, when one was forfeited.</summary>
+    public string? GroundContainerName { get; init; }
+
+    public int? AssociatedSpeechEventId { get; init; }
+
+    public override string OutcomeType => "accept_surrender";
+
+    public override string Summary
+    {
+        get
+        {
+            var tribute = TransferredItemNames.Count == 0
+                ? ""
+                : $" {string.Join(", ", TransferredItemNames)} passed from {OffererName} to {AccepterName}, who now carries them.";
+            var weapon = ForfeitedWeaponName is null
+                ? $" {OffererName} lowered their weapon."
+                : $" {OffererName} gave up their {ForfeitedWeaponName}, which now lies on {GroundContainerName} " +
+                  $"and can be picked up by anyone; {OffererName} is now DISARMED and holds no weapon.";
+            return $"{AccepterName} accepted {OffererName}'s surrender on the promised terms.{tribute}{weapon} " +
+                   $"{OffererName} has SURRENDERED: alive and still present, but takes no further turns and can no " +
+                   $"longer be attacked.";
+        }
+    }
+}
+
+/// <summary>
+/// The result of an accepted Guard Ally: a linked guarding relationship now stands between the guardian and
+/// one ally. Public and observable. No randomness — the redirection happens later, inside an ordinary attack.
+/// </summary>
+public sealed record GuardAllyOutcome : ActionOutcome
+{
+    public required string GuardianId { get; init; }
+    public required string GuardianName { get; init; }
+    public required string AllyId { get; init; }
+    public required string AllyName { get; init; }
+    public required string RelationshipId { get; init; }
+
+    public override string OutcomeType => "guard_ally";
+
+    public override string Summary =>
+        $"{GuardianName} spent the turn standing over {AllyName}, ready to take the next blow aimed at them. " +
+        $"The next attack an enemy makes against {AllyName} will land on {GuardianName} instead, using " +
+        $"{GuardianName}'s armour and health. The guard is used up by that one blow, and otherwise falls away " +
+        $"at the start of {GuardianName}'s next turn.";
+}
+
+/// <summary>
+/// The result of an accepted Healing Prayer: a fixed amount of health restored, with no randomness, and one
+/// charge of a once-per-encounter spell spent. Public and observable.
+/// </summary>
+public sealed record HealingPrayerOutcome : ActionOutcome
+{
+    public required string CasterId { get; init; }
+    public required string CasterName { get; init; }
+    public required string TargetId { get; init; }
+    public required string TargetName { get; init; }
+    public required string AbilityName { get; init; }
+    public required int HealingAmount { get; init; }
+    public required int HealthBefore { get; init; }
+    public required int HealthAfter { get; init; }
+    public required int MaxHealth { get; init; }
+    public required int RemainingUses { get; init; }
+
+    public override string OutcomeType => "healing_prayer";
+
+    public override string Summary
+    {
+        get
+        {
+            var who = string.Equals(CasterId, TargetId, StringComparison.OrdinalIgnoreCase)
+                ? "themselves"
+                : TargetName;
+            return $"{CasterName} worked {AbilityName} over {who}, restoring {HealthAfter - HealthBefore} health. " +
+                   $"{TargetName} health {HealthBefore} -> {HealthAfter} of {MaxHealth}. No dice were rolled. " +
+                   $"{CasterName} has {RemainingUses} use(s) of {AbilityName} left this encounter.";
+        }
+    }
+}
+
+/// <summary>
+/// The result of an accepted Rally Grunt: one ally's next attack is markedly more likely to land. Public and
+/// observable, with no randomness when applied — the modifier is folded into that ally's next attack draw.
+/// </summary>
+public sealed record RallyOutcome : ActionOutcome
+{
+    public required string CommanderId { get; init; }
+    public required string CommanderName { get; init; }
+    public required string AllyId { get; init; }
+    public required string AllyName { get; init; }
+    public required string AbilityName { get; init; }
+    public required int Modifier { get; init; }
+    public required int RemainingUses { get; init; }
+
+    public override string OutcomeType => "rally";
+
+    public override string Summary =>
+        $"{CommanderName} used {AbilityName} on {AllyName}, steadying them. {AllyName}'s next attack is " +
+        $"{Modifier:+#;-#;0} more likely to land; the effect is used up by that attack whether it lands or " +
+        $"misses, and lapses at the end of {AllyName}'s next turn if unused. No dice were rolled. " +
+        $"{CommanderName} has {RemainingUses} use(s) of {AbilityName} left this encounter.";
+}
+
+/// <summary>
+/// The result of an accepted Defend: the actor is braced, and the next blow that lands on them will be turned
+/// aside by its reduction. Public and observable. No randomness.
+/// </summary>
+public sealed record DefendOutcome : ActionOutcome
 {
     public required string ActorId { get; init; }
     public required string ActorName { get; init; }
+    public required int Reduction { get; init; }
 
-    public override string OutcomeType => "surrender";
+    public override string OutcomeType => "defend";
 
     public override string Summary =>
-        $"{ActorName} surrendered, lowering their weapon and making no further attempt to fight. " +
-        $"{ActorName} is alive and still present, but takes no further turns and can no longer be attacked. " +
-        $"{ActorName} keeps their weapon and belongings; nothing was taken from them.";
+        $"{ActorName} spent the turn braced behind their guard rather than striking. The next blow that lands " +
+        $"on {ActorName} will deal {Reduction} less damage; a miss leaves the guard up, and it falls away at " +
+        $"the start of {ActorName}'s next turn. No dice were rolled and nothing else changed.";
 }
 
 /// <summary>

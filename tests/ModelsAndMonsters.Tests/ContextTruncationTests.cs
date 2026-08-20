@@ -61,6 +61,60 @@ public sealed class ContextTruncationTests
         Assert.True(withArgs > 4);
     }
 
+    [Theory]
+    // The measured case, verbatim from a live qwen run: input 8152 + output 40 filled an 8192 window while
+    // the 600-token output budget sat almost untouched. The harness reported "truncated at the output-token
+    // limit" and advised raising MaxOutputTokens — which shares the same window, so it would have made the
+    // request fail sooner.
+    [InlineData(8152, 40, 8192, 600, true)]
+    [InlineData(8183, 9, 8192, 600, true)]
+    [InlineData(8100, 92, 8192, 600, true)]
+    // A genuine output-limit stop: the window has room to spare and the budget is spent.
+    [InlineData(4000, 600, 8192, 600, false)]
+    [InlineData(4000, 580, 8192, 600, false)]
+    // Filling the window while also spending the budget is an output limit, not an exhausted context.
+    [InlineData(7592, 600, 8192, 600, false)]
+    // Unknown window or missing usage cannot be judged, so it is never claimed.
+    [InlineData(8152, 40, 0, 600, false)]
+    public void A_full_context_window_is_told_apart_from_a_spent_output_budget(
+        long input, long output, int window, int maxOutput, bool expected) =>
+        Assert.Equal(expected, ContextTruncation.WasContextExhausted(
+            input, output, window == 0 ? null : window, maxOutput));
+
+    [Theory]
+    // A reply that spent essentially its whole output budget was cut off at that budget, whatever the
+    // provider said — which for some providers is nothing at all.
+    [InlineData(1500, 1500, true)]
+    [InlineData(1495, 1500, true)]
+    [InlineData(900, 1500, false)]
+    [InlineData(40, 600, false)]
+    public void A_spent_output_budget_is_recognised_from_usage_alone(long output, int cap, bool expected) =>
+        Assert.Equal(expected, ContextTruncation.WasOutputBudgetSpent(output, cap));
+
+    [Fact]
+    public void An_unknown_budget_or_usage_never_claims_a_spent_one()
+    {
+        Assert.False(ContextTruncation.WasOutputBudgetSpent(null, 1500));
+        Assert.False(ContextTruncation.WasOutputBudgetSpent(1500, null));
+        Assert.False(ContextTruncation.WasOutputBudgetSpent(1500, 0));
+    }
+
+    [Fact]
+    public void Missing_usage_never_claims_an_exhausted_context()
+    {
+        Assert.False(ContextTruncation.WasContextExhausted(null, 40, 8192, 600));
+        Assert.False(ContextTruncation.WasContextExhausted(8152, null, 8192, 600));
+        Assert.False(ContextTruncation.WasContextExhausted(8152, 40, null, 600));
+    }
+
+    [Fact]
+    public void A_full_window_with_no_output_budget_set_still_counts_as_exhausted()
+    {
+        // With no cap configured there is nothing to compare the output against, so filling the window is
+        // the whole of the evidence — and it is enough.
+        Assert.True(ContextTruncation.WasContextExhausted(8152, 40, 8192, null));
+    }
+
     [Fact]
     public void The_history_budget_reserves_room_for_the_reply_and_the_tool_overhead_inside_the_window()
     {

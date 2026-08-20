@@ -51,7 +51,11 @@ public sealed record Character
 
     public ImmutableArray<Injury> Injuries { get; init; } = [];
 
-    public ImmutableArray<string> Abilities { get; init; } = [];
+    /// <summary>
+    /// The abilities this character holds, with their remaining charges. Authoritative state: a limited
+    /// ability's charge is spent here when the engine resolves an accepted use, and nowhere else.
+    /// </summary>
+    public ImmutableArray<CharacterAbility> Abilities { get; init; } = [];
 
     /// <summary>
     /// How this character stands in the encounter — the single authoritative type for its standing. When a
@@ -100,7 +104,12 @@ public sealed record Character
     public bool IsAllyOf(Character other) =>
         other is not null && string.Equals(Team, other.Team, StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>Finds an inventory item by id or name, case-insensitively.</summary>
+    /// <summary>
+    /// Finds an inventory item by id, qualified display name, or plain name, case-insensitively. The
+    /// qualified name is tried before the plain one so that when a character carries two items sharing a
+    /// name, naming the qualified one ("Small Purse of Gold Coins (Rowan's)") picks exactly that item
+    /// instead of whichever happens to sit first.
+    /// </summary>
     public InventoryItem? FindItem(string idOrName)
     {
         if (string.IsNullOrWhiteSpace(idOrName))
@@ -109,9 +118,10 @@ public sealed record Character
         }
 
         var needle = idOrName.Trim();
-        return Inventory.FirstOrDefault(i =>
-            string.Equals(i.Id, needle, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(i.Name, needle, StringComparison.OrdinalIgnoreCase));
+        return Inventory.FirstOrDefault(i => string.Equals(i.Id, needle, StringComparison.OrdinalIgnoreCase))
+            ?? Inventory.FirstOrDefault(i => string.Equals(i.DisplayName, needle, StringComparison.OrdinalIgnoreCase))
+            ?? Inventory.FirstOrDefault(i => string.Equals(i.Name, needle, StringComparison.OrdinalIgnoreCase))
+            ?? Inventory.FirstOrDefault(i => i.MatchesReference(needle));
     }
 
     /// <summary>True when the character is currently carrying a weapon with the given name.</summary>
@@ -119,4 +129,40 @@ public sealed record Character
         Weapon is not null &&
         !string.IsNullOrWhiteSpace(weaponName) &&
         string.Equals(Weapon.Name, weaponName.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// True when this character holds no weapon. Only an accepted surrender that promised weapon forfeiture
+    /// disarms anyone in v0.7 — there are no disarming attacks and no weapon swapping.
+    /// </summary>
+    public bool IsDisarmed => Weapon is null;
+
+    /// <summary>
+    /// Finds one of this character's abilities by stable id or by name, case-insensitively. Returns null when
+    /// the character does not hold it at all, which is distinct from holding it with no charges left.
+    /// </summary>
+    public CharacterAbility? FindAbility(string idOrName)
+    {
+        if (string.IsNullOrWhiteSpace(idOrName))
+        {
+            return null;
+        }
+
+        var needle = idOrName.Trim();
+        return Abilities.FirstOrDefault(a => string.Equals(a.AbilityId, needle, StringComparison.OrdinalIgnoreCase))
+            ?? Abilities.FirstOrDefault(a => string.Equals(a.Name, needle, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>Returns a new character with one ability's remaining charges replaced. Unlimited abilities are untouched.</summary>
+    public Character WithAbilityCharges(string abilityId, int? remainingUses)
+    {
+        for (var index = 0; index < Abilities.Length; index++)
+        {
+            if (string.Equals(Abilities[index].AbilityId, abilityId, StringComparison.OrdinalIgnoreCase))
+            {
+                return this with { Abilities = Abilities.SetItem(index, Abilities[index] with { RemainingUses = remainingUses }) };
+            }
+        }
+
+        return this;
+    }
 }

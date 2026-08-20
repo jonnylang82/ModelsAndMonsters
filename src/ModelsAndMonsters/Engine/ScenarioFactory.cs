@@ -89,11 +89,61 @@ public static class ScenarioFactory
             Health = Math.Clamp(definition.Health ?? maxHealth, 0, maxHealth),
             Armour = Math.Max(0, definition.Armour),
             HitChance = Math.Clamp(definition.HitChance, 0, 100),
-            Weapon = definition.Weapon is null ? null : new Weapon(definition.Weapon.Name, definition.Weapon.Damage),
+            Weapon = ToWeapon(definition),
             Inventory = [.. definition.Inventory.Select(ToItem)],
             Injuries = [.. definition.Injuries.Select(text => new Injury(text))],
-            Abilities = [.. definition.Abilities]
+            Abilities = ToAbilities(definition)
         };
+    }
+
+    /// <summary>
+    /// Builds a character's equipped weapon, giving it the scenario's stable id or a slug of its name. The id
+    /// matters because an accepted surrender can move a weapon out of a hand and onto the floor, and that
+    /// movement has to name one identity rather than a display name.
+    /// </summary>
+    private static Weapon? ToWeapon(CharacterDefinition definition) =>
+        definition.Weapon is null
+            ? null
+            : new Weapon(definition.Weapon.Name, definition.Weapon.Damage)
+            {
+                Id = string.IsNullOrWhiteSpace(definition.Weapon.Id)
+                    ? Weapon.SlugFor(definition.Weapon.Name)
+                    : definition.Weapon.Id.Trim()
+            };
+
+    /// <summary>
+    /// Resolves a character's configured abilities against the built-in ability book, with their charges full,
+    /// and appends Defend — which every active character has, so leaving it out of a scenario cannot make a
+    /// character unable to brace. An ability the book does not know is a scenario error, not a silent no-op:
+    /// a character whose prompt promises an ability the engine cannot resolve is exactly the boundary problem
+    /// v0.7 is closing.
+    /// </summary>
+    private static ImmutableArray<CharacterAbility> ToAbilities(CharacterDefinition definition)
+    {
+        var abilities = new List<CharacterAbility>();
+
+        foreach (var reference in definition.Abilities)
+        {
+            var resolved = AbilityCatalog.Resolve(reference)
+                ?? throw new InvalidOperationException(
+                    $"Character '{definition.Id}' lists ability '{reference}', which is not in the ability book. " +
+                    $"Known abilities: {string.Join(", ", AbilityCatalog.All.Select(a => a.Id))}.");
+
+            if (abilities.Any(a => string.Equals(a.AbilityId, resolved.Id, StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new InvalidOperationException(
+                    $"Character '{definition.Id}' lists ability '{resolved.Id}' more than once.");
+            }
+
+            abilities.Add(CharacterAbility.From(resolved));
+        }
+
+        if (!abilities.Any(a => string.Equals(a.AbilityId, AbilityCatalog.DefendId, StringComparison.OrdinalIgnoreCase)))
+        {
+            abilities.Add(CharacterAbility.From(AbilityCatalog.Defend));
+        }
+
+        return [.. abilities];
     }
 
     private static Container ToContainer(ContainerDefinition definition)
@@ -147,5 +197,6 @@ public static class ScenarioFactory
         string.IsNullOrWhiteSpace(item.Id) ? item.Name : item.Id,
         item.Name,
         item.Description,
-        item.HealingAmount);
+        item.HealingAmount,
+        string.IsNullOrWhiteSpace(item.Qualifier) ? null : item.Qualifier.Trim());
 }

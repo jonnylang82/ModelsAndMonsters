@@ -363,6 +363,61 @@ public sealed class KnowledgeLedger
     }
 
     /// <summary>
+    /// A public surrender-offer fact: terms of surrender were named aloud, in plain hearing of the room. Keyed
+    /// by the offer, so one offer yields one fact. Its subject is the offer, not an item: the offer transfers
+    /// nothing, and knowing of it is not a basis to reach for anything that was merely promised.
+    /// </summary>
+    public FactResult GetOrAddSurrenderOfferFact(
+        string offerId, string offererName, string recipientName, string terms, int worldVersion)
+    {
+        var id = $"{offerId}-offered";
+        if (_facts.TryGetValue(id, out var existing))
+        {
+            return new FactResult(existing, WasCreated: false);
+        }
+
+        var fact = new KnowledgeFact
+        {
+            Id = id,
+            SubjectId = offerId,
+            FactType = FactType.SurrenderOfferMade,
+            Description =
+                $"{offererName} offered to give up the fight to {recipientName}, promising {terms}. " +
+                $"Nothing has changed hands and {offererName} is still fighting; only {recipientName} can take it up.",
+            WorldVersion = worldVersion
+        };
+        _facts[id] = fact;
+        return new FactResult(fact, WasCreated: true);
+    }
+
+    /// <summary>
+    /// A public surrender-offer-settled fact: an offer everyone heard stopped being open. Keyed by the offer
+    /// and the state it reached, so one offer can yield at most one settled fact.
+    /// </summary>
+    public FactResult GetOrAddSurrenderOfferSettledFact(
+        string offerId, string offererName, string recipientName, string newState, string cause, int worldVersion)
+    {
+        var id = $"{offerId}-{newState.ToLowerInvariant()}";
+        if (_facts.TryGetValue(id, out var existing))
+        {
+            return new FactResult(existing, WasCreated: false);
+        }
+
+        var fact = new KnowledgeFact
+        {
+            Id = id,
+            SubjectId = offerId,
+            FactType = FactType.SurrenderOfferSettled,
+            Description =
+                $"{offererName}'s offer of terms to {recipientName} is no longer open ({newState.ToLowerInvariant()}: {cause}). " +
+                "Nothing changed hands.",
+            WorldVersion = worldVersion
+        };
+        _facts[id] = fact;
+        return new FactResult(fact, WasCreated: true);
+    }
+
+    /// <summary>
     /// A public escape fact: a character left the encounter through an exit in plain view. Keyed by character
     /// and the world version at which they escaped.
     /// </summary>

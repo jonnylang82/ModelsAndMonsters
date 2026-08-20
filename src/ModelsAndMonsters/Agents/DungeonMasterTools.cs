@@ -19,7 +19,10 @@ public static class DungeonMasterTools
     public const string InspectObjectName = "inspect_object";
     public const string OpenExitName = "open_exit";
     public const string EscapeEncounterName = "escape_encounter";
-    public const string SurrenderName = "surrender";
+    public const string OfferSurrenderName = "offer_surrender";
+    public const string AcceptSurrenderName = "accept_surrender";
+    public const string UseAbilityName = "use_ability";
+    public const string DefendName = "defend";
     public const string GiveItemName = "give_item";
     public const string DropItemName = "drop_item";
     public const string StealItemName = "steal_item";
@@ -37,6 +40,11 @@ public static class DungeonMasterTools
     public const string ThiefParameter = "thief";
     public const string CategoryParameter = "category";
     public const string ReasonParameter = "reason";
+    public const string OffererParameter = "offerer";
+    public const string OfferedItemsParameter = "offered_items";
+    public const string ForfeitWeaponParameter = "forfeit_weapon";
+    public const string OfferParameter = "offer";
+    public const string AbilityParameter = "ability";
 
     public const string ImpossibleCategory = "impossible";
     public const string UnsupportedCategory = "unsupported";
@@ -149,14 +157,66 @@ public static class DungeonMasterTools
         """),
         returnJsonSchema: null);
 
-    public static readonly AIFunctionDeclaration Surrender = AIFunctionFactory.CreateDeclaration(
-        SurrenderName,
-        "Resolve a character yielding and taking no further part in the fight. Use only when the ACTING character gives up their OWN fight — never when they merely tell someone else to surrender.",
+    public static readonly AIFunctionDeclaration OfferSurrender = AIFunctionFactory.CreateDeclaration(
+        OfferSurrenderName,
+        "Resolve the ACTING character offering to give up the fight to one named opponent on concrete terms. The terms MUST include at least one carried item, unless the offerer carries nothing at all — then the weapon in hand alone is enough. The rule is that nothing is held back. This only puts the offer on the table: nothing changes hands, nobody is disarmed, and the offerer stays an active, targetable combatant until that opponent accepts on their own turn. The offer MUST promise something enforceable; a bare plea to be spared is not an offer.",
         ToolSchema.Parse($$"""
         {
           "type": "object",
           "properties": {
-            "{{ActorParameter}}": { "type": "string", "description": "Name of the character who is surrendering, exactly as given in the authoritative state. This is always the character whose intent you are adjudicating." }
+            "{{OffererParameter}}": { "type": "string", "description": "Name of the character offering to give up the fight — always the character whose intent you are adjudicating — exactly as given in the authoritative state." },
+            "{{RecipientParameter}}": { "type": "string", "description": "Name of the ONE opposing character the terms are offered to, exactly as given in the authoritative state. Only they can accept." },
+            "{{OfferedItemsParameter}}": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Names of the ordinary inventory items the offerer promises to hand over, exactly as they appear in the offerer's inventory. REQUIRED whenever the offerer is carrying anything: an offer that holds possessions back is refused. Leave empty only for an offerer whose inventory is truly empty. Never list the equipped weapon here — use forfeit_weapon for that."
+            },
+            "{{ForfeitWeaponParameter}}": { "type": "boolean", "description": "True when the offerer promises to give up the weapon in THEIR OWN hand as part of the terms. False when the intent is about a weapon somebody ELSE holds — demanding that an opponent throw down their blade is not this action at all." }
+          },
+          "required": ["{{OffererParameter}}", "{{RecipientParameter}}", "{{ForfeitWeaponParameter}}"]
+        }
+        """),
+        returnJsonSchema: null);
+
+    public static readonly AIFunctionDeclaration AcceptSurrender = AIFunctionFactory.CreateDeclaration(
+        AcceptSurrenderName,
+        "Resolve the ACTING character taking up a pending offer of surrender that was made TO THEM. Use only when the acting character is the named recipient of that offer and chooses to accept it. The promised assets move and the offerer yields; nothing is negotiated further.",
+        ToolSchema.Parse($$"""
+        {
+          "type": "object",
+          "properties": {
+            "{{RecipientParameter}}": { "type": "string", "description": "Name of the character accepting the offer — always the character whose intent you are adjudicating — exactly as given in the authoritative state." },
+            "{{OfferParameter}}": { "type": "string", "description": "The stable id of the pending offer being accepted, exactly as listed in the authoritative state (for example 'offer-1')." }
+          },
+          "required": ["{{RecipientParameter}}", "{{OfferParameter}}"]
+        }
+        """),
+        returnJsonSchema: null);
+
+    public static readonly AIFunctionDeclaration UseAbility = AIFunctionFactory.CreateDeclaration(
+        UseAbilityName,
+        "Resolve the ACTING character using one of their own trained abilities, on themselves or on another character. Use only an ability listed against that character in the authoritative state, named by its exact id, and only while it has uses left.",
+        ToolSchema.Parse($$"""
+        {
+          "type": "object",
+          "properties": {
+            "{{ActorParameter}}": { "type": "string", "description": "Name of the character using the ability — always the character whose intent you are adjudicating — exactly as given in the authoritative state." },
+            "{{AbilityParameter}}": { "type": "string", "description": "The stable id of the ability, exactly as listed against that character in the authoritative state (for example 'guard-ally')." },
+            "{{TargetParameter}}": { "type": "string", "description": "Name of the character the ability is aimed at, exactly as given in the authoritative state. Omit for an ability that needs no target." }
+          },
+          "required": ["{{ActorParameter}}", "{{AbilityParameter}}"]
+        }
+        """),
+        returnJsonSchema: null);
+
+    public static readonly AIFunctionDeclaration Defend = AIFunctionFactory.CreateDeclaration(
+        DefendName,
+        "Resolve the ACTING character bracing behind their guard instead of striking — standing their ground, keeping their guard up, preparing to parry or turn a blow. Every active character can do this, as often as they like; it costs the whole turn and softens the next blow that lands on them.",
+        ToolSchema.Parse($$"""
+        {
+          "type": "object",
+          "properties": {
+            "{{ActorParameter}}": { "type": "string", "description": "Name of the character bracing — always the character whose intent you are adjudicating — exactly as given in the authoritative state." }
           },
           "required": ["{{ActorParameter}}"]
         }
@@ -212,7 +272,7 @@ public static class DungeonMasterTools
 
     public static readonly AIFunctionDeclaration RejectAction = AIFunctionFactory.CreateDeclaration(
         RejectActionName,
-        "Refuse the stated intent because it cannot happen. Use this whenever the intent is not a direct weapon strike or an item use.",
+        "Refuse the stated intent because it cannot happen. A last resort: use it only when NONE of the other actions offered to you fits the primary physical deed the character described. Nothing whatsoever happens in the world when you call this.",
         ToolSchema.Parse($$"""
         {
           "type": "object",
@@ -224,7 +284,7 @@ public static class DungeonMasterTools
             },
             "{{ReasonParameter}}": {
               "type": "string",
-              "description": "One or two sentences, addressed to the character, explaining why the attempt did not happen."
+              "description": "One or two sentences, addressed to the character, explaining why the attempt did not happen. Nothing happened, so narrate nothing: no blow landing, no contact, no impact, no reaction, no object moving. Never write a sentence like \"your blade strikes his shoulder, but...\" — if a blow would land, this is not a refusal. Say only what the character feels stopping them, and never name the world, its rules or which actions exist."
             }
           },
           "required": ["{{CategoryParameter}}", "{{ReasonParameter}}"]
@@ -235,7 +295,7 @@ public static class DungeonMasterTools
     public static readonly IReadOnlyList<AITool> All =
     [
         AttackCharacter, UseItem, OpenContainer, TakeItem, InspectObject, OpenExit, EscapeEncounter,
-        Surrender, GiveItem, DropItem, StealItem, RejectAction
+        OfferSurrender, AcceptSurrender, UseAbility, Defend, GiveItem, DropItem, StealItem, RejectAction
     ];
 
     /// <summary>
@@ -252,7 +312,10 @@ public static class DungeonMasterTools
             [InspectObjectName] = InspectObject,
             [OpenExitName] = OpenExit,
             [EscapeEncounterName] = EscapeEncounter,
-            [SurrenderName] = Surrender,
+            [OfferSurrenderName] = OfferSurrender,
+            [AcceptSurrenderName] = AcceptSurrender,
+            [UseAbilityName] = UseAbility,
+            [DefendName] = Defend,
             [GiveItemName] = GiveItem,
             [DropItemName] = DropItem,
             [StealItemName] = StealItem

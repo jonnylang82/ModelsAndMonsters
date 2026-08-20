@@ -55,6 +55,14 @@ public sealed class TurnCoordinator
     /// </summary>
     private string? _currentConsultationId;
 
+    /// <summary>
+    /// The public-channel entry for the most recent thing the acting character said on the turn currently
+    /// being played, so a surrender offer made on the same turn can be associated with the plea, argument or
+    /// threat that carried it. Reset at the start of every turn. The speech supplies the persuasion; the offer
+    /// supplies the enforceable terms, and the two are never conflated.
+    /// </summary>
+    private NarrationEntry? _speechThisTurn;
+
     public TurnCoordinator(
         IGameEngine engine,
         DungeonMasterAgent dungeonMaster,
@@ -67,7 +75,8 @@ public sealed class TurnCoordinator
         HarnessOptions limits,
         IntentParser? intentParser = null,
         HistorySummariser? summariser = null,
-        Rulebook.RulebookConsultant? rulebook = null)
+        Rulebook.RulebookConsultant? rulebook = null,
+        IAnswerFactsProjector? answerFacts = null)
     {
         _engine = engine;
         _dungeonMaster = dungeonMaster;
@@ -81,7 +90,14 @@ public sealed class TurnCoordinator
         _intentParser = intentParser;
         _summariser = summariser;
         _rulebook = rulebook;
+
+        // The answer projection is deterministic and needs nothing but the ledger and the public channel, so
+        // it is built here by default rather than being another thing every caller has to wire up. Injecting
+        // one is for tests that want to observe or substitute the projection.
+        _answerFacts = answerFacts ?? new AnswerFactsProjector(knowledge, narrationLog);
     }
+
+    private readonly IAnswerFactsProjector _answerFacts;
 
     // -----------------------------------------------------------------------------------------
     // Narration
@@ -167,6 +183,14 @@ public sealed class TurnCoordinator
             };
         }
 
+        // Start-of-turn upkeep before anything is rendered or asked: a status whose rule fires now must be gone
+        // before this character sees their own state, or they would be told they still have a guard that has
+        // in fact just fallen away.
+        ApplyUpkeep(_engine.BeginActorTurn(character.CharacterId, round, turn), "turn-start", character.Name);
+
+        _speechThisTurn = null;
+        self = _engine.State.RequireById(character.CharacterId);
+
         var selfState = _formatter.FormatCharacterSelfState(self, _engine.State);
         var pendingNarration = _narrationLog.TakeUndelivered(character.CharacterId);
 
@@ -236,7 +260,18 @@ public sealed class TurnCoordinator
             {
                 // No tool call has two very different causes: the model ignored its protocol, or it ran out
                 // of output budget mid-reply. A truncated reply may be incomplete, so it is never parsed.
-                var truncated = ModelAgent.WasTruncated(response);
+                var truncated = character.WasReplyCutShort(response);
+                var contextExhausted = character.WasContextExhausted(response);
+
+                // A full window cannot be argued with. Appending another nudge to a conversation that has
+                // already filled the context makes the next attempt strictly worse — a live run spent three
+                // consecutive retries this way, each one adding a "your reply was cut off" message to a
+                // request that had no room left, and every one of them came back truncated. Reclaim the room
+                // first: shed this turn's failed prose, then fold older turns into the running summary.
+                if (contextExhausted)
+                {
+                    await ReclaimContextRoomAsync(character, historyMark, cancellationToken).ConfigureAwait(false);
+                }
 
                 if (!truncated && _intentParser is not null && _limits.UseIntentParser)
                 {
@@ -249,7 +284,7 @@ public sealed class TurnCoordinator
                 {
                     // Parser off, or a truncated reply: record a prose speech attempt and nudge, recover a
                     // prose tool call, or nudge for a clean one. Null means the character was nudged — ask again.
-                    var recovered = TryRecoverOrNudge(character, response, truncated);
+                    var recovered = TryRecoverOrNudge(character, response, truncated, contextExhausted);
                     if (recovered is null)
                     {
                         continue;
@@ -265,11 +300,24 @@ public sealed class TurnCoordinator
             {
                 if (turnEnded)
                 {
-                    // The turn is already decided, but the model still asked for this. Answer it so the
-                    // history stays valid for the next turn.
-                    DispatchAndRecord(character, call, "Ignored: the turn ended before this could be handled.",
-                        "ignored-turn-already-resolved");
+                    // The turn is already decided. Whatever else the model asked for is DISCARDED: it never
+                    // reaches the world, the public transcript or the knowledge ledger. This is what stops a
+                    // model attacking and then emitting an unprocessed theft declaration as though it acted
+                    // twice. The call is still answered, because leaving one unanswered corrupts the history.
+                    EmitPostResolutionDiscarded(character, acceptedAction, "tool-call", call.Name,
+                        DescribeCall(call));
+                    RecordToolResult(character, call,
+                        "Your turn was already resolved by what you did; this was set aside and did not happen.");
                     continue;
+                }
+
+                // Speech the character declared in this very call, delivered before the call it rides on —
+                // a warning is only worth anything if it lands before the blow it warns about. This is the
+                // authoritative speech path: what is in `utterances` is spoken, and quotation marks anywhere
+                // else are just punctuation.
+                if (call.Name is CharacterTools.AskDmName or CharacterTools.TakeActionName or CharacterTools.EndTurnName)
+                {
+                    speechActs += DeliverDeclaredUtterances(character, call, round, turn, speechActs);
                 }
 
                 switch (call.Name)
@@ -371,9 +419,21 @@ public sealed class TurnCoordinator
 
             if (turnEnded)
             {
+                // Trailing prose in the same reply as an accepted action is discarded too, for the same reason:
+                // a declaration the world never resolved must not read as something that happened.
+                var trailing = ModelText.Clean(response);
+                if (!string.IsNullOrWhiteSpace(trailing) && outcome == TurnOutcome.ActionResolved)
+                {
+                    EmitPostResolutionDiscarded(character, acceptedAction, "trailing-text", null, trailing);
+                }
+
                 break;
             }
         }
+
+        // End-of-turn upkeep: statuses whose rule fires now fall away, and an offer this character was the
+        // named recipient of and did not take up lapses. Both are the engine's decisions, not narration's.
+        ApplyUpkeep(_engine.EndActorTurn(character.CharacterId, round, turn), "turn-end", character.Name);
 
         // The turn is over: shed the failed prose replies and nudges it took to get here, keeping the clean
         // tool calls and their results. The full exchange, including every discarded attempt, stays in the trace.
@@ -458,25 +518,43 @@ public sealed class TurnCoordinator
             QuestionNumberThisTurn = questionNumber
         });
 
-        var stateText = WorldStateFormatter.FormatAuthoritativeState(_engine.State);
+        // The Dungeon Master is NOT given the authoritative state for this task. A deterministic projection
+        // works out the complete set of facts this character may be answered from — current permitted
+        // knowledge, what anyone present can see, the closed list of what they could actually attempt, and
+        // explicit statements of what this world does not represent — and the DM's job is reduced to saying
+        // that back naturally. Withholding the material is what makes an ungrounded answer impossible, where
+        // a prompt telling the model not to invent one measurably was not.
+        var facts = _answerFacts.Project(_engine.State, character.CharacterId, question);
+        var factsText = facts.Render();
 
-        // The DM holds omniscient state but must answer within this character's information boundary, so it
-        // is handed exactly what this character directly knows and what it has merely heard — and nothing
-        // that belongs only to somebody else.
+        // The knowledge view is still recorded alongside, because it is the informational basis the projection
+        // was built from and the record should show both.
         var knowledgeView = CharacterKnowledgeView.RenderForDungeonMaster(
             character.CharacterId, character.Name, _knowledge, _narrationLog, _engine.State);
 
-        var answer = await _dungeonMaster
-            .AnswerQuestionAsync(stateText, character.Name, knowledgeView, question, cancellationToken)
+        _trace.Emit(TraceEventType.AnswerFactsProjected, new AnswerFactsPayload
+        {
+            CharacterId = character.CharacterId,
+            CharacterName = character.Name,
+            Question = question,
+            ProjectedFacts = factsText,
+            OmittedHiddenFacts = facts.RenderOmitted(),
+            ProjectedFactCount = facts.AboutYourself.Count + facts.PlainlyVisible.Count
+                + facts.KnownFirstHand.Count + facts.Hearsay.Count + facts.Affordances.Count
+                + facts.WorldLimits.Count,
+            OmittedFactCount = facts.OmittedHiddenFacts.Count,
+            AffordanceCount = facts.Affordances.Count,
+            WorldVersion = facts.WorldVersion
+        }, DungeonMasterAgent.AgentIdentifier);
+
+        var rawAnswer = await _dungeonMaster
+            .AnswerFromFactsAsync(character.Name, factsText, question, cancellationToken)
             .ConfigureAwait(false);
 
-        if (string.IsNullOrWhiteSpace(answer))
-        {
-            answer = "You cannot tell.";
-        }
+        var answer = string.IsNullOrWhiteSpace(rawAnswer) ? "You cannot tell." : rawAnswer;
 
         // Guarantee the answer reaches the character in character. A weaker instruct model as DM parrots
-        // the knowledge-view scaffolding back ("you directly know…", "you have not been told…", state words
+        // the projection's scaffolding back ("you directly know…", "you have not been told…", state words
         // in bold); a prompt cannot reliably stop it, so a leaked answer is caught here and rephrased once.
         answer = await InWorldAnswerAsync(character, answer, cancellationToken).ConfigureAwait(false);
 
@@ -486,7 +564,10 @@ public sealed class TurnCoordinator
             CharacterName = character.Name,
             Question = question,
             Answer = answer,
+            RawAnswer = rawAnswer,
             AskingCharacterKnowledge = knowledgeView,
+            ProjectedFacts = factsText,
+            OmittedHiddenFacts = facts.RenderOmitted(),
             WorldVersion = _engine.State.Version
         }, DungeonMasterAgent.AgentIdentifier);
 
@@ -612,14 +693,31 @@ public sealed class TurnCoordinator
             return false;
         }
 
-        var spoken = message!.Trim();
+        DeliverSpeech(character, message!.Trim(), round, turn, speechIndex);
 
+        // Answer the say tool so the speaker's history stays valid; its own words are already present in
+        // that history as the tool-call argument, so the result is only an acknowledgement.
+        RecordToolResult(character, call,
+            "Your words carry across the room. You may still ask, act, or end your turn.");
+        return true;
+    }
+
+    /// <summary>
+    /// Delivers one spoken line to the room. Shared by the <c>say</c> tool and by structured
+    /// <c>utterances</c> declared alongside an action, so both reach the world by exactly one path.
+    /// </summary>
+    private void DeliverSpeech(CharacterAgent character, string spoken, int round, int turn, int speechIndex)
+    {
         // The stored public-channel text already carries attribution, so recipients read the speaker's
         // exact words rather than a paraphrase, and delivery reuses the narration path unchanged.
         var entry = _narrationLog.RecordSpeech(character.CharacterId, $"{character.Name} says:\n\"{spoken}\"");
 
         // The speaker has just said it; it must not be re-delivered to them as "newly heard" next turn.
         entry.MarkDeliveredTo(character.CharacterId);
+
+        // Remembered for this turn only, so a surrender offer made after speaking can point at the plea,
+        // argument or threat that carried it. The speech is never the terms — only the argument for them.
+        _speechThisTurn = entry;
 
         var self = _engine.State.FindById(character.CharacterId);
         var recipients = LivingRecipientsExcept(character.CharacterId);
@@ -639,12 +737,67 @@ public sealed class TurnCoordinator
             DeliveryMechanism = "public-channel (delivered at each recipient's next turn)",
             NarrationId = entry.Id
         });
+    }
 
-        // Answer the say tool so the speaker's history stays valid; its own words are already present in
-        // that history as the tool-call argument, so the result is only an acknowledgement.
-        RecordToolResult(character, call,
-            "Your words carry across the room. You may still ask, act, or end your turn.");
-        return true;
+    /// <summary>
+    /// Delivers the speech a character declared in the <c>utterances</c> field of the very call that carries
+    /// its action, question or pass. Returns how many lines were spoken, so the caller can keep the
+    /// once-per-turn limit. No extra model call: the words came from the reply already in hand.
+    /// </summary>
+    /// <remarks>
+    /// This is the authoritative speech path. A character says what it puts in <c>utterances</c> and nothing
+    /// else — quotation marks anywhere in its intent text are just punctuation, whether they hold the name of
+    /// a blade or a line of dialogue, and speech needs no verb to be recognised because nothing is being
+    /// recognised. The heuristic that used to infer speech from quoted text near a speech verb survives only
+    /// as a fallback for a reply that carried no tool call at all, and traces itself when it fires.
+    /// </remarks>
+    private int DeliverDeclaredUtterances(
+        CharacterAgent character, FunctionCallContent call, int round, int turn, int speechActsSoFar)
+    {
+        // Speech is prose: a comma inside a spoken line is punctuation, never a separator, so a bare
+        // string arrives as ONE utterance rather than being chopped at every comma.
+        var declared = ToolArguments.GetStringList(call, CharacterTools.UtterancesParameter, splitLooseStrings: false);
+        if (declared.Count == 0)
+        {
+            return 0;
+        }
+
+        // Several declared lines are ONE breath, not several turns of speaking. Joining them keeps the
+        // once-per-turn rule exactly as it was while not throwing away half of what a character said: a live
+        // run hit the speech limit ten times, every one of them silently discarding the rest of a reply,
+        // because models naturally write two short sentences ("Rowan, the flank!" / "I have him.") where the
+        // harness counts speech acts. Dropping the second half is a worse answer than delivering both.
+        var lines = declared
+            .Select(raw => raw?.Trim() ?? "")
+            .Where(line => line.Length > 0)
+            .ToList();
+        if (lines.Count == 0)
+        {
+            return 0;
+        }
+
+        if (speechActsSoFar >= _limits.MaxSpeechActsPerTurn)
+        {
+            EmitLimit(nameof(HarnessOptions.MaxSpeechActsPerTurn), _limits.MaxSpeechActsPerTurn,
+                $"{character.Name} had already spoken this turn and was not heard again.");
+            return 0;
+        }
+
+        var spoken = string.Join(" ", lines);
+        if (spoken.Length > _limits.MaxSpeechCharacters)
+        {
+            _trace.Emit(TraceEventType.ToolCallDispatched, new ToolCallDispatchPayload
+            {
+                AgentName = character.Name,
+                CallId = call.CallId,
+                ToolName = call.Name,
+                DispatchDecision = "Declared speech rejected at the harness boundary: too long to call across a room."
+            });
+            return 0;
+        }
+
+        DeliverSpeech(character, spoken, round, turn, speechActsSoFar + 1);
+        return 1;
     }
 
     // -----------------------------------------------------------------------------------------
@@ -724,6 +877,16 @@ public sealed class TurnCoordinator
             _currentConsultationId = consultation.ConsultationId;
             guidanceForDm = RenderGuidanceForDm(consultation);
             candidateTools = consultation.CandidateTools;
+
+            // The resolver narrows the DM to the actions the rulebook says fit an intent *like* this one. That
+            // is exactly right for rules that are about the deed, and exactly wrong for the two rules whose
+            // meaning depends on the state of the room, which the resolver never sees. Widen the set for
+            // those two — the DM does hold the snapshot, so given the tool it can rule correctly.
+            (candidateTools, var widening) = WidenCandidateToolsForState(character, candidateTools);
+            if (widening is not null)
+            {
+                guidanceForDm += Environment.NewLine + widening;
+            }
         }
 
         var response = await _dungeonMaster
@@ -735,7 +898,7 @@ public sealed class TurnCoordinator
 
         for (var retry = 0; calls.Count == 0 && retry < _limits.MaxAdjudicationRetries; retry++)
         {
-            var truncated = ModelAgent.WasTruncated(response);
+            var truncated = character.WasReplyCutShort(response);
             if (truncated)
             {
                 _console.Notice(
@@ -810,7 +973,9 @@ public sealed class TurnCoordinator
             DungeonMasterTools.AttackCharacterName or DungeonMasterTools.UseItemName
                 or DungeonMasterTools.OpenContainerName or DungeonMasterTools.TakeItemName
                 or DungeonMasterTools.InspectObjectName or DungeonMasterTools.OpenExitName
-                or DungeonMasterTools.EscapeEncounterName or DungeonMasterTools.SurrenderName
+                or DungeonMasterTools.EscapeEncounterName or DungeonMasterTools.OfferSurrenderName
+                or DungeonMasterTools.AcceptSurrenderName or DungeonMasterTools.UseAbilityName
+                or DungeonMasterTools.DefendName
                 or DungeonMasterTools.GiveItemName or DungeonMasterTools.DropItemName
                 or DungeonMasterTools.StealItemName =>
                 await HandleEngineActionAsync(character, intent, primary, cancellationToken).ConfigureAwait(false),
@@ -831,6 +996,13 @@ public sealed class TurnCoordinator
             {
                 $"The rulebook supports this kind of intent. Candidate action(s): {string.Join(", ", g.CandidateActions)}."
             };
+            if (g.CitedRules.Count > 0)
+            {
+                // The cited rule ids are what tell the DM WHICH ability a use_ability candidate means — several
+                // abilities share that one tool, and the rule id is the only thing distinguishing them.
+                lines.Add($"Rule(s) cited: {string.Join(", ", g.CitedRules.Select(c => c.RuleId))}. " +
+                          "Where a rule names a specific ability id, bind that exact ability.");
+            }
             if (g.RequiredBindings.Count > 0)
             {
                 lines.Add($"Bindings to fill from the state: {string.Join("; ", g.RequiredBindings)}.");
@@ -937,6 +1109,51 @@ public sealed class TurnCoordinator
             return failure;
         }
 
+        // The Rulebook Resolver is stateless by design: it reads the intent and the cards and never sees the
+        // world. So it cannot tell a theft from an ACCEPTANCE — "I take Rowan's purse, telling him he may
+        // live" is a textbook acceptance of pending terms and reads, card-only, as a snatch. In a live v0.7
+        // run that cost the release its whole point: three offers were made, `accept_surrender` was never
+        // once among the DM's candidate tools, and each grab of the promised tribute counted as a hostile
+        // act that destroyed the very offer it was accepting. No card wording can fix that, because the
+        // component choosing the card has no way to know an offer exists. State-dependent meaning has to be
+        // decided where the state lives, so it is decided here, deterministically.
+        if (RedirectsToAcceptance(character, action, out var acceptance, out var acceptedOffer))
+        {
+            _trace.Emit(TraceEventType.ToolCallDispatched, new ToolCallDispatchPayload
+            {
+                AgentName = DungeonMasterAgent.AgentIdentifier,
+                CallId = call.CallId,
+                ToolName = call.Name,
+                Arguments = ChatTraceMapper.MapArguments(call.Arguments),
+                DispatchDecision =
+                    $"Redirected to {DungeonMasterTools.AcceptSurrenderName} ({acceptedOffer!.Id}): the actor is the named " +
+                    "recipient of a pending offer and reached for what that offer promises, which is an acceptance, not a theft."
+            }, DungeonMasterAgent.AgentIdentifier);
+
+            action = acceptance!;
+        }
+
+        // Looting the fallen is a take from their body, never a theft: an item on a dead character has already
+        // moved into their corpse container, so the steal rule's own exclusion applies and the engine refuses
+        // it. The resolver cannot know the target is dead either, so in the same live run a goblin burned its
+        // whole turn on three rewordings of "loot the gold from dead Rowan" and hit the attempt limit, while
+        // one refusal even said the belongings were "already within reach for anyone to take freely".
+        if (RedirectsToCorpseLoot(action, out var corpseTake, out var corpseName))
+        {
+            _trace.Emit(TraceEventType.ToolCallDispatched, new ToolCallDispatchPayload
+            {
+                AgentName = DungeonMasterAgent.AgentIdentifier,
+                CallId = call.CallId,
+                ToolName = call.Name,
+                Arguments = ChatTraceMapper.MapArguments(call.Arguments),
+                DispatchDecision =
+                    $"Redirected to {DungeonMasterTools.TakeItemName}: {corpseName} is dead, so what they carried lies " +
+                    "with their body and is taken from it rather than stolen from them."
+            }, DungeonMasterAgent.AgentIdentifier);
+
+            action = corpseTake!;
+        }
+
         // A theft must have a legitimate informational basis: the thief cannot steal an item it has no way of
         // knowing the target carries. This is enforced deterministically here, before the engine (and before
         // any RNG), from the thief's own knowledge ledger — never by revealing the target's hidden inventory.
@@ -1010,6 +1227,12 @@ public sealed class TurnCoordinator
         // decides the outcome, so targeting is auditable and never silently retargets.
         EmitTargetResolution(character, action, engineResultStateBefore: _engine.State);
 
+        // The charges a limited ability had BEFORE the attempt, so a refused use is provably one that spent
+        // nothing — the record must show the charge untouched, not merely say it was.
+        var abilityChargesBefore = action is UseAbilityAction pendingAbility
+            ? _engine.State.FindById(character.CharacterId)?.FindAbility(pendingAbility.AbilityRef)?.RemainingUses
+            : null;
+
         // The engine, not the Dungeon Master, decides what actually happens.
         var engineResult = _engine.Execute(action);
 
@@ -1046,6 +1269,19 @@ public sealed class TurnCoordinator
         EmitInventoryInteraction(character, action, engineResult, rejectionReason: null);
         EmitItemProvenance(character, action, engineResult);
 
+        // Status transitions and surrender-offer transitions the action caused, recorded before their
+        // consequences so a modifier is never known only by its effect on a number.
+        EmitStatusEvents(engineResult.StatusEvents, action.ActionType);
+        EmitOfferTransitions(engineResult.OfferTransitions);
+
+        // An ability attempt is recorded whether it was accepted or refused, with the charges either side, so
+        // "a refused use spends no charge" is visible rather than asserted.
+        EmitAbilityUsed(character, action, engineResult, abilityChargesBefore);
+
+        // A redirected blow gets its own row naming both the intended and the authoritative target, and the
+        // draw count, so it is provable that a guard added no roll of its own.
+        EmitAttackRedirection(engineResult);
+
         var resultForDungeonMaster = engineResult.Accepted
             ? engineResult.Outcome!.Summary
             : $"REJECTED BY THE WORLD: {engineResult.RejectionMessage}";
@@ -1054,16 +1290,15 @@ public sealed class TurnCoordinator
 
         if (!engineResult.Accepted)
         {
-            var explanation = await _dungeonMaster
-                .ExplainEngineRejectionAsync(engineResult.RejectionMessage!, character.Name, cancellationToken)
-                .ConfigureAwait(false);
-
-            if (string.IsNullOrWhiteSpace(explanation))
-            {
-                explanation = engineResult.RejectionMessage!;
-            }
-
-            explanation = await InWorldRejectionAsync(character, explanation, cancellationToken).ConfigureAwait(false);
+            // Rendered from the rejection CODE and the names already bound in the action — not from the
+            // engine's operator-facing message, and not by asking a model to turn that message into fiction.
+            // The old path did both, and every run found another phrasing the leak detector did not have,
+            // while the rewrites that followed a catch invented obstacles and narrated events inside a
+            // refusal. A closed set of reasons renders deterministically, cannot leak, and costs no call.
+            var explanation = InWorldRefusal.Render(
+                engineResult.RejectionReason!.Value,
+                character.Name,
+                InWorldRefusal.SubjectFor(action, engineResult.RejectionReason!.Value, engineResult.StateBefore));
 
             EmitAdjudication(character, intent, ActionResolutionCategory.EngineRejected, explanation, action, null);
             _console.CharacterRefused(character.Name, explanation);
@@ -1088,7 +1323,12 @@ public sealed class TurnCoordinator
             InspectObjectOutcome inspect => await DeliverInspectionAsync(character, inspect, cancellationToken).ConfigureAwait(false),
             OpenExitOutcome openExit => await DeliverExitOpenedAsync(character, openExit, cancellationToken).ConfigureAwait(false),
             EscapeOutcome escape => await DeliverEscapeAsync(character, escape, engineResult, cancellationToken).ConfigureAwait(false),
-            SurrenderOutcome surrender => await DeliverSurrenderAsync(character, surrender, engineResult, cancellationToken).ConfigureAwait(false),
+            OfferSurrenderOutcome offer => await DeliverOfferAsync(character, offer, cancellationToken).ConfigureAwait(false),
+            AcceptSurrenderOutcome accepted => await DeliverAcceptedSurrenderAsync(character, accepted, engineResult, cancellationToken).ConfigureAwait(false),
+            GuardAllyOutcome guard => await DeliverAbilityOutcomeAsync(character, guard, "ability-guard-ally", cancellationToken).ConfigureAwait(false),
+            HealingPrayerOutcome heal => await DeliverAbilityOutcomeAsync(character, heal, "ability-healing-prayer", cancellationToken).ConfigureAwait(false),
+            RallyOutcome rally => await DeliverAbilityOutcomeAsync(character, rally, "ability-rally", cancellationToken).ConfigureAwait(false),
+            DefendOutcome defend => await DeliverAbilityOutcomeAsync(character, defend, "combat-defend", cancellationToken).ConfigureAwait(false),
             GiveItemOutcome give => await DeliverGiveAsync(character, give, cancellationToken).ConfigureAwait(false),
             DropItemOutcome drop => await DeliverDropAsync(character, drop, cancellationToken).ConfigureAwait(false),
             StealItemOutcome steal => await DeliverStealAsync(character, steal, cancellationToken).ConfigureAwait(false),
@@ -1171,12 +1411,17 @@ public sealed class TurnCoordinator
     }
 
     /// <summary>
-    /// A character surrendered. Public: everyone present sees them yield, so every present character learns
-    /// it as a public fact, and the whole room hears the narration. It is a disposition change (Active ->
-    /// Surrendered) recorded as such, plus a focused surrender event for the transcript and observer UI.
+    /// A surrender offer was put on the table. Public: everyone present heard the terms, so the offer and its
+    /// exact terms become a public fact and the whole room hears the narration.
     /// </summary>
-    private async Task<string> DeliverSurrenderAsync(
-        CharacterAgent character, SurrenderOutcome outcome, EngineResult engineResult, CancellationToken cancellationToken)
+    /// <remarks>
+    /// Nothing else happens here, deliberately. No disposition changes, no asset moves, and no
+    /// <see cref="TraceEventType.CharacterSurrendered"/> event is emitted: an offer is a proposal, and the
+    /// offerer is still an active, targetable combatant. Only <see cref="DeliverAcceptedSurrenderAsync"/> ends
+    /// anyone's fight.
+    /// </remarks>
+    private async Task<string> DeliverOfferAsync(
+        CharacterAgent character, OfferSurrenderOutcome outcome, CancellationToken cancellationToken)
     {
         var stateAfterText = WorldStateFormatter.FormatAuthoritativeState(_engine.State);
         var narration = await _dungeonMaster
@@ -1188,27 +1433,149 @@ public sealed class TurnCoordinator
         }
 
         var worldVersion = _engine.State.Version;
-        var team = _engine.State.FindById(character.CharacterId)?.Team ?? "";
-        var fact = _knowledge.GetOrAddSurrenderFact(character.CharacterId, character.Name, worldVersion);
-        TraceFactCreatedIfNew(fact, KnowledgeSource.PublicEvent, "surrender", character.Name);
         var recipients = LivingRecipients();
-        DeliverPublicFact(fact.Fact, recipients, worldVersion, "surrender");
+        var fact = _knowledge.GetOrAddSurrenderOfferFact(
+            outcome.OfferId, outcome.OffererName, outcome.RecipientName, outcome.TermsDescription, worldVersion);
+        TraceFactCreatedIfNew(fact, KnowledgeSource.PublicEvent, "offer_surrender", character.Name);
+        DeliverPublicFact(fact.Fact, recipients, worldVersion, "offer_surrender");
 
-        EmitDispositionChanged(character.CharacterId, character.Name, team,
-            CharacterDisposition.Active, CharacterDisposition.Surrendered, "surrender",
+        _trace.Emit(TraceEventType.SurrenderOfferMade, new SurrenderOfferMadePayload
+        {
+            OfferId = outcome.OfferId,
+            OffererId = outcome.OffererId,
+            OffererName = outcome.OffererName,
+            RecipientId = outcome.RecipientId,
+            RecipientName = outcome.RecipientName,
+            OfferedItemIds = [.. _engine.State.FindOffer(outcome.OfferId)?.OfferedItemIds ?? []],
+            OfferedItemNames = outcome.OfferedItemNames,
+            ForfeitWeapon = outcome.ForfeitWeapon,
+            WeaponName = outcome.WeaponName,
+            AssociatedSpeechEventId = outcome.AssociatedSpeechEventId,
+            AssociatedSpeech = SpeechTextFor(outcome.AssociatedSpeechEventId),
+            Round = _trace.Round,
+            Turn = _trace.Turn,
+            BattleStateSummary = DescribeVisibleBattleState(),
+            PublicRecipients = recipients
+        }, character.Name);
+
+        RecordPublicNarration("surrender-offered", stateAfterText, outcome.Summary, narration, character, [fact.Fact.Id]);
+        _console.DungeonMaster(narration);
+        return narration;
+    }
+
+    /// <summary>
+    /// A surrender offer was accepted. Public: everyone present sees the tribute change hands and the offerer
+    /// disarmed, so every present character learns it as a public fact. This is where a character's fight
+    /// actually ends: the disposition change (Active -> Surrendered), the durable agreement, and the focused
+    /// surrender event all belong here, not to the offer.
+    /// </summary>
+    private async Task<string> DeliverAcceptedSurrenderAsync(
+        CharacterAgent character, AcceptSurrenderOutcome outcome, EngineResult engineResult, CancellationToken cancellationToken)
+    {
+        var stateAfterText = WorldStateFormatter.FormatAuthoritativeState(_engine.State);
+        var narration = await _dungeonMaster
+            .NarratePublicEventAsync(character.Name, outcome.Summary, stateAfterText, cancellationToken)
+            .ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(narration))
+        {
+            narration = outcome.Summary;
+        }
+
+        var worldVersion = _engine.State.Version;
+        var recipients = LivingRecipients();
+        var offererTeam = _engine.State.FindById(outcome.OffererId)?.Team ?? "";
+
+        var fact = _knowledge.GetOrAddSurrenderFact(outcome.OffererId, outcome.OffererName, worldVersion);
+        TraceFactCreatedIfNew(fact, KnowledgeSource.PublicEvent, "accept_surrender", character.Name);
+        DeliverPublicFact(fact.Fact, recipients, worldVersion, "accept_surrender");
+
+        // Every item that changed hands is a public transfer in its own right, so a later theft or take has a
+        // legitimate informational basis for it — exactly as an ordinary give does.
+        var offer = _engine.State.SurrenderOffers.FirstOrDefault(o => o.Id == outcome.OfferId);
+        var transferredIds = offer is null ? [] : offer.OfferedItemIds;
+        for (var index = 0; index < transferredIds.Length && index < outcome.TransferredItemNames.Count; index++)
+        {
+            var itemFact = _knowledge.GetOrAddGiveFact(
+                transferredIds[index], outcome.TransferredItemNames[index],
+                outcome.OffererName, outcome.AccepterName, worldVersion);
+            TraceFactCreatedIfNew(itemFact, KnowledgeSource.PublicEvent, "accept_surrender", character.Name);
+            DeliverPublicFact(itemFact.Fact, recipients, worldVersion, "accept_surrender");
+        }
+
+        if (outcome.ForfeitedWeaponName is { } weaponName)
+        {
+            var weaponId = _engine.State.SurrenderAgreements
+                .FirstOrDefault(a => a.Id == outcome.AgreementId)?.ForfeitedWeaponId ?? weaponName;
+            var weaponFact = _knowledge.GetOrAddDropFact(weaponId, weaponName, outcome.OffererName, worldVersion);
+            TraceFactCreatedIfNew(weaponFact, KnowledgeSource.PublicEvent, "accept_surrender", character.Name);
+            DeliverPublicFact(weaponFact.Fact, recipients, worldVersion, "accept_surrender");
+        }
+
+        EmitDispositionChanged(outcome.OffererId, outcome.OffererName, offererTeam,
+            CharacterDisposition.Active, CharacterDisposition.Surrendered, "accepted surrender",
             engineResult, exitId: null, recipients);
 
         _trace.Emit(TraceEventType.CharacterSurrendered, new CharacterSurrenderedPayload
         {
-            CharacterId = character.CharacterId,
-            CharacterName = character.Name,
-            Team = team,
+            CharacterId = outcome.OffererId,
+            CharacterName = outcome.OffererName,
+            Team = offererTeam,
             Round = _trace.Round,
             Turn = _trace.Turn,
             PublicRecipients = recipients
+        }, outcome.OffererName);
+
+        var agreement = _engine.State.SurrenderAgreements.FirstOrDefault(a => a.Id == outcome.AgreementId);
+        _trace.Emit(TraceEventType.SurrenderAgreementRecorded, new SurrenderAgreementPayload
+        {
+            AgreementId = outcome.AgreementId,
+            OfferId = outcome.OfferId,
+            OffererId = outcome.OffererId,
+            OffererName = outcome.OffererName,
+            AcceptedById = outcome.AccepterId,
+            AcceptedByName = outcome.AccepterName,
+            TransferredItemIds = [.. transferredIds],
+            TransferredItemNames = outcome.TransferredItemNames,
+            ForfeitedWeaponId = agreement?.ForfeitedWeaponId,
+            ForfeitedWeaponName = agreement?.ForfeitedWeaponId is null ? null : outcome.ForfeitedWeaponName,
+            WeaponDisposition = outcome.ForfeitedWeaponName is null
+                ? "no weapon left the offerer's hand"
+                : $"laid on {outcome.GroundContainerName}, where it can be taken as a trophy",
+            OffererDisarmed = _engine.State.FindById(outcome.OffererId)?.IsDisarmed ?? false,
+            AcceptedRound = agreement?.AcceptedRound ?? _trace.Round,
+            AcceptedTurn = agreement?.AcceptedTurn ?? _trace.Turn,
+            AssociatedSpeechEventId = outcome.AssociatedSpeechEventId,
+            AssociatedSpeech = SpeechTextFor(outcome.AssociatedSpeechEventId),
+            PublicRecipients = recipients
         }, character.Name);
 
-        RecordPublicNarration("character-surrendered", stateAfterText, outcome.Summary, narration, character, [fact.Fact.Id]);
+        // The tribute and the forfeited weapon are item movements like any other, so each gets a provenance
+        // row — distinguishable from an ordinary give by its action type.
+        EmitSurrenderProvenance(character, outcome, transferredIds, agreement, engineResult);
+
+        RecordPublicNarration("surrender-accepted", stateAfterText, outcome.Summary, narration, character, [fact.Fact.Id]);
+        _console.DungeonMaster(narration);
+        return narration;
+    }
+
+    /// <summary>
+    /// An ability resolved — a guard taken up, a prayer worked, an order barked, a guard braced. All four are
+    /// public and observable acts with no hidden component, so the whole room hears the narration and there is
+    /// no private channel. The status effects the ability applied are traced separately, from the engine result.
+    /// </summary>
+    private async Task<string> DeliverAbilityOutcomeAsync(
+        CharacterAgent character, ActionOutcome outcome, string purpose, CancellationToken cancellationToken)
+    {
+        var stateAfterText = WorldStateFormatter.FormatAuthoritativeState(_engine.State);
+        var narration = await _dungeonMaster
+            .NarratePublicEventAsync(character.Name, outcome.Summary, stateAfterText, cancellationToken)
+            .ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(narration))
+        {
+            narration = outcome.Summary;
+        }
+
+        RecordPublicNarration(purpose, stateAfterText, outcome.Summary, narration, character);
         _console.DungeonMaster(narration);
         return narration;
     }
@@ -1714,8 +2081,7 @@ public sealed class TurnCoordinator
     };
 
     /// <summary>The neutral in-world line used when even a rephrase still leaks the machinery.</summary>
-    private const string GenericInWorldRefusal =
-        "Whatever you meant to do there finds no purchase, and nothing comes of it.";
+    private const string GenericInWorldRefusal = InWorldRefusal.Generic;
 
     /// <summary>
     /// Guarantees a rejection reason reaches the character in-world. A prompt cannot reliably stop the
@@ -1726,6 +2092,10 @@ public sealed class TurnCoordinator
     /// </summary>
     private async Task<string> InWorldRejectionAsync(CharacterAgent character, string reason, CancellationToken cancellationToken)
     {
+        // Formatting is cleaned, never rewritten: markdown in a refusal is a presentation defect with a
+        // deterministic fix, and sending it round a model risks a worse rewrite of words that were fine.
+        reason = ModelText.StripPresentationMarkup(reason);
+
         if (!MachineryLanguage.IsLeak(reason))
         {
             return reason;
@@ -1744,7 +2114,7 @@ public sealed class TurnCoordinator
             Parameter = "reason",
             DungeonMasterValue = reason,
             CorrectedValue = corrected,
-            Justification = "The refusal named the machinery (the rules/engine or what can be resolved); rephrased in-world."
+            Justification = "The refusal named the machinery (a tool name, a stable id, or one of the harness's own nouns); rephrased in-world once, with a neutral line as the fallback."
         }, DungeonMasterAgent.AgentIdentifier);
 
         return corrected;
@@ -1760,6 +2130,8 @@ public sealed class TurnCoordinator
     /// </summary>
     private async Task<string> InWorldAnswerAsync(CharacterAgent character, string answer, CancellationToken cancellationToken)
     {
+        answer = ModelText.StripPresentationMarkup(answer);
+
         if (!MachineryLanguage.IsLeak(answer))
         {
             return answer;
@@ -1778,7 +2150,7 @@ public sealed class TurnCoordinator
             Parameter = "answer",
             DungeonMasterValue = answer,
             CorrectedValue = corrected,
-            Justification = "The answer broke character (narrated the character's knowledge, named the machinery, or used markdown); rephrased in-world."
+            Justification = "The answer named the machinery (a tool name, a stable id, or one of the harness's own nouns); rephrased in-world once, keeping the original if the rephrase still leaked."
         }, DungeonMasterAgent.AgentIdentifier);
 
         return corrected;
@@ -1851,8 +2223,29 @@ public sealed class TurnCoordinator
                     ResolveActingCharacter(call, DungeonMasterTools.ActorParameter, character),
                     ResolveExitReference(call));
 
-            case DungeonMasterTools.SurrenderName:
-                return new SurrenderAction(
+            case DungeonMasterTools.OfferSurrenderName:
+                return new OfferSurrenderAction(
+                    ResolveActingCharacter(call, DungeonMasterTools.OffererParameter, character),
+                    ToolArguments.GetRequiredString(call, DungeonMasterTools.RecipientParameter),
+                    ToolArguments.GetStringList(call, DungeonMasterTools.OfferedItemsParameter),
+                    ToolArguments.GetBool(call, DungeonMasterTools.ForfeitWeaponParameter),
+                    // The associated speech is a harness fact, not something the Dungeon Master supplies: it is
+                    // whatever this character actually said aloud on this turn, on the public channel.
+                    _speechThisTurn?.Id);
+
+            case DungeonMasterTools.AcceptSurrenderName:
+                return new AcceptSurrenderAction(
+                    ResolveActingCharacter(call, DungeonMasterTools.RecipientParameter, character),
+                    ResolveOfferReference(call, character));
+
+            case DungeonMasterTools.UseAbilityName:
+                return new UseAbilityAction(
+                    ResolveActingCharacter(call, DungeonMasterTools.ActorParameter, character),
+                    ToolArguments.GetRequiredString(call, DungeonMasterTools.AbilityParameter),
+                    ToolArguments.GetString(call, DungeonMasterTools.TargetParameter));
+
+            case DungeonMasterTools.DefendName:
+                return new DefendAction(
                     ResolveActingCharacter(call, DungeonMasterTools.ActorParameter, character));
 
             case DungeonMasterTools.GiveItemName:
@@ -1886,6 +2279,42 @@ public sealed class TurnCoordinator
     /// Dungeon Master's original argument is never silently discarded; with two or more exits nothing is
     /// guessed and the engine refuses an unknown or ambiguous reference in-world.
     /// </summary>
+    /// <summary>
+    /// Resolves the offer named by an <c>accept_surrender</c> tool call. A weaker Dungeon Master model
+    /// paraphrases the offer instead of copying its id ("the goblin's offer", "offer from Skrit"), which would
+    /// make the engine refuse a genuine acceptance. When the accepting character has exactly one offer awaiting
+    /// their answer, the intent can only mean that offer, so an unmatched reference is corrected to it — the
+    /// same discipline <see cref="ResolveExitReference"/> and <see cref="ResolveActingCharacter"/> apply. The
+    /// correction is traced, so the model's original argument is never silently discarded; with two or more
+    /// pending offers nothing is guessed and the engine refuses the unknown reference in-world.
+    /// </summary>
+    private string ResolveOfferReference(FunctionCallContent call, CharacterAgent character)
+    {
+        var named = ToolArguments.GetString(call, DungeonMasterTools.OfferParameter) ?? "";
+        if (_engine.State.FindOffer(named) is not null)
+        {
+            return named;
+        }
+
+        var pending = _engine.State.PendingOffersTo(character.CharacterId).ToList();
+        if (pending.Count == 1)
+        {
+            _trace.Emit(TraceEventType.AdjudicationCorrected, new AdjudicationCorrectionPayload
+            {
+                ToolName = call.Name,
+                Parameter = DungeonMasterTools.OfferParameter,
+                DungeonMasterValue = named,
+                CorrectedValue = pending[0].Id,
+                Justification =
+                    $"'{named}' names no offer; {character.Name} has exactly one offer awaiting their answer, so it can only mean that one."
+            }, DungeonMasterAgent.AgentIdentifier);
+
+            return pending[0].Id;
+        }
+
+        return named;
+    }
+
     private string ResolveExitReference(FunctionCallContent call)
     {
         var named = ToolArguments.GetRequiredString(call, DungeonMasterTools.ExitParameter);
@@ -1994,6 +2423,19 @@ public sealed class TurnCoordinator
             TargetIsAlly = target is not null && attacker is not null ? attacker.IsAllyOf(target) : null,
             Note = note
         }, DungeonMasterAgent.AgentIdentifier);
+
+        // Friendly fire is deliberately permitted by the engine (see MultiActorEngineTests): prompts and
+        // goals discourage it, the world does not forbid it. But it must never pass unremarked. A live run
+        // opened with Rowan saying "I step in front of Elara and take whatever comes at her" — the guard
+        // phrasing his own state block suggests — and the Dungeon Master bound it as a strike on Elara; only
+        // a missed roll saved her, and nothing in the console or the report said a word about it. The
+        // relationship was already computed and thrown away into the trace.
+        if (target is not null && attacker is not null && attacker.IsAllyOf(target))
+        {
+            _console.Notice(
+                $"{character.Name} was ruled to be attacking {target.Name}, who fights on the same side. " +
+                "The world permits this; check the intent it came from.");
+        }
     }
 
     // -----------------------------------------------------------------------------------------
@@ -2053,12 +2495,18 @@ public sealed class TurnCoordinator
     /// when that is enabled, or nudge for a clean call (distinguishing a truncated reply). Returns the call
     /// to dispatch, or null when the character was nudged and the turn loop should ask it again.
     /// </summary>
-    private FunctionCallContent? TryRecoverOrNudge(CharacterAgent character, ChatResponse response, bool truncated)
+    private FunctionCallContent? TryRecoverOrNudge(
+        CharacterAgent character, ChatResponse response, bool truncated, bool contextExhausted)
     {
         // A character may write a spoken line as prose ("I shout: \"Vark! decide now…\"") instead of calling
         // say. We never put those inferred words in its mouth and broadcast them; instead we record the
         // attempt — so a report does not read it as silence — and nudge it to call say properly.
-        var spokenAttempt = ModelText.TryExtractSpokenAttempt(ModelText.Clean(response));
+        // Never read a cut-off reply as speech. A live run ended a character's reply mid-sentence at
+        // "barely standing against the wall with blood welling from the deep wound in his torso." and the
+        // extractor took that fragment for an attempt to speak, so the console announced a prose speech
+        // nudge on a turn where nobody had tried to say anything. A fragment is not evidence of intent, and
+        // the same rule already keeps the intent parser away from truncated replies.
+        var spokenAttempt = truncated ? null : ModelText.TryExtractSpokenAttempt(ModelText.Clean(response));
         if (spokenAttempt is not null)
         {
             _trace.Emit(TraceEventType.UnstructuredSpeechAttempt, new UnstructuredSpeechAttemptPayload
@@ -2087,7 +2535,12 @@ public sealed class TurnCoordinator
                 AgentName = character.Name,
                 ToolName = "(none)",
                 Error = truncated
-                    ? "Character's reply was truncated at the output-token limit before any tool call was produced."
+                    ? contextExhausted
+                        ? $"Character's reply was cut off because the context window was already full " +
+                          $"(input {response.Usage?.InputTokenCount} + output {response.Usage?.OutputTokenCount} " +
+                          $"filled a {character.Profile.ContextWindow}-token window). The request is too large, " +
+                          "not the output budget too small."
+                        : "Character's reply was truncated at the output-token limit before any tool call was produced."
                     // Naming the finish reason covers the other ways a reply can end early, such as a
                     // provider content filter, without needing a case for each.
                     : $"Character responded without calling ask_dm, take_action or end_turn " +
@@ -2096,9 +2549,14 @@ public sealed class TurnCoordinator
 
             if (truncated)
             {
-                _console.Notice(
-                    $"{character.Name}'s reply hit the output-token limit. " +
-                    "Consider raising MaxOutputTokens for that agent.");
+                // The two causes call for opposite remedies, so they must never share a message. Raising
+                // MaxOutputTokens against a full window makes it strictly worse: the window is shared, so a
+                // larger output reservation leaves less room for the prompt that was already too big.
+                _console.Notice(contextExhausted
+                    ? $"{character.Name}'s context window was full before it could answer. " +
+                      "Shrink the request (prompt, state block or history) — do NOT raise MaxOutputTokens."
+                    : $"{character.Name}'s reply hit the output-token limit. " +
+                      "Consider raising MaxOutputTokens for that agent.");
             }
 
             character.AppendNudge(_prompts.Render(truncated ? "character.truncated" : "character.nudge"));
@@ -2151,6 +2609,48 @@ public sealed class TurnCoordinator
         // in the history and the resolved turn carries no discarded prose. The original prose stays in the trace.
         character.ReplaceLastReplyWithToolCalls(ordered);
         return ordered;
+    }
+
+    /// <summary>
+    /// Makes room in a character's context after its request filled the window, before it is asked again.
+    /// Sheds this turn's failed prose replies and nudges, then folds older turns into the running summary.
+    /// </summary>
+    /// <remarks>
+    /// Without this, a full window is self-perpetuating: the harness answers a truncated reply by appending a
+    /// nudge, which enlarges the very request that had no room, and the next attempt fails identically. A live
+    /// qwen run burned three consecutive retries on one turn exactly that way. Reclaiming is the only response
+    /// to a full window that can actually change the outcome.
+    /// </remarks>
+    private async Task ReclaimContextRoomAsync(
+        CharacterAgent character, int historyMark, CancellationToken cancellationToken)
+    {
+        var before = character.EstimateHistoryTokens();
+
+        character.CompactTurnHistory(historyMark);
+        if (_summariser is not null && _limits.SummariseHistory)
+        {
+            await MaybeSummariseHistoryAsync(character, cancellationToken).ConfigureAwait(false);
+        }
+
+        var after = character.EstimateHistoryTokens();
+        _trace.Emit(TraceEventType.ContextRoomReclaimed, new ContextRoomReclaimedPayload
+        {
+            CharacterId = character.CharacterId,
+            CharacterName = character.Name,
+            EstimatedTokensBefore = before,
+            EstimatedTokensAfter = after,
+            Round = _trace.Round,
+            Turn = _trace.Turn
+        }, character.Name);
+
+        if (after >= before)
+        {
+            // Nothing left to shed: the request is too big even when the history is empty, which is a prompt
+            // or state-block problem the run cannot fix for itself. Say so rather than looping in silence.
+            _console.Notice(
+                $"{character.Name}'s request still fills the context window with nothing left to trim " +
+                $"(~{after} tokens). The system prompt or state block is too large for this window.");
+        }
     }
 
     /// <summary>
@@ -2417,7 +2917,9 @@ public sealed class TurnCoordinator
         }
 
         // The floor holds only things dropped in plain sight of everyone; anyone present may pick them up.
-        if (container.IsGround)
+        // A fallen character's body is the same case: everybody watched them go down, and a body holds only
+        // what they were already carrying openly, so nothing hidden is revealed by reaching into it.
+        if (container.IsGround || container.IsCorpse)
         {
             return false;
         }
@@ -2590,6 +3092,525 @@ public sealed class TurnCoordinator
             ConsultationId = _currentConsultationId,
             Reason = reason
         }, actor.Name);
+
+    // -----------------------------------------------------------------------------------------
+    // Turn upkeep, status effects, surrender offers and abilities (v0.7)
+    // -----------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Traces the engine's start- or end-of-turn upkeep, and tells the room about any surrender offer that
+    /// lapsed. An offer everybody heard cannot simply vanish: the offerer in particular has to learn that their
+    /// terms came to nothing, or they will keep waiting on an answer that is no longer possible.
+    /// </summary>
+    private void ApplyUpkeep(TurnUpkeep upkeep, string phase, string actorName)
+    {
+        if (upkeep.IsEmpty)
+        {
+            return;
+        }
+
+        EmitStatusEvents(upkeep.StatusEvents, $"turn-upkeep ({phase})");
+        EmitOfferTransitions(upkeep.OfferTransitions);
+
+        foreach (var transition in upkeep.OfferTransitions)
+        {
+            var offerer = _engine.State.FindById(transition.Offer.OffererId)?.Name ?? transition.Offer.OffererId;
+            var recipient = _engine.State.FindById(transition.Offer.RecipientId)?.Name ?? transition.Offer.RecipientId;
+            var text = $"{recipient} let {offerer}'s offer of terms pass without taking it up. Nothing changed " +
+                       $"hands, and {offerer} is still in the fight.";
+
+            // Delivered verbatim on the public channel, with no Dungeon Master call: this is bookkeeping
+            // everyone can see, not a scene to be narrated, and a model call here would only risk embellishing it.
+            var entry = _narrationLog.Record("surrender-offer-lapsed", text);
+            _trace.Emit(TraceEventType.Narration, new NarrationPayload
+            {
+                Purpose = "surrender-offer-lapsed",
+                StateSuppliedToDungeonMaster = "(none — delivered verbatim by the harness, no model call)",
+                ContextSuppliedToDungeonMaster = transition.Cause,
+                Narration = text,
+                NarrationId = entry.Id,
+                IntendedRecipients = LivingRecipients(),
+                Visibility = "public",
+                WorldVersion = _engine.State.Version
+            });
+
+            _console.Notice(text);
+        }
+
+        // Anything that fell away at the start of a turn is worth a line in the transcript, so a guard that
+        // simply timed out does not look like a bug to somebody watching.
+        foreach (var status in upkeep.StatusEvents.Where(e => e.Kind == StatusEventKind.Expired))
+        {
+            var target = _engine.State.FindById(status.Status.TargetCharacterId)?.Name ?? status.Status.TargetCharacterId;
+            _console.Notice($"{target} is no longer {status.Status.ShortLabel} ({status.Cause}).");
+        }
+    }
+
+    /// <summary>
+    /// Traces one status-effect transition per event, carrying every field the status carries. This is the
+    /// status timeline: nothing about a status is knowable only from its effect on a number.
+    /// </summary>
+    private void EmitStatusEvents(IReadOnlyList<StatusEvent> events, string relatedAction)
+    {
+        foreach (var statusEvent in events)
+        {
+            var status = statusEvent.Status;
+            var eventType = statusEvent.Kind switch
+            {
+                StatusEventKind.Applied => TraceEventType.StatusApplied,
+                StatusEventKind.Consumed => TraceEventType.StatusConsumed,
+                StatusEventKind.Expired => TraceEventType.StatusExpired,
+                _ => TraceEventType.StatusRemoved
+            };
+
+            _trace.Emit(eventType, new StatusEffectPayload
+            {
+                StatusId = status.Id,
+                Kind = status.Kind.ToString(),
+                Transition = statusEvent.Kind.ToString(),
+                Cause = statusEvent.Cause,
+                SourceCharacterId = status.SourceCharacterId,
+                SourceCharacterName = _engine.State.FindById(status.SourceCharacterId)?.Name,
+                TargetCharacterId = status.TargetCharacterId,
+                TargetCharacterName = _engine.State.FindById(status.TargetCharacterId)?.Name,
+                AppliedRound = status.AppliedRound,
+                AppliedTurn = status.AppliedTurn,
+                Modifier = status.Modifier,
+                ExpiryRule = status.ExpiryRule.ToString(),
+                Visibility = status.Visibility.ToString(),
+                RelationshipId = status.RelationshipId,
+                SourceAbilityId = status.SourceAbilityId,
+                Round = _trace.Round,
+                Turn = _trace.Turn,
+                WorldVersion = _engine.State.Version,
+                RelatedAction = relatedAction,
+                AffectedRngPurpose = status.Kind is StatusEffectKind.Rallied or StatusEffectKind.OffBalance
+                                     && statusEvent.Kind == StatusEventKind.Consumed
+                    ? "attack.hit-check"
+                    : null
+            });
+        }
+    }
+
+    /// <summary>
+    /// Traces each surrender-offer state transition, and — for one that stops being open — records the public
+    /// fact that it came to nothing, so nobody is left believing terms are still on the table.
+    /// </summary>
+    private void EmitOfferTransitions(IReadOnlyList<OfferTransition> transitions)
+    {
+        foreach (var transition in transitions)
+        {
+            var offer = transition.Offer;
+
+            // A freshly created offer is reported by its own event, not as a transition out of Pending.
+            if (transition.New == SurrenderOfferState.Pending)
+            {
+                continue;
+            }
+
+            var offerer = _engine.State.FindById(offer.OffererId);
+            var recipient = _engine.State.FindById(offer.RecipientId);
+
+            _trace.Emit(TraceEventType.SurrenderOfferResolved, new SurrenderOfferResolvedPayload
+            {
+                OfferId = offer.Id,
+                OffererId = offer.OffererId,
+                OffererName = offerer?.Name ?? offer.OffererId,
+                RecipientId = offer.RecipientId,
+                RecipientName = recipient?.Name ?? offer.RecipientId,
+                PreviousState = transition.Previous.ToString(),
+                NewState = transition.New.ToString(),
+                Cause = transition.Cause,
+                CreatedRound = offer.CreatedRound,
+                CreatedTurn = offer.CreatedTurn,
+                ResolvedRound = offer.ResolvedRound ?? _trace.Round,
+                ResolvedTurn = offer.ResolvedTurn ?? _trace.Turn,
+                TurnsToRespond = Math.Max(0, (offer.ResolvedTurn ?? _trace.Turn) - offer.CreatedTurn),
+                AssetsTransferred = transition.New == SurrenderOfferState.Accepted
+            });
+
+            if (transition.New == SurrenderOfferState.Accepted)
+            {
+                // Acceptance has its own, richer public delivery; nothing more is needed here.
+                continue;
+            }
+
+            var worldVersion = _engine.State.Version;
+            var fact = _knowledge.GetOrAddSurrenderOfferSettledFact(
+                offer.Id, offerer?.Name ?? offer.OffererId, recipient?.Name ?? offer.RecipientId,
+                transition.New.ToString(), transition.Cause, worldVersion);
+            TraceFactCreatedIfNew(fact, KnowledgeSource.PublicEvent, "surrender_offer_settled", "harness");
+            DeliverPublicFact(fact.Fact, LivingRecipients(), worldVersion, "surrender_offer_settled");
+        }
+    }
+
+    /// <summary>
+    /// Records one ability attempt, accepted or refused, with the charges either side of it. A refusal is as
+    /// important as a success here: the record has to show a refused use spending nothing, rather than the code
+    /// merely claiming it does. A no-op for actions that are not ability uses.
+    /// </summary>
+    private void EmitAbilityUsed(
+        CharacterAgent character, GameAction action, EngineResult engineResult, int? chargesBefore)
+    {
+        var (abilityRef, targetRef) = action switch
+        {
+            UseAbilityAction use => (use.AbilityRef, use.TargetRef),
+            DefendAction => (AbilityCatalog.DefendId, null),
+            _ => (null, null)
+        };
+
+        if (abilityRef is null)
+        {
+            return;
+        }
+
+        var definition = AbilityCatalog.Resolve(abilityRef);
+        var actorAfter = engineResult.StateAfter.FindById(character.CharacterId);
+        var chargesAfter = definition is null ? null : actorAfter?.FindAbility(definition.Id)?.RemainingUses;
+
+        var target = engineResult.Outcome switch
+        {
+            GuardAllyOutcome guard => (guard.AllyId, guard.AllyName),
+            HealingPrayerOutcome heal => (heal.TargetId, heal.TargetName),
+            RallyOutcome rally => (rally.AllyId, rally.AllyName),
+            DefendOutcome defend => (defend.ActorId, defend.ActorName),
+            AttackOutcome attack => (attack.TargetId, attack.TargetName),
+            _ => (null, null)
+        };
+
+        var resolvedTargetId = target.Item1;
+        var resolvedTargetName = target.Item2;
+        if (resolvedTargetId is null && targetRef is not null)
+        {
+            var named = engineResult.StateBefore.Resolve(targetRef);
+            resolvedTargetId = named?.Id ?? targetRef;
+            resolvedTargetName = named?.Name;
+        }
+
+        _trace.Emit(TraceEventType.AbilityUsed, new AbilityUsedPayload
+        {
+            ActorId = character.CharacterId,
+            ActorName = character.Name,
+            AbilityId = definition?.Id ?? abilityRef,
+            AbilityName = definition?.Name ?? abilityRef,
+            Category = definition?.Category.ToString() ?? "unknown",
+            RequestedAbilityRef = abilityRef,
+            TargetId = resolvedTargetId,
+            TargetName = resolvedTargetName,
+            ValidationResult = engineResult.Accepted ? "accepted" : "rejected",
+            RejectionReason = engineResult.RejectionReason?.ToString(),
+            RemainingUsesBefore = chargesBefore,
+            RemainingUsesAfter = chargesAfter,
+            HealingPerformed = engineResult.Outcome is HealingPrayerOutcome healed
+                ? healed.HealthAfter - healed.HealthBefore
+                : null,
+            StatusesApplied = [.. engineResult.StatusEvents
+                .Where(e => e.Kind == StatusEventKind.Applied)
+                .Select(e => e.Status.Kind.ToString())],
+            RngConsulted = engineResult.RngDraws.Count > 0,
+            WorldVersionBefore = engineResult.StateBefore.Version,
+            WorldVersionAfter = engineResult.StateAfter.Version,
+            TurnConsumed = engineResult.Accepted,
+            ConsultationId = _currentConsultationId
+        }, character.Name);
+    }
+
+    /// <summary>
+    /// Records a blow a guard relationship moved onto the guardian, naming both the intended and the
+    /// authoritative target and how many draws the whole attack made — the evidence that redirection added no
+    /// roll of its own. A no-op when no redirection happened.
+    /// </summary>
+    private void EmitAttackRedirection(EngineResult engineResult)
+    {
+        if (engineResult.Outcome is not AttackOutcome { Redirected: true } attack)
+        {
+            return;
+        }
+
+        _trace.Emit(TraceEventType.AttackRedirected, new AttackRedirectedPayload
+        {
+            AttackerId = attack.AttackerId,
+            AttackerName = attack.AttackerName,
+            IntendedTargetId = attack.IntendedTargetId ?? attack.TargetId,
+            IntendedTargetName = attack.IntendedTargetName ?? attack.TargetName,
+            AuthoritativeTargetId = attack.TargetId,
+            AuthoritativeTargetName = attack.TargetName,
+            TargetArmourUsed = attack.TargetArmour,
+            TargetHealthBefore = attack.TargetHealthBefore,
+            TargetHealthAfter = attack.TargetHealthAfter,
+            RngDrawCount = engineResult.RngDraws.Count,
+            Round = _trace.Round,
+            Turn = _trace.Turn
+        }, attack.AttackerName);
+    }
+
+    /// <summary>
+    /// Records the item movements an accepted surrender caused: each piece of tribute, and the forfeited weapon.
+    /// They get their own action types so provenance distinguishes surrender tribute and weapon forfeiture from
+    /// an ordinary give or drop.
+    /// </summary>
+    /// <summary>
+    /// Adds the state-dependent actions the stateless resolver cannot know to ask for: accepting a surrender
+    /// when terms are on the table for this character, and taking from a body when the grab the resolver saw
+    /// may be a looting. Anything already offered is left alone, and nothing is ever removed.
+    /// </summary>
+    private (IReadOnlyList<AITool>? Tools, string? Guidance) WidenCandidateToolsForState(
+        CharacterAgent character, IReadOnlyList<AITool>? tools)
+    {
+        if (tools is null || tools.Count == 0)
+        {
+            return (tools, null);
+        }
+
+        var names = tools.Select(t => t.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var rulebookRefused = names.Count == 1 && names.Contains(DungeonMasterTools.RejectActionName);
+
+        var widened = new List<AITool>(tools);
+        var notes = new List<string>();
+
+        // Acceptance is widened in even when the rulebook refused the intent outright, and that is the one
+        // place the fail-safe is deliberately opened. A GPT-driven run had a character say "I take Skrit's
+        // purse and tell him he can live" — with Skrit's offer standing — and the resolver, reading only the
+        // extra demand riding along with it, answered supported:false. The refusal that followed told him to
+        // wait for a yield that had already happened. An offer either exists in the state or it does not, so
+        // adding this tool cannot invent anything: the DM still has to choose it, and the engine still checks
+        // that this character is the named recipient before a single thing moves.
+        var offers = _engine.State.PendingOffersTo(character.CharacterId).ToList();
+        if (offers.Count > 0 && names.Add(DungeonMasterTools.AcceptSurrenderName))
+        {
+            widened.Insert(0, DungeonMasterTools.AcceptSurrender);
+            var terms = string.Join("; ", offers.Select(o =>
+                $"{_engine.State.FindById(o.OffererId)?.Name ?? o.OffererId} ({o.Id})"));
+            notes.Add(
+                $"STATE THE RULEBOOK COULD NOT SEE: terms are on the table for {character.Name} right now, from {terms}. " +
+                $"The rulebook is stateless and does not know this. If {character.Name} is reaching for what an offer " +
+                $"promises, or sparing the offerer, that is {DungeonMasterTools.AcceptSurrenderName} on that offer — " +
+                "never a theft, and never a hostile act. A demand, threat or condition tacked onto the acceptance " +
+                "changes nothing: settle the terms that stand, and let the rest not happen." +
+                (rulebookRefused
+                    ? $" The rulebook called this intent unsupported, which it cannot judge here — it does not know an " +
+                      $"offer is open. If {character.Name} is answering those terms, take them; otherwise still refuse."
+                    : ""));
+        }
+
+        // The corpse widening stays inside the fail-safe: it only ever refines a grab the rulebook already
+        // allowed, so an intent the rulebook refused outright is never handed a second way to act on it.
+        if (!rulebookRefused
+            && names.Contains(DungeonMasterTools.StealItemName)
+            && _engine.State.Room.Objects.OfType<Container>().Any(c => c.IsCorpse)
+            && names.Add(DungeonMasterTools.TakeItemName))
+        {
+            widened.Add(DungeonMasterTools.TakeItem);
+            notes.Add(
+                $"STATE THE RULEBOOK COULD NOT SEE: a fallen character's body lies here holding what they carried. " +
+                $"Nothing can be stolen from the dead; looting a body is {DungeonMasterTools.TakeItemName} from it.");
+        }
+
+        return notes.Count == 0 ? (tools, null) : (widened, string.Join(Environment.NewLine, notes));
+    }
+
+    /// <summary>
+    /// True when a grab is really an acceptance: the acting character is the named recipient of a pending
+    /// offer, and the item they reached for is one that offer promises. Returns the equivalent
+    /// <see cref="AcceptSurrenderAction"/> so the world resolves what the character meant.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately narrow. Only the promised items redirect — reaching for anything else the offerer carries
+    /// is still an ordinary theft and still a hostile act that kills the offer. And only the named recipient
+    /// redirects: a bystander grabbing at the tribute is not party to the deal. The direction of the redirect
+    /// is the honest one for the fiction, too. You cannot take the tribute and keep fighting; taking what was
+    /// promised IS agreeing to the terms it was promised under.
+    /// </remarks>
+    private bool RedirectsToAcceptance(
+        CharacterAgent character, GameAction action, out GameAction? acceptance, out SurrenderOffer? offer)
+    {
+        acceptance = null;
+        offer = null;
+
+        var itemRef = action switch
+        {
+            StealItemAction steal => steal.ItemRef,
+            TakeItemAction take => take.ItemRef,
+            _ => null
+        };
+        if (string.IsNullOrWhiteSpace(itemRef))
+        {
+            return false;
+        }
+
+        foreach (var pending in _engine.State.PendingOffersTo(character.CharacterId))
+        {
+            var offerer = _engine.State.FindById(pending.OffererId);
+            if (offerer is null || !PromisesItem(offerer, pending, itemRef))
+            {
+                continue;
+            }
+
+            offer = pending;
+            acceptance = new AcceptSurrenderAction(character.CharacterId, pending.Id);
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>True when one of an offer's promised items is the one named, by id or by either name form.</summary>
+    private static bool PromisesItem(Character offerer, SurrenderOffer offer, string itemRef)
+    {
+        var needle = itemRef.Trim();
+        foreach (var promisedId in offer.OfferedItemIds)
+        {
+            if (string.Equals(promisedId, needle, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            var promised = offerer.Inventory.FirstOrDefault(i =>
+                string.Equals(i.Id, promisedId, StringComparison.OrdinalIgnoreCase));
+            if (promised is not null
+                && (string.Equals(promised.DisplayName, needle, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(promised.Name, needle, StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// True when a theft names a dead character. Their belongings are already in their corpse container, so
+    /// the deed is a take from that body — the same act the fiction describes as looting the fallen.
+    /// </summary>
+    private bool RedirectsToCorpseLoot(GameAction action, out GameAction? take, out string? corpseName)
+    {
+        take = null;
+        corpseName = null;
+
+        if (action is not StealItemAction steal)
+        {
+            return false;
+        }
+
+        var target = _engine.State.Resolve(steal.TargetRef);
+        if (target is null || target.IsAlive)
+        {
+            return false;
+        }
+
+        var corpse = _engine.State.Room.Objects.OfType<Container>()
+            .FirstOrDefault(c => c.IsCorpse && c.FindItem(steal.ItemRef) is not null);
+        if (corpse is null)
+        {
+            return false;
+        }
+
+        corpseName = target.Name;
+        take = new TakeItemAction(steal.ThiefRef, corpse.Id, steal.ItemRef);
+        return true;
+    }
+
+    private void EmitSurrenderProvenance(
+        CharacterAgent character,
+        AcceptSurrenderOutcome outcome,
+        System.Collections.Immutable.ImmutableArray<string> transferredIds,
+        SurrenderAgreement? agreement,
+        EngineResult engineResult)
+    {
+        for (var index = 0; index < transferredIds.Length; index++)
+        {
+            var name = index < outcome.TransferredItemNames.Count ? outcome.TransferredItemNames[index] : transferredIds[index];
+            EmitProvenance(transferredIds[index], name, outcome.OffererId, outcome.AccepterId,
+                "surrender_tribute", character, outcome.OffererId, outcome.OffererName, engineResult,
+                rngInvolved: false, "handed over as tribute under accepted terms of surrender");
+        }
+
+        if (agreement?.ForfeitedWeaponId is { } weaponId && outcome.ForfeitedWeaponName is { } weaponName)
+        {
+            EmitProvenance(weaponId, weaponName, outcome.OffererId, Container.GroundId,
+                "weapon_forfeiture", character, outcome.OffererId, outcome.OffererName, engineResult,
+                rngInvolved: false, "forfeited under accepted terms of surrender and laid on the floor");
+        }
+    }
+
+    /// <summary>
+    /// Records model output produced after the turn had already resolved, discarded rather than acted on.
+    /// Nothing here reaches the world, the public transcript or the knowledge ledger.
+    /// </summary>
+    private void EmitPostResolutionDiscarded(
+        CharacterAgent character, string? resolvedAction, string kind, string? toolName, string content) =>
+        _trace.Emit(TraceEventType.PostResolutionOutputDiscarded, new PostResolutionOutputDiscardedPayload
+        {
+            CharacterId = character.CharacterId,
+            CharacterName = character.Name,
+            ResolvedAction = resolvedAction,
+            DiscardedKind = kind,
+            ToolName = toolName,
+            DiscardedContent = content,
+            Round = _trace.Round,
+            Turn = _trace.Turn
+        }, character.Name);
+
+    /// <summary>A tool call rendered for the record: its name and its arguments, so nothing is hidden.</summary>
+    private static string DescribeCall(FunctionCallContent call)
+    {
+        var arguments = call.Arguments is null || call.Arguments.Count == 0
+            ? ""
+            : string.Join(", ", call.Arguments.Select(a => $"{a.Key}={a.Value}"));
+        return $"{call.Name}({arguments})";
+    }
+
+    /// <summary>The verbatim words of a public-channel speech entry, for a report. Null when there was none.</summary>
+    private string? SpeechTextFor(int? narrationId) =>
+        narrationId is null
+            ? null
+            : _narrationLog.Entries.FirstOrDefault(e => e.Id == narrationId)?.Text;
+
+    /// <summary>
+    /// A short, number-free account of how the fight stands right now — who is still up on each side and in
+    /// what shape. Recorded with a surrender offer so the offer can be read against the odds it was made under,
+    /// which is the descriptive part of the persuasion report.
+    /// </summary>
+    private string DescribeVisibleBattleState()
+    {
+        var lines = _engine.State.Teams().Select(team =>
+        {
+            var members = _engine.State.Characters
+                .Where(c => string.Equals(c.Team, team, StringComparison.OrdinalIgnoreCase))
+                .Select(c => $"{c.Name} ({DescribeStanding(c)})");
+            return $"{team}: {string.Join(", ", members)}";
+        });
+
+        return string.Join(" | ", lines);
+    }
+
+    private static string DescribeStanding(Character character)
+    {
+        switch (character.Disposition)
+        {
+            case CharacterDisposition.Dead:
+                return "dead";
+            case CharacterDisposition.Surrendered:
+                return "surrendered";
+            case CharacterDisposition.Escaped:
+                return "fled";
+        }
+
+        if (character.MaxHealth <= 0)
+        {
+            return "still fighting";
+        }
+
+        var fraction = (double)character.Health / character.MaxHealth;
+        return fraction switch
+        {
+            >= 0.999 => "unhurt",
+            >= 0.75 => "lightly wounded",
+            >= 0.45 => "wounded",
+            >= 0.20 => "badly wounded",
+            _ => "barely standing"
+        };
+    }
 
     private void EmitLimit(string limit, int value, string effect) =>
         _trace.Emit(TraceEventType.HarnessLimitReached, new HarnessLimitPayload

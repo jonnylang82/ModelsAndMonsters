@@ -35,6 +35,12 @@ public enum TraceEventType
     /// </summary>
     ContextWindowSaturated,
 
+    /// <summary>
+    /// A character's request filled its context window, so the harness shed history to make room before
+    /// asking again — rather than appending another nudge to a request that had none.
+    /// </summary>
+    ContextRoomReclaimed,
+
     /// <summary>The application inspected a requested tool call and decided how to dispatch it.</summary>
     ToolCallDispatched,
 
@@ -168,6 +174,57 @@ public enum TraceEventType
 
     /// <summary>A character surrendered and left active combat. A focused, semantic companion to <see cref="DispositionChanged"/>.</summary>
     CharacterSurrendered,
+
+    /// <summary>
+    /// A surrender offer was made: the offerer, the named recipient, the exact enforceable terms, and the
+    /// public speech that accompanied the plea. Nothing has moved — this records the proposal, not a transfer.
+    /// </summary>
+    SurrenderOfferMade,
+
+    /// <summary>
+    /// A surrender offer left Pending — accepted, rejected by a hostile act, expired unanswered, or
+    /// invalidated because it could no longer be enforced — with the cause and how long it stood.
+    /// </summary>
+    SurrenderOfferResolved,
+
+    /// <summary>
+    /// A surrender agreement was struck: exactly what transferred, whether a weapon was forfeited, and the
+    /// speech that accompanied the offer. The durable evidence of a negotiated surrender.
+    /// </summary>
+    SurrenderAgreementRecorded,
+
+    /// <summary>An ability use was attempted: the ability, its target, whether it was accepted, and the charges left.</summary>
+    AbilityUsed,
+
+    /// <summary>A status effect was put on a character, with its source, modifier, expiry rule and visibility.</summary>
+    StatusApplied,
+
+    /// <summary>A status effect did its one job and was removed, naming exactly what it did.</summary>
+    StatusConsumed,
+
+    /// <summary>A status effect reached its expiry rule unused and was removed.</summary>
+    StatusExpired,
+
+    /// <summary>A status effect was removed because it could no longer be sustained — its holder or source left the fight.</summary>
+    StatusRemoved,
+
+    /// <summary>
+    /// A guard relationship moved an attack from its intended target onto the guardian. Recorded with both
+    /// targets so it is provable that no second attack roll was made.
+    /// </summary>
+    AttackRedirected,
+
+    /// <summary>
+    /// The deterministic <c>AnswerFacts</c> projection built for one character's question: what the Dungeon
+    /// Master was given to rephrase, and what was deliberately withheld from it.
+    /// </summary>
+    AnswerFactsProjected,
+
+    /// <summary>
+    /// Output a model produced after its turn had already been resolved — a further tool call or trailing
+    /// action text — discarded without reaching the world, the transcript or the knowledge ledger.
+    /// </summary>
+    PostResolutionOutputDiscarded,
 
     /// <summary>A character escaped through an exit and left the encounter. A focused, semantic companion to <see cref="DispositionChanged"/>.</summary>
     CharacterEscaped,

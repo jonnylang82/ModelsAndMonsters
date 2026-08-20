@@ -18,6 +18,22 @@ public sealed record GameState
     /// <summary>Incremented every time the engine accepts and applies an action.</summary>
     public int Version { get; init; }
 
+    /// <summary>
+    /// Every live status effect in the encounter. Statuses live here rather than on a character because a
+    /// linked relationship (Guarding on the guardian, Guarded on the protected ally) spans two characters and
+    /// must never exist on one side only.
+    /// </summary>
+    public ImmutableArray<StatusEffectInstance> Statuses { get; init; } = [];
+
+    /// <summary>
+    /// Every surrender offer ever made in the encounter, pending or resolved. Resolved offers are retained
+    /// rather than removed so a negotiation's whole history is in the authoritative snapshot.
+    /// </summary>
+    public ImmutableArray<SurrenderOffer> SurrenderOffers { get; init; } = [];
+
+    /// <summary>The durable record of each accepted surrender, in the order they were accepted.</summary>
+    public ImmutableArray<SurrenderAgreement> SurrenderAgreements { get; init; } = [];
+
     public Character? FindById(string id) =>
         Characters.FirstOrDefault(c => string.Equals(c.Id, id, StringComparison.OrdinalIgnoreCase));
 
@@ -172,6 +188,78 @@ public sealed record GameState
             _ => new ExitResolution(null, Ambiguous: true)
         };
     }
+
+    // -----------------------------------------------------------------------------------------------
+    // Status effects
+    // -----------------------------------------------------------------------------------------------
+
+    /// <summary>Every live status on a character, in application order.</summary>
+    public IEnumerable<StatusEffectInstance> StatusesOn(string characterId) =>
+        Statuses.Where(s => string.Equals(s.TargetCharacterId, characterId, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>The one live status of a kind on a character, or null. No supported status stacks with itself.</summary>
+    public StatusEffectInstance? StatusOn(string characterId, StatusEffectKind kind) =>
+        StatusesOn(characterId).FirstOrDefault(s => s.Kind == kind);
+
+    /// <summary>Every live status sourced from a character, whoever it is on.</summary>
+    public IEnumerable<StatusEffectInstance> StatusesFrom(string characterId) =>
+        Statuses.Where(s => string.Equals(s.SourceCharacterId, characterId, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Returns a new state with the status added. Callers check for an existing one of the same kind first.</summary>
+    public GameState WithStatus(StatusEffectInstance status) =>
+        this with { Statuses = Statuses.Add(status) };
+
+    /// <summary>Returns a new state with every status whose id appears in <paramref name="statusIds"/> removed.</summary>
+    public GameState WithoutStatuses(IEnumerable<string> statusIds)
+    {
+        var ids = statusIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return ids.Count == 0
+            ? this
+            : this with { Statuses = [.. Statuses.Where(s => !ids.Contains(s.Id))] };
+    }
+
+    // -----------------------------------------------------------------------------------------------
+    // Surrender offers and agreements
+    // -----------------------------------------------------------------------------------------------
+
+    /// <summary>Finds a surrender offer by its stable id, whatever state it is in.</summary>
+    public SurrenderOffer? FindOffer(string offerId) =>
+        string.IsNullOrWhiteSpace(offerId)
+            ? null
+            : SurrenderOffers.FirstOrDefault(o => string.Equals(o.Id, offerId.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Every offer still open for acceptance.</summary>
+    public IEnumerable<SurrenderOffer> PendingOffers() => SurrenderOffers.Where(o => o.IsPending);
+
+    /// <summary>The offerer's one pending offer, or null. Only one pending offer may exist per offerer.</summary>
+    public SurrenderOffer? PendingOfferFrom(string offererId) =>
+        PendingOffers().FirstOrDefault(o => string.Equals(o.OffererId, offererId, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Every pending offer awaiting a decision from this recipient.</summary>
+    public IEnumerable<SurrenderOffer> PendingOffersTo(string recipientId) =>
+        PendingOffers().Where(o => string.Equals(o.RecipientId, recipientId, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Returns a new state with the offer appended.</summary>
+    public GameState WithOffer(SurrenderOffer offer) =>
+        this with { SurrenderOffers = SurrenderOffers.Add(offer) };
+
+    /// <summary>Returns a new state with <paramref name="updated"/> replacing the offer of the same id.</summary>
+    public GameState WithUpdatedOffer(SurrenderOffer updated)
+    {
+        for (var index = 0; index < SurrenderOffers.Length; index++)
+        {
+            if (string.Equals(SurrenderOffers[index].Id, updated.Id, StringComparison.OrdinalIgnoreCase))
+            {
+                return this with { SurrenderOffers = SurrenderOffers.SetItem(index, updated) };
+            }
+        }
+
+        throw new InvalidOperationException($"No surrender offer with id '{updated.Id}' exists in the current state.");
+    }
+
+    /// <summary>Returns a new state with the agreement appended.</summary>
+    public GameState WithAgreement(SurrenderAgreement agreement) =>
+        this with { SurrenderAgreements = SurrenderAgreements.Add(agreement) };
 
     /// <summary>Returns a new state with <paramref name="updated"/> replacing the exit of the same id in the room.</summary>
     public GameState WithExit(EncounterExit updated)

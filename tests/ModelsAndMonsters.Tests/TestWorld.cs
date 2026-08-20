@@ -340,8 +340,14 @@ internal static class TestWorld
     };
 
     /// <summary>The 2v2 state with the cellar stair door present. Elara starts wounded, as in the shipped scenario.</summary>
+    /// <remarks>
+    /// The goblins carry purses because terms of surrender must promise a carried item — the weapon in hand
+    /// is not enough on its own — and this state is what the negotiation tests bargain over.
+    /// </remarks>
     public static GameState TwoVsTwoStateWithExit(bool exitOpen = false) =>
-        StateWithExit(StairDoor(exitOpen), Rowan(), Elara(health: 6), Vark(), Skrit());
+        StateWithExit(StairDoor(exitOpen), Rowan(), Elara(health: 6),
+            Vark() with { Inventory = [Purse("vark")] },
+            Skrit() with { Inventory = [Purse("skrit")] });
 
     /// <summary>An engine over a state that includes the cellar stair door; attacks land for full damage.</summary>
     public static GameEngine EngineWithExit(bool exitOpen = false, IRng? rng = null, params Character[] characters) =>
@@ -364,6 +370,100 @@ internal static class TestWorld
                 DestinationDescription = "Outside the encounter"
             }
         ];
+        return scenario;
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // Abilities, purses and negotiated surrender (v0.7 terms-and-tactics slice).
+    // ------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// One character's purse of gold. Every character in the shipped scenario carries one with its own stable
+    /// id, so a purse is the obvious concrete thing to promise in terms of surrender — and identically named
+    /// purses are exactly why an offer names item ids rather than item names.
+    /// </summary>
+    public static InventoryItem Purse(string ownerSuffix) =>
+        new($"purse-{ownerSuffix}", "Small Purse of Gold Coins", "A small drawstring purse, heavy with gold coins.");
+
+    /// <summary>Grants a character the named abilities with full charges, plus Defend, which everyone has.</summary>
+    public static Character WithAbilities(Character character, params string[] abilityIds)
+    {
+        var abilities = abilityIds
+            .Select(id => AbilityCatalog.Find(id) ?? throw new InvalidOperationException($"No such ability '{id}'."))
+            .Select(CharacterAbility.From)
+            .ToList();
+
+        if (!abilities.Any(a => a.AbilityId == AbilityCatalog.DefendId))
+        {
+            abilities.Add(CharacterAbility.From(AbilityCatalog.Defend));
+        }
+
+        return character with { Abilities = [.. abilities] };
+    }
+
+    /// <summary>Gives a character an exact inventory, replacing whatever they had.</summary>
+    public static Character WithItems(Character character, params InventoryItem[] items) =>
+        character with { Inventory = [.. items] };
+
+    /// <summary>Rowan with Guard Ally and his purse — the guardian of the v0.7 slice.</summary>
+    public static Character RowanV07(int health = 14, int hitChance = 100) =>
+        WithItems(WithAbilities(Rowan(health, hitChance), AbilityCatalog.GuardAllyId), Purse("rowan"));
+
+    /// <summary>Elara with Healing Prayer and her purse, wounded as in the shipped scenario.</summary>
+    public static Character ElaraV07(int health = 6, int hitChance = 100) =>
+        WithItems(WithAbilities(Elara(health, hitChance), AbilityCatalog.HealingPrayerId), Purse("elara"));
+
+    /// <summary>Vark with Rally Grunt, his salve and his purse.</summary>
+    public static Character VarkV07(int health = 12, int hitChance = 100) =>
+        WithItems(WithAbilities(Vark(health, hitChance), AbilityCatalog.RallyGruntId),
+            new InventoryItem("goblin-salve", "Vial of Goblin Salve", "A clay vial of pungent green salve.", 4),
+            Purse("vark"));
+
+    /// <summary>Skrit with Dirty Strike and his purse.</summary>
+    public static Character SkritV07(int health = 8, int hitChance = 100) =>
+        WithItems(WithAbilities(Skrit(health, hitChance), AbilityCatalog.DirtyStrikeId), Purse("skrit"));
+
+    /// <summary>
+    /// The v0.7 2v2 state: four characters with one ability each, a purse each, and the cellar stair door.
+    /// This is the state the negotiated-surrender and ability tests are written against.
+    /// </summary>
+    public static GameState V07State(bool exitOpen = false, params Character[] characters) =>
+        StateWithExit(StairDoor(exitOpen),
+            characters.Length == 0 ? [RowanV07(), ElaraV07(), VarkV07(), SkritV07()] : characters);
+
+    /// <summary>An engine over <see cref="V07State"/>; attacks land for full damage unless a rng/rules pair is given.</summary>
+    public static GameEngine V07Engine(IRng? rng = null, CombatRules? rules = null, params Character[] characters) =>
+        new(V07State(exitOpen: false, characters), rng ?? new SeededRng(1), rules ?? CombatRules.NoGlancing);
+
+    /// <summary>
+    /// The v0.7 scenario definition mirroring the shipped one: one ability per character, a purse each, and
+    /// the cellar stair door. Used where the ledger and manifest must come from real scenario input.
+    /// </summary>
+    public static ScenarioDefinition V07Scenario()
+    {
+        var scenario = TwoVsTwoScenarioWithExit();
+
+        void Configure(string id, string ability, string purseSuffix)
+        {
+            var character = scenario.Characters.First(c => c.Id == id);
+            character.Abilities = [ability];
+            character.Inventory =
+            [
+                new ItemDefinition
+                {
+                    Id = $"purse-{purseSuffix}",
+                    Name = "Small Purse of Gold Coins",
+                    Description = "A small drawstring purse, heavy with gold coins."
+                }
+            ];
+        }
+
+        Configure(RowanId, AbilityCatalog.GuardAllyId, "rowan");
+        Configure(ElaraId, AbilityCatalog.HealingPrayerId, "elara");
+        Configure(VarkId, AbilityCatalog.RallyGruntId, "vark");
+        Configure(SkritId, AbilityCatalog.DirtyStrikeId, "skrit");
+        scenario.Characters.First(c => c.Id == ElaraId).Health = 6;
+
         return scenario;
     }
 

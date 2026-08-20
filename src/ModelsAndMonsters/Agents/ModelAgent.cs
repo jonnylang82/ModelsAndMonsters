@@ -58,13 +58,20 @@ public abstract class ModelAgent
     /// Sends a specific conversation to the model. An agent normally has exactly one, but the Dungeon
     /// Master can run a task on a separate short-lived conversation.
     /// </summary>
+    /// <param name="maxOutputTokens">
+    /// A smaller output budget for this one call, when the task cannot need the agent's configured
+    /// allowance. On Ollama the context window covers input and output together, so an output reserve sized
+    /// for prose is a quarter of the window held back from a task whose whole reply is one tool call. Null
+    /// uses the agent's own configured limit.
+    /// </param>
     protected async Task<ChatResponse> CallModelAsync(
         AgentConversation conversation,
         string purpose,
         IReadOnlyList<AITool>? tools,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int? maxOutputTokens = null)
     {
-        var response = await SendWithTransientRetryAsync(conversation, purpose, tools, cancellationToken)
+        var response = await SendWithTransientRetryAsync(conversation, purpose, tools, maxOutputTokens, cancellationToken)
             .ConfigureAwait(false);
 
         foreach (var message in response.Messages)
@@ -105,11 +112,19 @@ public abstract class ModelAgent
         AgentConversation conversation,
         string purpose,
         IReadOnlyList<AITool>? tools,
+        int? maxOutputTokens,
         CancellationToken cancellationToken)
     {
         for (var attempt = 1; ; attempt++)
         {
             var profile = attempt == 1 ? Profile : WithRetrySampling(Profile, attempt);
+            if (maxOutputTokens is { } cap && (profile.MaxOutputTokens is null || cap < profile.MaxOutputTokens))
+            {
+                // Only ever tightens: a per-task cap is a promise that this reply is small, never a licence
+                // to exceed what the agent was configured to allow.
+                profile = profile with { MaxOutputTokens = cap };
+            }
+
             try
             {
                 var resolved = ChatOptionsFactory.Create(profile, tools);
@@ -191,6 +206,45 @@ public abstract class ModelAgent
     /// </remarks>
     public static bool WasTruncated(ChatResponse response) =>
         response.FinishReason == ChatFinishReason.Length;
+
+    /// <summary>
+    /// True when a truncated reply ran out of <em>context window</em> rather than output budget — the input
+    /// had already filled the window, so there was no room left to answer in. The remedy is the opposite of
+    /// the one a plain output-limit calls for: send less, never reserve more output.
+    /// </summary>
+    /// <summary>
+    /// True when a reply was cut short — by finish reason where the provider reports one, and otherwise by
+    /// its own usage numbers.
+    /// </summary>
+    /// <remarks>
+    /// Not every provider reports a finish reason. An OpenAI-driven run produced 109 responses with
+    /// <see cref="ChatResponse.FinishReason"/> null on every one, which left <see cref="WasTruncated"/>
+    /// permanently false for that provider: a cut-off reply would have been handed to the intent parser as
+    /// though it were complete, and none of the truncation handling would have run. Usage IS reported, and
+    /// it answers the question directly — a reply that spent its whole output budget, or that filled the
+    /// context window, was cut short whatever the provider chose to say about it.
+    /// </remarks>
+    public bool WasReplyCutShort(ChatResponse response)
+    {
+        if (WasTruncated(response))
+        {
+            return true;
+        }
+
+        // Only inferred when the provider declined to say. A reported reason is authoritative, so a normal
+        // stop is never second-guessed just because the reply happened to be long.
+        return response.FinishReason is null
+            && (WasContextExhausted(response)
+                || ContextTruncation.WasOutputBudgetSpent(response.Usage?.OutputTokenCount, Profile.MaxOutputTokens));
+    }
+
+    public bool WasContextExhausted(ChatResponse response) =>
+        (WasTruncated(response) || response.FinishReason is null)
+        && ContextTruncation.WasContextExhausted(
+            response.Usage?.InputTokenCount,
+            response.Usage?.OutputTokenCount,
+            Profile.ContextWindow,
+            Profile.MaxOutputTokens);
 
     /// <summary>Records the application's answer to a tool call in this agent's history.</summary>
     public void AppendToolResult(FunctionCallContent call, object? result) =>

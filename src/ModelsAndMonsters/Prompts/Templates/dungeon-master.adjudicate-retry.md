@@ -1,3 +1,3 @@
 You replied without calling a tool.
 
-You must call exactly one of `attack_character`, `use_item`, `open_container`, `take_item`, `inspect_object` or `reject_action` for {{character}}'s stated intent. Do it now.
+You must call exactly one of the tools you were given for {{character}}'s stated intent — or `reject_action` if none of them fits. Do it now, and reply with nothing but the call.

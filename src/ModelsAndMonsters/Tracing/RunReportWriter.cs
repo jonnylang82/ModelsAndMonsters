@@ -70,6 +70,11 @@ public static class RunReportWriter
         WriteCommunicationAndObjects(report, events);
         WriteNonCombatOutcomes(report, events);
         WriteAlliedAttacks(report, events);
+        WriteSurrenderNegotiation(report, events);
+        WritePersuasionAndIntimidation(report, events);
+        WriteAbilityActivity(report, events, finalState);
+        WriteStatusTimeline(report, events);
+        WriteStateGroundingHealth(report, events);
         WriteInventoryActivity(report, events, finalState);
         WriteRulebookConsultations(report, events);
         WriteContextHealth(report, events, manifest);
@@ -462,7 +467,10 @@ public static class RunReportWriter
 
         report.AppendLine("| Object action | Attempts | Accepted | Rejected |");
         report.AppendLine("| --- | --- | --- | --- |");
-        foreach (var action in new[] { "open_container", "take_item" })
+        // Every object action that occurred gets a row, not just the two the table was first written for:
+        // a run whose only object interaction was inspect_object otherwise showed two zero rows above a
+        // non-zero total, which reads as a reporting bug rather than as "she looked at the crate".
+        foreach (var action in new[] { "open_container", "take_item", "inspect_object" })
         {
             var rows = objectEvents.Where(e => Text(e.Data, "ActionType") == action).ToList();
             var accepted = rows.Count(e => Text(e.Data, "ValidationResult") == "accepted");
@@ -683,6 +691,451 @@ public static class RunReportWriter
     }
 
     // -------------------------------------------------------------------------------------------
+    // Negotiated surrender (v0.7): every offer, what it promised, and how it was answered
+    // -------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// The negotiation record: each offer with its offerer, recipient, exact terms, the speech that carried it,
+    /// how it was answered and how long that took, plus the agreements actually struck and what moved under
+    /// them. Skipped when nobody offered terms, so a run with no negotiation adds no empty section.
+    /// </summary>
+    private static void WriteSurrenderNegotiation(StringBuilder report, IReadOnlyList<TraceRow> events)
+    {
+        var offers = events.Where(e => e.EventType == "SurrenderOfferMade").ToList();
+        var resolutions = events.Where(e => e.EventType == "SurrenderOfferResolved").ToList();
+        var agreements = events.Where(e => e.EventType == "SurrenderAgreementRecorded").ToList();
+        if (offers.Count == 0 && agreements.Count == 0)
+        {
+            return;
+        }
+
+        report.AppendLine("## Surrender negotiation");
+        report.AppendLine();
+        report.AppendLine(
+            "Giving up the fight takes both sides in v0.7: a concrete offer from one, and acceptance from the " +
+            "one named opponent. An offer moves nothing and protects nobody — only the acceptance column below " +
+            "records assets that actually changed hands.");
+        report.AppendLine();
+
+        var resolutionByOffer = resolutions
+            .GroupBy(r => Text(r.Data, "OfferId") ?? "", StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.Last(), StringComparer.Ordinal);
+
+        report.AppendLine("| Offer | Round.Turn | Offerer | Recipient | Terms promised | Result | Turns to answer | Assets moved |");
+        report.AppendLine("| --- | --- | --- | --- | --- | --- | --- | --- |");
+        foreach (var row in offers.OrderBy(r => r.Sequence))
+        {
+            var id = Text(row.Data, "OfferId") ?? "";
+            var resolved = resolutionByOffer.TryGetValue(id, out var r) ? r : null;
+            var result = resolved is null ? "still open" : Text(resolved.Data, "NewState")?.ToLowerInvariant() ?? "";
+            var turns = resolved is null ? "" : Text(resolved.Data, "TurnsToRespond") ?? "";
+            var moved = resolved is not null && IsTrue(resolved.Data, "AssetsTransferred") ? "yes" : "no";
+            report.AppendLine(
+                $"| {id} | {row.Round}.{row.Turn} | {Text(row.Data, "OffererName")} | {Text(row.Data, "RecipientName")} | " +
+                $"{CellText(DescribeOfferTerms(row))} | {result} | {turns} | {moved} |");
+        }
+
+        report.AppendLine();
+
+        // A run may also resolve an offer that was seeded rather than traced as made; list any such orphans.
+        var orphans = resolutions
+            .Where(r => !offers.Any(o => string.Equals(Text(o.Data, "OfferId"), Text(r.Data, "OfferId"), StringComparison.Ordinal)))
+            .ToList();
+        if (orphans.Count > 0)
+        {
+            report.AppendLine("Offers resolved without a recorded creation event (seeded state):");
+            report.AppendLine();
+            foreach (var row in orphans)
+            {
+                report.AppendLine(
+                    $"- {Text(row.Data, "OfferId")}: {Text(row.Data, "OffererName")} → {Text(row.Data, "RecipientName")} — " +
+                    $"{Text(row.Data, "NewState")?.ToLowerInvariant()} ({Text(row.Data, "Cause")}).");
+            }
+
+            report.AppendLine();
+        }
+
+        if (agreements.Count == 0)
+        {
+            report.AppendLine("**No offer was accepted: nothing changed hands through negotiation.**");
+            report.AppendLine();
+            return;
+        }
+
+        report.AppendLine("**Surrender agreements struck**");
+        report.AppendLine();
+        report.AppendLine("| Agreement | Round.Turn | Who yielded | Who accepted | Tribute transferred | Weapon | Disarmed |");
+        report.AppendLine("| --- | --- | --- | --- | --- | --- | --- |");
+        foreach (var row in agreements.OrderBy(r => r.Sequence))
+        {
+            var tribute = JoinArray(row.Data, "TransferredItemNames");
+            var weapon = Text(row.Data, "ForfeitedWeaponName") is { } name
+                ? $"{name} — {Text(row.Data, "WeaponDisposition")}"
+                : Text(row.Data, "WeaponDisposition") ?? "none promised";
+            report.AppendLine(
+                $"| {Text(row.Data, "AgreementId")} | {row.Round}.{row.Turn} | {Text(row.Data, "OffererName")} | " +
+                $"{Text(row.Data, "AcceptedByName")} | {CellText(string.IsNullOrWhiteSpace(tribute) ? "none" : tribute)} | " +
+                $"{CellText(weapon)} | {(IsTrue(row.Data, "OffererDisarmed") ? "yes" : "no")} |");
+        }
+
+        report.AppendLine();
+    }
+
+    /// <summary>
+    /// The persuasion and intimidation record, kept deliberately descriptive.
+    /// </summary>
+    /// <remarks>
+    /// Every offer is listed with the speech that accompanied it, the visible battle state it was made under,
+    /// and whether it was taken up. It does NOT claim the speech caused the acceptance, and reports no
+    /// statistic: a single run cannot separate a persuasive argument from a favourable roll, and pretending
+    /// otherwise would be the most misleading number in the report.
+    /// </remarks>
+    private static void WritePersuasionAndIntimidation(StringBuilder report, IReadOnlyList<TraceRow> events)
+    {
+        var offers = events.Where(e => e.EventType == "SurrenderOfferMade").ToList();
+        if (offers.Count == 0)
+        {
+            return;
+        }
+
+        var accepted = events
+            .Where(e => e.EventType == "SurrenderOfferResolved"
+                        && string.Equals(Text(e.Data, "NewState"), "Accepted", StringComparison.Ordinal))
+            .Select(e => Text(e.Data, "OfferId") ?? "")
+            .ToHashSet(StringComparer.Ordinal);
+
+        report.AppendLine("## Persuasion and intimidation");
+        report.AppendLine();
+        report.AppendLine(
+            "Each offer with the words that carried it and the odds it was made under. This is descriptive " +
+            "only: **nothing here shows that speech caused an acceptance**, and no statistic is drawn from it — " +
+            "one run cannot separate a persuasive argument from a recipient who was going to accept anyway.");
+        report.AppendLine();
+
+        foreach (var row in offers.OrderBy(r => r.Sequence))
+        {
+            var id = Text(row.Data, "OfferId") ?? "";
+            var outcome = accepted.Contains(id) ? "**accepted**" : "not accepted";
+            report.AppendLine($"**{id} — {Text(row.Data, "OffererName")} to {Text(row.Data, "RecipientName")} (round {row.Round}): {outcome}**");
+            report.AppendLine();
+            report.AppendLine($"- Terms promised: {DescribeOfferTerms(row)}");
+            report.AppendLine($"- Assets offered: {(JoinArray(row.Data, "OfferedItemNames") is { Length: > 0 } items ? items : "none beyond the weapon")}");
+            report.AppendLine($"- Visible battle state: {Text(row.Data, "BattleStateSummary")}");
+            var speech = Text(row.Data, "AssociatedSpeech");
+            report.AppendLine(speech is null
+                ? "- Speech: none — the offer was made without a word spoken."
+                : $"- Speech: {Quote(SingleLine(speech))}");
+            report.AppendLine();
+        }
+
+        report.AppendLine(
+            $"Offers made: **{offers.Count}**; accepted: **{offers.Count(o => accepted.Contains(Text(o.Data, "OfferId") ?? ""))}**.");
+        report.AppendLine();
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // Ability activity and the status timeline (v0.7)
+    // -------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Every ability attempt: accepted and refused, its target, what it did, and what charge remains. Refusals
+    /// are listed for the same reason the trace records them — a refused use must be visible as having spent
+    /// nothing. Skipped when no ability was attempted.
+    /// </summary>
+    private static void WriteAbilityActivity(StringBuilder report, IReadOnlyList<TraceRow> events, JsonElement? finalState)
+    {
+        var uses = events.Where(e => e.EventType == "AbilityUsed").ToList();
+        if (uses.Count == 0)
+        {
+            return;
+        }
+
+        report.AppendLine("## Ability activity");
+        report.AppendLine();
+
+        var accepted = uses.Count(u => string.Equals(Text(u.Data, "ValidationResult"), "accepted", StringComparison.Ordinal));
+        var healing = uses.Sum(u => LongField(u.Data, "HealingPerformed"));
+        var redirections = events.Count(e => e.EventType == "AttackRedirected");
+        var rallyConsumed = events.Count(e => e.EventType == "StatusConsumed"
+                                             && string.Equals(Text(e.Data, "Kind"), "Rallied", StringComparison.Ordinal));
+        var offBalanceApplied = events.Count(e => e.EventType == "StatusApplied"
+                                                 && string.Equals(Text(e.Data, "Kind"), "OffBalance", StringComparison.Ordinal));
+        var defendUses = uses.Count(u => string.Equals(Text(u.Data, "AbilityId"), "defend", StringComparison.OrdinalIgnoreCase)
+                                         && string.Equals(Text(u.Data, "ValidationResult"), "accepted", StringComparison.Ordinal));
+        var damagePrevented = events
+            .Where(e => e.EventType == "EngineAction" && IsTrue(e.Data, "Accepted"))
+            .Sum(e => LongField(Property(e.Data, "Outcome") ?? default, "DefendReduction"));
+
+        report.AppendLine($"- Ability uses attempted: **{uses.Count}** — {accepted} accepted, {uses.Count - accepted} refused.");
+        report.AppendLine($"- Healing performed: **{healing}** health restored in total.");
+        report.AppendLine($"- Guard redirections: **{redirections}** blow(s) taken by a guardian in an ally's place.");
+        report.AppendLine($"- Rally modifiers consumed by an attack: **{rallyConsumed}**.");
+        report.AppendLine($"- Dirty Strike / OffBalance applications: **{offBalanceApplied}**.");
+        report.AppendLine($"- Defend uses: **{defendUses}**; damage turned aside by a raised guard: **{damagePrevented}**.");
+        report.AppendLine();
+
+        report.AppendLine("| Round.Turn | Actor | Ability | Target | Result | Outcome | Charges left |");
+        report.AppendLine("| --- | --- | --- | --- | --- | --- | --- |");
+        foreach (var row in uses.OrderBy(r => r.Sequence))
+        {
+            var result = Text(row.Data, "ValidationResult") ?? "";
+            var detail = string.Equals(result, "accepted", StringComparison.Ordinal)
+                ? DescribeAbilityEffect(row)
+                : $"refused: {Text(row.Data, "RejectionReason")} (no charge spent)";
+            var charges = Text(row.Data, "RemainingUsesAfter") ?? "unlimited";
+            report.AppendLine(
+                $"| {row.Round}.{row.Turn} | {Text(row.Data, "ActorName")} | {Text(row.Data, "AbilityName")} | " +
+                $"{Text(row.Data, "TargetName") ?? "—"} | {result} | {CellText(detail)} | {charges} |");
+        }
+
+        report.AppendLine();
+        WriteFinalAbilityCharges(report, finalState);
+    }
+
+    /// <summary>What one accepted ability use actually did, in a table cell.</summary>
+    private static string DescribeAbilityEffect(TraceRow row)
+    {
+        var parts = new List<string>();
+        var healing = LongField(row.Data, "HealingPerformed");
+        if (healing > 0)
+        {
+            parts.Add($"{healing} health restored");
+        }
+
+        var statuses = JoinArray(row.Data, "StatusesApplied");
+        if (!string.IsNullOrWhiteSpace(statuses))
+        {
+            parts.Add($"applied {statuses}");
+        }
+
+        if (IsTrue(row.Data, "RngConsulted"))
+        {
+            parts.Add("used the ordinary attack draws");
+        }
+
+        return parts.Count == 0 ? "resolved" : string.Join("; ", parts);
+    }
+
+    /// <summary>What each character had left of each ability when the run stopped.</summary>
+    private static void WriteFinalAbilityCharges(StringBuilder report, JsonElement? finalState)
+    {
+        if (!TryGet(finalState, out var state, "State")
+            || !TryGet(state, out var characters, "Characters")
+            || characters.ValueKind != JsonValueKind.Array)
+        {
+            return;
+        }
+
+        var rows = new List<string>();
+        foreach (var character in characters.EnumerateArray())
+        {
+            if (Property(character, "Abilities") is not { ValueKind: JsonValueKind.Array } abilities)
+            {
+                continue;
+            }
+
+            foreach (var ability in abilities.EnumerateArray())
+            {
+                var max = Scalar(ability, "MaxUses");
+                var remaining = Scalar(ability, "RemainingUses");
+                var left = string.IsNullOrWhiteSpace(max) ? "unlimited" : $"{remaining} of {max}";
+                rows.Add($"| {Scalar(character, "Name")} | {Scalar(ability, "Name")} | {Scalar(ability, "Category")} | {left} |");
+            }
+        }
+
+        if (rows.Count == 0)
+        {
+            return;
+        }
+
+        report.AppendLine("**Ability charges at the end of the run**");
+        report.AppendLine();
+        report.AppendLine("| Character | Ability | Category | Uses left |");
+        report.AppendLine("| --- | --- | --- | --- |");
+        foreach (var line in rows)
+        {
+            report.AppendLine(line);
+        }
+
+        report.AppendLine();
+    }
+
+    /// <summary>
+    /// The status timeline: every application, consumption, expiry and removal, with its source, target,
+    /// modifier, how long it stood, and — where it changed a roll — which draw it fed. Skipped when no status
+    /// was ever applied.
+    /// </summary>
+    private static void WriteStatusTimeline(StringBuilder report, IReadOnlyList<TraceRow> events)
+    {
+        var statusEvents = events
+            .Where(e => e.EventType is "StatusApplied" or "StatusConsumed" or "StatusExpired" or "StatusRemoved")
+            .OrderBy(e => e.Sequence)
+            .ToList();
+        if (statusEvents.Count == 0)
+        {
+            return;
+        }
+
+        report.AppendLine("## Status timeline");
+        report.AppendLine();
+        report.AppendLine(
+            "Every status effect the engine applied and every way one ended. Duration is measured in global " +
+            "turns from application to the transition; a status consumed on the turn it was applied shows 0.");
+        report.AppendLine();
+
+        // Application turn per status id, so a later transition can report how long it stood.
+        var appliedTurn = statusEvents
+            .Where(e => e.EventType == "StatusApplied")
+            .GroupBy(e => Text(e.Data, "StatusId") ?? "", StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => (int)LongField(g.First().Data, "AppliedTurn"), StringComparer.Ordinal);
+
+        report.AppendLine("| Round.Turn | Status | Transition | Source | Target | Modifier | Turns held | Expiry rule | Affected draw | Cause |");
+        report.AppendLine("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
+        foreach (var row in statusEvents)
+        {
+            var id = Text(row.Data, "StatusId") ?? "";
+            var held = row.EventType == "StatusApplied" || !appliedTurn.TryGetValue(id, out var applied)
+                ? ""
+                : Math.Max(0, row.Turn - applied).ToString(CultureInfo.InvariantCulture);
+            var modifier = LongField(row.Data, "Modifier");
+            report.AppendLine(
+                $"| {row.Round}.{row.Turn} | {Text(row.Data, "Kind")} | {Text(row.Data, "Transition")} | " +
+                $"{Text(row.Data, "SourceCharacterName")} | {Text(row.Data, "TargetCharacterName")} | " +
+                $"{(modifier == 0 ? "—" : modifier.ToString("+#;-#;0", CultureInfo.InvariantCulture))} | {held} | " +
+                $"{Text(row.Data, "ExpiryRule")} | {Text(row.Data, "AffectedRngPurpose") ?? "—"} | " +
+                $"{CellText(Text(row.Data, "Cause"))} |");
+        }
+
+        report.AppendLine();
+
+        var byKind = statusEvents
+            .GroupBy(e => Text(e.Data, "Kind") ?? "")
+            .OrderBy(g => g.Key, StringComparer.Ordinal);
+        report.AppendLine("| Status | Applied | Consumed | Expired unused | Removed |");
+        report.AppendLine("| --- | --- | --- | --- | --- |");
+        foreach (var group in byKind)
+        {
+            report.AppendLine(
+                $"| {group.Key} | {group.Count(e => e.EventType == "StatusApplied")} | " +
+                $"{group.Count(e => e.EventType == "StatusConsumed")} | " +
+                $"{group.Count(e => e.EventType == "StatusExpired")} | " +
+                $"{group.Count(e => e.EventType == "StatusRemoved")} |");
+        }
+
+        report.AppendLine();
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // State-grounding health (v0.7): were answers grounded, and did stale references get through?
+    // -------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// How well the world held its boundaries: how many questions were answered from a bounded projection and
+    /// how much each withheld, how often the harness had to correct a Dungeon Master answer, how many attempts
+    /// the engine or the knowledge gate refused on a stale or unknown reference, and what post-resolution
+    /// output was discarded. Skipped when a run asked no questions and discarded nothing.
+    /// </summary>
+    private static void WriteStateGroundingHealth(StringBuilder report, IReadOnlyList<TraceRow> events)
+    {
+        var projections = events.Where(e => e.EventType == "AnswerFactsProjected").ToList();
+        var questions = events.Where(e => e.EventType == "CharacterQuestion").ToList();
+        var discarded = events.Where(e => e.EventType == "PostResolutionOutputDiscarded").ToList();
+        if (projections.Count == 0 && questions.Count == 0 && discarded.Count == 0)
+        {
+            return;
+        }
+
+        report.AppendLine("## State-grounding health");
+        report.AppendLine();
+        report.AppendLine(
+            "Questions are answered from a deterministic projection of current permitted facts, not from the " +
+            "authoritative state, so the Dungeon Master rephrases rather than decides. This section is the " +
+            "evidence that the boundary held.");
+        report.AppendLine();
+
+        var corrections = events
+            .Where(e => e.EventType == "AdjudicationCorrected"
+                        && string.Equals(Text(e.Data, "Parameter"), "answer", StringComparison.Ordinal))
+            .ToList();
+
+        var staleReferences = events
+            .Where(e => e.EventType == "EngineAction" && !IsTrue(e.Data, "Accepted"))
+            .Select(e => Text(e.Data, "RejectionReason"))
+            .Where(reason => reason is "ItemNotPossessed" or "ItemNotInContainer" or "UnknownTarget"
+                or "UnknownContainer" or "UnknownObject" or "UnknownExit" or "UnknownOffer"
+                or "PromisedAssetNoLongerAvailable" or "OfferedItemNotOwned" or "AbilityNotHeld" or "UnknownAbility")
+            .ToList();
+
+        var knowledgeRefusals = events
+            .Where(e => e.EventType == "InventoryInteraction"
+                        && string.Equals(Text(e.Data, "RejectionReason"), "NoInformationalBasis", StringComparison.Ordinal))
+            .Count();
+
+        var actionLimits = events
+            .Where(e => e.EventType == "HarnessLimitReached"
+                        && Text(e.Data, "Limit") is "MaxActionAttemptsPerTurn" or "MaxModelCallsPerTurn")
+            .ToList();
+
+        report.AppendLine($"- Character questions asked: **{questions.Count}**; answered from a bounded projection: **{projections.Count}**.");
+        if (projections.Count > 0)
+        {
+            report.AppendLine(
+                $"- Facts projected per question: {Average(projections.Sum(p => LongField(p.Data, "ProjectedFactCount")), projections.Count)} on average; " +
+                $"facts deliberately withheld: {Average(projections.Sum(p => LongField(p.Data, "OmittedFactCount")), projections.Count)}.");
+            report.AppendLine(
+                $"- Affordances offered per question: {Average(projections.Sum(p => LongField(p.Data, "AffordanceCount")), projections.Count)} on average " +
+                "(the closed list of what that character could actually attempt).");
+            report.AppendLine(
+                $"- Authoritative state withheld from the answering call: **{projections.Count(p => IsTrue(p.Data, "FullStateWithheld"))} of {projections.Count}**.");
+        }
+
+        report.AppendLine($"- Answers the harness had to rephrase for breaking character or naming the machinery: **{corrections.Count}**.");
+        report.AppendLine($"- Engine refusals on a stale or unknown reference: **{staleReferences.Count}**" +
+                          (staleReferences.Count == 0 ? "." : $" ({string.Join(", ", staleReferences.GroupBy(r => r).Select(g => $"{g.Key} ×{g.Count()}"))})."));
+        report.AppendLine($"- Reaches refused for want of an informational basis (before the engine, before any roll): **{knowledgeRefusals}**.");
+        // The two kinds are counted apart on purpose. A surplus tool call is a model trying to act twice; a
+        // stretch of loose text alongside an accepted call is usually only flavour. Both were discarded, but
+        // folding them into one number would make harmless prose look like a protocol breach.
+        var discardedCalls = discarded.Count(d => string.Equals(Text(d.Data, "DiscardedKind"), "tool-call", StringComparison.Ordinal));
+        report.AppendLine(
+            $"- Post-resolution output discarded: **{discarded.Count}** — {discardedCalls} further tool call(s) that " +
+            $"never reached the world, and {discarded.Count - discardedCalls} stretch(es) of loose text the world never read.");
+        report.AppendLine($"- Turns abandoned on an action or model-call limit: **{actionLimits.Count}**.");
+        report.AppendLine();
+
+        if (discarded.Count > 0)
+        {
+            report.AppendLine("**Discarded output** — produced once the turn was already resolved, and never acted on.");
+            report.AppendLine();
+            report.AppendLine("| Round.Turn | Character | Kind | Already resolved by | Discarded content |");
+            report.AppendLine("| --- | --- | --- | --- | --- |");
+            foreach (var row in discarded.OrderBy(r => r.Sequence))
+            {
+                report.AppendLine(
+                    $"| {row.Round}.{row.Turn} | {Text(row.Data, "CharacterName")} | {Text(row.Data, "DiscardedKind")} | " +
+                    $"{CellText(Text(row.Data, "ResolvedAction"))} | {CellText(Text(row.Data, "DiscardedContent"))} |");
+            }
+
+            report.AppendLine();
+        }
+
+        if (corrections.Count > 0)
+        {
+            report.AppendLine("**Answers corrected in-world**");
+            report.AppendLine();
+            foreach (var row in corrections.OrderBy(r => r.Sequence))
+            {
+                report.AppendLine($"- Round {row.Round}: {Quote(SingleLine(Text(row.Data, "DungeonMasterValue")))} → {Quote(SingleLine(Text(row.Data, "CorrectedValue")))}");
+            }
+
+            report.AppendLine();
+        }
+    }
+
+    private static string SingleLine(string? text) =>
+        (text ?? "").Replace("\r\n", " ").Replace('\n', ' ').Trim();
+
+    // -------------------------------------------------------------------------------------------
     // Inventory activity (v0.6): gives, drops and thefts, the final ownership, and the item journeys
     // -------------------------------------------------------------------------------------------
 
@@ -788,7 +1241,15 @@ public static class RunReportWriter
         report.AppendLine();
     }
 
-    /// <summary>Each item's journey, in order: the movements recorded as provenance events.</summary>
+    /// <summary>
+    /// Each item's journey, in order, with its stable id and the kind of movement that carried it.
+    /// </summary>
+    /// <remarks>
+    /// The stable id column matters more than it looks: every character carries an identically named purse of
+    /// gold, so a name alone cannot tell you whose coin ended up where. The movement column distinguishes an
+    /// ordinary gift from surrender tribute and from weapon forfeiture, which look alike in a name-only view
+    /// and mean very different things.
+    /// </remarks>
     private static void WriteItemProvenanceTimeline(StringBuilder report, IReadOnlyList<TraceRow> provenance)
     {
         if (provenance.Count == 0)
@@ -798,18 +1259,49 @@ public static class RunReportWriter
 
         report.AppendLine("**Item provenance timeline**");
         report.AppendLine();
-        report.AppendLine("| Round.Turn | Item | Movement | From | To | RNG |");
-        report.AppendLine("| --- | --- | --- | --- | --- | --- |");
+        report.AppendLine("| Round.Turn | Item | Stable id | Movement | From | To | RNG |");
+        report.AppendLine("| --- | --- | --- | --- | --- | --- | --- |");
         foreach (var row in provenance.OrderBy(r => r.Sequence))
         {
             var rng = IsTrue(row.Data, "RngInvolved") ? "yes" : "no";
             report.AppendLine(
-                $"| {row.Round}.{row.Turn} | {Text(row.Data, "ItemName")} | {Text(row.Data, "ActionType")} | " +
+                $"| {row.Round}.{row.Turn} | {Text(row.Data, "ItemName")} | `{Text(row.Data, "ItemId")}` | " +
+                $"{DescribeMovement(Text(row.Data, "ActionType"))} | " +
                 $"{Text(row.Data, "PreviousOwnerOrLocation")} | {Text(row.Data, "NewOwnerOrLocation")} | {rng} |");
         }
 
         report.AppendLine();
+
+        var byKind = provenance
+            .GroupBy(r => Text(r.Data, "ActionType") ?? "")
+            .OrderBy(g => g.Key, StringComparer.Ordinal)
+            .ToList();
+        report.AppendLine("| Movement | Count |");
+        report.AppendLine("| --- | --- |");
+        foreach (var group in byKind)
+        {
+            report.AppendLine($"| {DescribeMovement(group.Key)} | {group.Count()} |");
+        }
+
+        report.AppendLine();
     }
+
+    /// <summary>
+    /// The kinds of item movement the provenance history distinguishes. Each is a different fact about the
+    /// world, so none is folded into another: tribute handed over under accepted terms is not a gift, and a
+    /// forfeited weapon is not a dropped item.
+    /// </summary>
+    private static string DescribeMovement(string? actionType) => actionType switch
+    {
+        "give_item" => "given",
+        "drop_item" => "dropped",
+        "steal_item" => "stolen",
+        "take_item" => "taken (container, body or floor)",
+        "surrender_tribute" => "surrender tribute",
+        "weapon_forfeiture" => "weapon forfeiture",
+        null or "" => "(unrecorded)",
+        _ => actionType
+    };
 
     // -------------------------------------------------------------------------------------------
     // Rulebook consultations (v0.6): the bounded resolver stage
@@ -959,12 +1451,23 @@ public static class RunReportWriter
         long total = 0;
         foreach (var message in messages.EnumerateArray())
         {
-            total += (Scalar(message, "Text")).Length;
+            // A traced message carries its concatenated Text AND the Contents blocks that text came from, so
+            // adding both counted every character twice and reported a request roughly double its real size —
+            // which is exactly the wrong direction to be wrong in when the point is judging headroom against a
+            // context window. Prefer the concatenated text, and fall back to the blocks only when there is none
+            // (a tool-call or reasoning-only message).
+            var text = Scalar(message, "Text");
+            if (text.Length > 0)
+            {
+                total += text.Length;
+                continue;
+            }
+
             if (Property(message, "Contents") is { ValueKind: JsonValueKind.Array } contents)
             {
                 foreach (var content in contents.EnumerateArray())
                 {
-                    total += (Scalar(content, "Text")).Length;
+                    total += Scalar(content, "Text").Length;
                 }
             }
         }
@@ -1384,6 +1887,34 @@ public static class RunReportWriter
                 // A departure from active combat, in plain readable terms — never "fallen" for a survivor.
                 "CharacterSurrendered" => $"*— {Text(row.Data, "CharacterName")} surrenders and takes no further part in the fight (still alive)*",
                 "CharacterEscaped" => $"*— {Text(row.Data, "CharacterName")} escapes through the {Text(row.Data, "ExitName")} and leaves the encounter (still alive)*",
+                // Negotiation, abilities and statuses (v0.7). An offer and an accepted surrender read
+                // deliberately differently: only one of them has changed anything.
+                "SurrenderOfferMade" =>
+                    $"*— {Text(row.Data, "OffererName")} offers {Text(row.Data, "RecipientName")} terms to end their " +
+                    $"fight: {DescribeOfferTerms(row)}. Nothing has changed hands; {Text(row.Data, "OffererName")} is " +
+                    $"still armed and still a target, and only {Text(row.Data, "RecipientName")} may accept*",
+                "SurrenderOfferResolved" when Text(row.Data, "NewState") != "Accepted" =>
+                    $"*— {Text(row.Data, "OffererName")}'s offer to {Text(row.Data, "RecipientName")} is " +
+                    $"{Text(row.Data, "NewState")?.ToLowerInvariant()} ({Text(row.Data, "Cause")}); nothing transferred*",
+                "SurrenderAgreementRecorded" =>
+                    $"*— {Text(row.Data, "AcceptedByName")} accepts {Text(row.Data, "OffererName")}'s surrender: " +
+                    $"{DescribeAgreementTerms(row)}*",
+                "AbilityUsed" => TranscribeAbilityUse(row),
+                "AttackRedirected" =>
+                    $"*[{Text(row.Data, "AttackerName")} struck at {Text(row.Data, "IntendedTargetName")}, but " +
+                    $"{Text(row.Data, "AuthoritativeTargetName")} was guarding them and took the blow — " +
+                    $"{Text(row.Data, "RngDrawCount")} draw(s), the ordinary count, with no extra roll]*",
+                "StatusApplied" or "StatusConsumed" or "StatusExpired" or "StatusRemoved" =>
+                    $"*[status {Text(row.Data, "Kind")?.ToLowerInvariant()} " +
+                    $"{Text(row.Data, "Transition")?.ToLowerInvariant()} on {Text(row.Data, "TargetCharacterName")} " +
+                    $"(from {Text(row.Data, "SourceCharacterName")}): {Text(row.Data, "Cause")}]*",
+                // Only a surplus *tool call* earns a line in the story: that is a model trying to act twice,
+                // and a reader should see it happen. Loose text alongside an accepted call is usually the
+                // model thinking aloud, and on a verbose model it appears on nearly every turn — so it stays
+                // in the trace and in the state-grounding table rather than burying the transcript.
+                "PostResolutionOutputDiscarded" when string.Equals(Text(row.Data, "DiscardedKind"), "tool-call", StringComparison.Ordinal) =>
+                    $"*[{Text(row.Data, "CharacterName")}'s turn was already resolved; the further " +
+                    $"`{Text(row.Data, "ToolName")}` was discarded without effect: \"{CellText(Text(row.Data, "DiscardedContent"))}\"]*",
                 "TurnSkipped" => TranscribeTurnSkipped(row),
                 "TeamOutcomeEvaluated" => TranscribeTeamOutcome(row),
                 "ContextWindowSaturated" =>
@@ -1509,6 +2040,59 @@ public static class RunReportWriter
     /// A skipped turn, described by the character's disposition. A surrendered or escaped character must
     /// never be described as "fallen" — only the dead have fallen.
     /// </summary>
+    /// <summary>The exact terms of an offer, for the transcript: the items promised, and the weapon if promised.</summary>
+    private static string DescribeOfferTerms(TraceRow row)
+    {
+        var parts = new List<string>();
+        var items = JoinArray(row.Data, "OfferedItemNames");
+        if (!string.IsNullOrWhiteSpace(items))
+        {
+            parts.Add(items);
+        }
+
+        if (IsTrue(row.Data, "ForfeitWeapon") && Text(row.Data, "WeaponName") is { } weapon)
+        {
+            parts.Add($"their {weapon}");
+        }
+
+        return parts.Count == 0 ? "nothing" : string.Join(" and ", parts);
+    }
+
+    /// <summary>What an accepted surrender actually moved, for the transcript.</summary>
+    private static string DescribeAgreementTerms(TraceRow row)
+    {
+        var items = JoinArray(row.Data, "TransferredItemNames");
+        var tribute = string.IsNullOrWhiteSpace(items) ? "no items changed hands" : $"took {items}";
+        var weapon = Text(row.Data, "ForfeitedWeaponName") is { } forfeited
+            ? $", the {forfeited} forfeited to the floor"
+            : "";
+        var disarmed = IsTrue(row.Data, "OffererDisarmed")
+            ? $", and {Text(row.Data, "OffererName")} is disarmed and out of the fight"
+            : "";
+        return $"{tribute}{weapon}{disarmed}";
+    }
+
+    /// <summary>One ability use in the transcript, accepted or refused, with what it left behind.</summary>
+    private static string TranscribeAbilityUse(TraceRow row)
+    {
+        var actor = Text(row.Data, "ActorName");
+        var ability = Text(row.Data, "AbilityName");
+        var target = Text(row.Data, "TargetName") is { } t && t != actor ? $" on {t}" : "";
+
+        if (!string.Equals(Text(row.Data, "ValidationResult"), "accepted", StringComparison.Ordinal))
+        {
+            return $"*[{actor}'s {ability}{target} was refused ({Text(row.Data, "RejectionReason")}); " +
+                   "no charge spent and the turn is not consumed]*";
+        }
+
+        var healing = LongField(row.Data, "HealingPerformed");
+        var healed = healing > 0 ? $", restoring {healing} health" : "";
+        var statuses = JoinArray(row.Data, "StatusesApplied");
+        var applied = string.IsNullOrWhiteSpace(statuses) ? "" : $", applying {statuses}";
+        var left = Text(row.Data, "RemainingUsesAfter") is { } remaining ? $" ({remaining} use(s) left)" : "";
+        return $"*[{actor} used {ability}{target}{healed}{applied}{left}]*";
+    }
+
     private static string TranscribeTurnSkipped(TraceRow row)
     {
         var name = Text(row.Data, "CharacterName");
@@ -2068,6 +2652,14 @@ public static class RunReportWriter
                 var escaped = string.Equals(disposition, "Escaped", StringComparison.OrdinalIgnoreCase);
                 var location = escaped ? "Outside the encounter" : roomName;
 
+                // A surrendered character has been disarmed by the acceptance, so "none" here is a fact about
+                // the agreement rather than a character who never carried a weapon: say so plainly.
+                var surrendered = string.Equals(disposition, "Surrendered", StringComparison.OrdinalIgnoreCase);
+                if (surrendered && weapon == "none")
+                {
+                    weapon = "none — disarmed on surrender";
+                }
+
                 report.AppendLine(
                     $"| {Scalar(character, "Name")} | {Scalar(character, "Team")} | {health}/{Scalar(character, "MaxHealth")} " +
                     $"| {disposition} | {location} | {weapon} | {NamesOf(character, "Inventory")} " +
@@ -2075,6 +2667,7 @@ public static class RunReportWriter
             }
 
             report.AppendLine();
+            WriteFinalStatusesAndOffers(report, state);
             WriteFinalContainers(report, state);
 
             report.AppendLine("<details><summary>Complete final state</summary>");
@@ -2084,6 +2677,67 @@ public static class RunReportWriter
             report.AppendLine("```");
             report.AppendLine();
             report.AppendLine("</details>");
+            report.AppendLine();
+        }
+    }
+
+    /// <summary>
+    /// The status effects still standing when the run stopped, and the whole surrender-offer ledger — pending,
+    /// settled and accepted. Both are authoritative state, so a reader can check the transcript against them.
+    /// </summary>
+    private static void WriteFinalStatusesAndOffers(StringBuilder report, JsonElement state)
+    {
+        if (Property(state, "Statuses") is { ValueKind: JsonValueKind.Array } statuses && statuses.GetArrayLength() > 0)
+        {
+            report.AppendLine("**Status effects still standing**");
+            report.AppendLine();
+            report.AppendLine("| Status | On | From | Modifier | Expiry rule |");
+            report.AppendLine("| --- | --- | --- | --- | --- |");
+            foreach (var status in statuses.EnumerateArray())
+            {
+                report.AppendLine(
+                    $"| {Scalar(status, "Kind")} | {Scalar(status, "TargetCharacterId")} | {Scalar(status, "SourceCharacterId")} | " +
+                    $"{Scalar(status, "Modifier")} | {Scalar(status, "ExpiryRule")} |");
+            }
+
+            report.AppendLine();
+        }
+
+        if (Property(state, "SurrenderOffers") is { ValueKind: JsonValueKind.Array } offers && offers.GetArrayLength() > 0)
+        {
+            report.AppendLine("**Surrender offers (the complete ledger)**");
+            report.AppendLine();
+            report.AppendLine("| Offer | Offerer | Recipient | Promised items | Weapon promised | State | Cause |");
+            report.AppendLine("| --- | --- | --- | --- | --- | --- | --- |");
+            foreach (var offer in offers.EnumerateArray())
+            {
+                var items = JoinArray(offer, "OfferedItemIds");
+                report.AppendLine(
+                    $"| {Scalar(offer, "Id")} | {Scalar(offer, "OffererId")} | {Scalar(offer, "RecipientId")} | " +
+                    $"{(string.IsNullOrWhiteSpace(items) ? "none" : items)} | " +
+                    $"{(IsTrue(offer, "ForfeitWeapon") ? "yes" : "no")} | {Scalar(offer, "State")} | " +
+                    $"{CellText(Scalar(offer, "ResolutionCause"))} |");
+            }
+
+            report.AppendLine();
+        }
+
+        if (Property(state, "SurrenderAgreements") is { ValueKind: JsonValueKind.Array } agreements && agreements.GetArrayLength() > 0)
+        {
+            report.AppendLine("**Surrender agreements (durable evidence)**");
+            report.AppendLine();
+            report.AppendLine("| Agreement | Offer | Who yielded | Who accepted | Items transferred | Weapon forfeited | Round.Turn |");
+            report.AppendLine("| --- | --- | --- | --- | --- | --- | --- |");
+            foreach (var agreement in agreements.EnumerateArray())
+            {
+                var items = JoinArray(agreement, "TransferredItemIds");
+                report.AppendLine(
+                    $"| {Scalar(agreement, "Id")} | {Scalar(agreement, "OfferId")} | {Scalar(agreement, "OffererId")} | " +
+                    $"{Scalar(agreement, "AcceptedById")} | {(string.IsNullOrWhiteSpace(items) ? "none" : items)} | " +
+                    $"{(string.IsNullOrWhiteSpace(Scalar(agreement, "ForfeitedWeaponId")) ? "none promised" : Scalar(agreement, "ForfeitedWeaponId"))} | " +
+                    $"{Scalar(agreement, "AcceptedRound")}.{Scalar(agreement, "AcceptedTurn")} |");
+            }
+
             report.AppendLine();
         }
     }
