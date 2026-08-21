@@ -732,8 +732,8 @@ public sealed class ModelConfigurationTests
         // Characters: ask_dm, take_action, say, end_turn (4). Dungeon Master: attack_character, use_item,
         // open_container, take_item, inspect_object, open_exit, escape_encounter, offer_surrender,
         // accept_surrender, use_ability, defend, give_item, drop_item, steal_item, intimidate_character,
-        // steady_ally, reject_action (17).
-        Assert.Equal(21, allTools.Count);
+        // steady_ally, take_cover, leave_cover, damage_environmental_object, reject_action (20).
+        Assert.Equal(24, allTools.Count);
     }
 
     [Fact]

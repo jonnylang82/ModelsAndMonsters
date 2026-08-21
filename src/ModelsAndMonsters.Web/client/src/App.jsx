@@ -14,7 +14,10 @@ const LOG_KINDS = new Set([
   'abilityUsed', 'statusChanged', 'attackRedirected', 'defendReduced',
   // v0.8: morale. A point of fear moving, a nerve breaking, a threat and a steadying word are four
   // different things and read as four different lines.
-  'fearChanged', 'intimidation', 'allySteadied'
+  'fearChanged', 'intimidation', 'allySteadied',
+  // v0.9: environmental cover. Taking or leaving cover, cover taking a blow, and a deliberate strike on an
+  // object are three different things — none of them reads like an attack on a person.
+  'coverOccupancyChanged', 'coverDamaged', 'environmentalObjectDamaged'
 ])
 
 export default function App() {
@@ -24,6 +27,7 @@ export default function App() {
   const [objects, setObjects] = useState([])
   const [exits, setExits] = useState([])
   const [ground, setGround] = useState([])
+  const [cover, setCover] = useState([])
   const [pendingOffers, setPendingOffers] = useState([])
   const [settledOffers, setSettledOffers] = useState([])
   const [agreements, setAgreements] = useState([])
@@ -43,6 +47,7 @@ export default function App() {
       setObjects(p.objects || [])
       setExits(p.exits || [])
       setGround(p.ground || [])
+      setCover(p.cover || [])
       setPendingOffers(p.pendingOffers || [])
       setSettledOffers(p.settledOffers || [])
       setAgreements(p.agreements || [])
@@ -56,7 +61,7 @@ export default function App() {
 
   const start = useCallback(async () => {
     esRef.current?.close()
-    setCharacters([]); setObjects([]); setExits([]); setGround([])
+    setCharacters([]); setObjects([]); setExits([]); setGround([]); setCover([])
     setPendingOffers([]); setSettledOffers([]); setAgreements([])
     setTurn(null); setRound(null); setLog([]); setStatus('running')
     const res = await fetch(`${API}/api/runs`, {
@@ -77,7 +82,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="top">
-        <h1>🎲 Models &amp; Monsters 🧌 <span className="version">v0.8</span></h1>
+        <h1>🎲 Models &amp; Monsters 🧌 <span className="version">v0.9</span></h1>
         <div className="controls">
           {round != null && <span className="round">Round {round}</span>}
           <span className={`status ${status}`}>{status}</span>
@@ -91,7 +96,7 @@ export default function App() {
         {characters.map((c) => <CharacterCard key={c.id} c={c} active={c.name === turn} />)}
       </section>
 
-      {(objects.length > 0 || exits.length > 0 || ground.length > 0) && (
+      {(objects.length > 0 || exits.length > 0 || ground.length > 0 || cover.length > 0) && (
         <section className="objects">
           {objects.map((o) => (
             <div key={o.id} className={`obj ${o.isContainer && o.isOpen ? 'open' : ''}`}>
@@ -109,6 +114,15 @@ export default function App() {
             <div key={e.id} className={`obj exit ${e.isOpen ? 'open' : ''}`}>
               <span className="obj-name">🚪 {e.name}</span>
               <span className="obj-state">{e.isOpen ? 'Open' : 'Closed'}</span>
+            </div>
+          ))}
+          {cover.map((c) => (
+            <div key={c.id} className={`obj cover ${c.state.toLowerCase()}`}>
+              <span className="obj-name">🛖 {c.name}</span>
+              <span className="obj-state">
+                {c.state}{c.state !== 'Destroyed' ? ` (${c.currentDurability}/${c.maximumDurability})` : ''}
+                {c.occupant ? ` · behind it: ${c.occupant}` : ' · empty'}
+              </span>
             </div>
           ))}
         </section>
@@ -163,7 +177,8 @@ const STATUS_BADGE = {
   Defending: () => '🪨 guard up (−1 next hit)',
   // Fear itself is shown by the meter below; this badge is the public fact — that everyone in the room
   // can see it — which is a different claim from the number.
-  Scared: () => '😰 scared'
+  Scared: () => '😰 scared',
+  InCover: () => '🛖 in cover'
 }
 
 // Disposition drives how a card reads. Only the dead are "fallen"; a surrendered or escaped character is
@@ -245,7 +260,7 @@ function LogLine({ evt }) {
     case 'refused': return <Line label={`DM → ${p.character}`} cls="refused" text={p.text} />
     case 'privateObservation': return <Line label={`DM → ${p.character} (private)`} cls="private" text={p.text} />
     case 'attack': return (
-      <div className={`line combat ${(p.quality || (p.glancing ? 'Glancing' : 'Solid')).toLowerCase()}`}>
+      <div className={`line combat ${p.intercepted ? 'intercepted' : (p.quality || (p.glancing ? 'Glancing' : 'Solid')).toLowerCase()}`}>
         {attackText(p)}
       </div>
     )
@@ -294,6 +309,21 @@ function LogLine({ evt }) {
     )
     case 'defendReduced': return (
       <div className="line status">🪨 {p.target}’s guard turned aside {p.reduction} damage.</div>
+    )
+    case 'coverOccupancyChanged': {
+      const verb = p.transition === 'entered' ? 'takes cover behind' : p.transition === 'left' ? 'steps out from behind' : 'is exposed from behind'
+      return <div className="line cover">🛖 {p.character} {verb} {p.cover}.</div>
+    }
+    case 'coverDamaged': return (
+      <div className="line cover">
+        🛖 {p.cover} {p.destroyed ? 'is DESTROYED' : `takes damage (${p.durabilityAfter} durability left)`} — {p.cause}.
+      </div>
+    )
+    case 'environmentalObjectDamaged': return (
+      <div className="line cover">
+        🪓 {p.character} strikes {p.objectName} with {p.weapon} — {p.damage} damage.
+        {p.destroyed ? ` ${p.objectName} is DESTROYED.` : ` (${p.durabilityAfter} durability left)`}
+      </div>
     )
     case 'fearChanged': {
       if (p.absorbed) {
@@ -368,9 +398,16 @@ const QUALITY_TEXT = {
 }
 
 function attackText(p) {
-  if (!p.hit) return `${p.attacker} attacks ${p.target} — misses.`
+  if (p.intercepted) {
+    return `${p.attacker} strikes at ${p.target} — turned aside by ${p.coverName}! ${p.target} takes no damage.`
+  }
+  if (!p.hit) {
+    const coverNote = p.coverId ? ` (${p.target} was behind ${p.coverName}, but this was an ordinary miss)` : ''
+    return `${p.attacker} attacks ${p.target} — misses.${coverNote}`
+  }
   const quality = p.quality || (p.glancing ? 'Glancing' : 'Solid')
   const kind = QUALITY_TEXT[quality] || 'a solid hit'
   const dead = p.died ? ` ${p.target} falls.` : ` (${p.target} ${p.targetHealth}/${p.targetMaxHealth})`
-  return `${p.attacker} hits ${p.target} — ${kind}, ${p.damage} damage.${dead}`
+  const bypassed = p.coverId ? ` — found them despite ${p.coverName}` : ''
+  return `${p.attacker} hits ${p.target}${bypassed} — ${kind}, ${p.damage} damage.${dead}`
 }

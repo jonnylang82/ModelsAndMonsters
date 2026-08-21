@@ -28,6 +28,9 @@ public static class DungeonMasterTools
     public const string StealItemName = "steal_item";
     public const string IntimidateCharacterName = "intimidate_character";
     public const string SteadyAllyName = "steady_ally";
+    public const string TakeCoverName = "take_cover";
+    public const string LeaveCoverName = "leave_cover";
+    public const string DamageEnvironmentalObjectName = "damage_environmental_object";
     public const string RejectActionName = "reject_action";
 
     public const string AttackerParameter = "attacker";
@@ -47,6 +50,7 @@ public static class DungeonMasterTools
     public const string ForfeitWeaponParameter = "forfeit_weapon";
     public const string OfferParameter = "offer";
     public const string AbilityParameter = "ability";
+    public const string CoverParameter = "cover";
 
     public const string ImpossibleCategory = "impossible";
     public const string UnsupportedCategory = "unsupported";
@@ -302,6 +306,50 @@ public static class DungeonMasterTools
         """),
         returnJsonSchema: null);
 
+    public static readonly AIFunctionDeclaration TakeCover = AIFunctionFactory.CreateDeclaration(
+        TakeCoverName,
+        "Resolve the ACTING character moving behind one environmental object with the cover capability and taking shelter there — ducking behind something solid rather than standing exposed. Use only when the character is not already behind that same cover and it is not full or destroyed. It costs the whole turn and makes no roll; the character stays there until they leave, are exposed by another action, or the cover is destroyed.",
+        ToolSchema.Parse($$"""
+        {
+          "type": "object",
+          "properties": {
+            "{{ActorParameter}}": { "type": "string", "description": "Name of the character taking cover — always the character whose intent you are adjudicating — exactly as given in the authoritative state." },
+            "{{CoverParameter}}": { "type": "string", "description": "Name of the environmental cover object, exactly as given in the authoritative state." }
+          },
+          "required": ["{{ActorParameter}}", "{{CoverParameter}}"]
+        }
+        """),
+        returnJsonSchema: null);
+
+    public static readonly AIFunctionDeclaration LeaveCover = AIFunctionFactory.CreateDeclaration(
+        LeaveCoverName,
+        "Resolve the ACTING character deliberately stepping out from the cover they occupy, with nothing else attempted. Use only when the character currently occupies cover and chooses to leave it as the whole of their turn — not when they are also striking, reaching for something, or otherwise acting, since an accepted exposing action already vacates cover as part of resolving it without a separate turn.",
+        ToolSchema.Parse($$"""
+        {
+          "type": "object",
+          "properties": {
+            "{{ActorParameter}}": { "type": "string", "description": "Name of the character stepping out — always the character whose intent you are adjudicating — exactly as given in the authoritative state." }
+          },
+          "required": ["{{ActorParameter}}"]
+        }
+        """),
+        returnJsonSchema: null);
+
+    public static readonly AIFunctionDeclaration DamageEnvironmentalObject = AIFunctionFactory.CreateDeclaration(
+        DamageEnvironmentalObjectName,
+        "Resolve the ACTING character deliberately striking one present, non-destroyed environmental object (such as a piece of cover) with the weapon in hand, rather than striking a character. Use only for a deliberate blow AT the object itself, not for an ordinary attack against a covered character (that is attack_character; cover there is applied automatically). No roll is made. Refused against the very cover the acting character currently occupies.",
+        ToolSchema.Parse($$"""
+        {
+          "type": "object",
+          "properties": {
+            "{{ActorParameter}}": { "type": "string", "description": "Name of the character striking the object — always the character whose intent you are adjudicating — exactly as given in the authoritative state." },
+            "{{ObjectParameter}}": { "type": "string", "description": "Name of the environmental object being struck, exactly as given in the authoritative state." }
+          },
+          "required": ["{{ActorParameter}}", "{{ObjectParameter}}"]
+        }
+        """),
+        returnJsonSchema: null);
+
     public static readonly AIFunctionDeclaration RejectAction = AIFunctionFactory.CreateDeclaration(
         RejectActionName,
         "Refuse the stated intent because it cannot happen. A last resort: use it only when NONE of the other actions offered to you fits the primary physical deed the character described. Nothing whatsoever happens in the world when you call this.",
@@ -328,7 +376,7 @@ public static class DungeonMasterTools
     [
         AttackCharacter, UseItem, OpenContainer, TakeItem, InspectObject, OpenExit, EscapeEncounter,
         OfferSurrender, AcceptSurrender, UseAbility, Defend, GiveItem, DropItem, StealItem,
-        IntimidateCharacter, SteadyAlly, RejectAction
+        IntimidateCharacter, SteadyAlly, TakeCover, LeaveCover, DamageEnvironmentalObject, RejectAction
     ];
 
     /// <summary>
@@ -353,6 +401,9 @@ public static class DungeonMasterTools
             [DropItemName] = DropItem,
             [StealItemName] = StealItem,
             [IntimidateCharacterName] = IntimidateCharacter,
-            [SteadyAllyName] = SteadyAlly
+            [SteadyAllyName] = SteadyAlly,
+            [TakeCoverName] = TakeCover,
+            [LeaveCoverName] = LeaveCover,
+            [DamageEnvironmentalObjectName] = DamageEnvironmentalObject
         };
 }

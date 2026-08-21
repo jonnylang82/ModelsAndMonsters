@@ -107,6 +107,38 @@ public sealed record AttackOutcome : ActionOutcome
     public int DefendReduction { get; init; }
 
     /// <summary>
+    /// The environmental cover the target was sheltering behind when this attack was resolved, when there was
+    /// one (v0.9). Null for an attack against an uncovered target — every field below it is meaningless then.
+    /// </summary>
+    public string? CoverId { get; init; }
+
+    public string? CoverName { get; init; }
+
+    /// <summary>
+    /// The attacker's effective hit chance before cover — every existing modifier applied, none of them
+    /// cover's. Equal to <see cref="HitChance"/> when <see cref="CoverId"/> is null.
+    /// </summary>
+    public int? PreCoverHitChance { get; init; }
+
+    /// <summary>The cover's own hit-chance modifier folded in to reach <see cref="HitChance"/>. Negative.</summary>
+    public int? CoverHitChanceModifier { get; init; }
+
+    /// <summary>
+    /// True when the raw roll would have hit without cover but did not beat the covered chance: the blow was
+    /// turned aside by the cover rather than missing outright. <see cref="Hit"/> is false in this case, and no
+    /// quality draw was made.
+    /// </summary>
+    public bool InterceptedByCover { get; init; }
+
+    /// <summary>The cover's durability either side of this attack. Unchanged unless <see cref="InterceptedByCover"/>.</summary>
+    public int? CoverDurabilityBefore { get; init; }
+
+    public int? CoverDurabilityAfter { get; init; }
+
+    /// <summary>True when this interception reduced the cover's durability to zero, exposing its occupant.</summary>
+    public bool CoverDestroyed { get; init; }
+
+    /// <summary>
     /// The fear this resolved attack moved, by character - the surviving target frightened by a critical or
     /// heavy blow, and the attacker steadied by landing a critical one. Empty when morale did not move.
     /// Carried on the outcome so the narration facts and the report read from the record the engine made.
@@ -129,11 +161,26 @@ public sealed record AttackOutcome : ActionOutcome
                 : $"an effective hit chance of {HitChance} (base {BaseHitChance}, " +
                   $"{string.Join(", ", HitModifiers.Select(m => m.Note))})";
 
+            if (InterceptedByCover)
+            {
+                var destroyedNote = CoverDestroyed
+                    ? $" The blow finally broke it — {CoverName} is now DESTROYED, and {TargetName} is exposed."
+                    : $" {CoverName} is now damaged ({CoverDurabilityAfter} durability left).";
+                return $"{AttackerName} struck at {TargetName}{via} with {WeaponName} — the blow would have landed " +
+                       $"(rolled {HitRoll} against a pre-cover chance of {PreCoverHitChance}), but {CoverName} turned it " +
+                       $"aside (covered chance {HitChance}). {TargetName} takes NO damage and remains behind {CoverName}." +
+                       $"{destroyedNote}{redirect}";
+            }
+
             if (!Hit)
             {
+                var coverNote = CoverId is not null
+                    ? $" {TargetName} was sheltering behind {CoverName}, but this was an ordinary miss — the roll " +
+                      $"never reached even the pre-cover chance of {PreCoverHitChance}, so the cover changed nothing."
+                    : "";
                 return $"{AttackerName} attacked {TargetName}{via} with {WeaponName} but MISSED " +
                        $"(rolled {HitRoll} against {chance}). No damage. " +
-                       $"{TargetName} is unharmed with {TargetHealthAfter}/{TargetMaxHealth} health.{redirect}";
+                       $"{TargetName} is unharmed with {TargetHealthAfter}/{TargetMaxHealth} health.{coverNote}{redirect}";
             }
 
             var quality = Quality switch
@@ -161,10 +208,13 @@ public sealed record AttackOutcome : ActionOutcome
                 ? $" As {TargetName} falls, what they carried — {string.Join(", ", DroppedItems)} — spills from " +
                   $"their body and can be taken from {CorpseContainerName}."
                 : "";
+            var coverBypassed = CoverId is not null
+                ? $" The blow found {TargetName} despite {CoverName} (covered chance {HitChance})."
+                : "";
             return $"{AttackerName} hit {TargetName}{via} with {WeaponName} — {quality} (rolled {HitRoll} against {chance}). " +
                    $"Weapon damage {WeaponDamage} minus armour {TargetArmour} = {BaseDamage}, " +
                    $"{DamageDealt} damage dealt. " +
-                   $"{TargetName} health {TargetHealthBefore} -> {TargetHealthAfter}. {status}{defended}{applied}{injury}{morale}{loot}{redirect}";
+                   $"{TargetName} health {TargetHealthBefore} -> {TargetHealthAfter}. {status}{defended}{applied}{injury}{morale}{loot}{coverBypassed}{redirect}";
         }
     }
 }
@@ -679,6 +729,87 @@ public sealed record SteadyAllyOutcome : ActionOutcome
             return $"{ActorName} spent the whole turn steadying {TargetName}, who takes heart and is less " +
                    $"afraid than they were.{recovered} No dice were rolled. Nothing else changed: no damage, " +
                    $"no items, no odds altered, and {TargetName} still chooses their own actions.";
+        }
+    }
+}
+
+/// <summary>
+/// The result of an accepted <c>take_cover</c> (v0.9). Public: everyone present sees the character take
+/// shelter. No randomness. Occupancy is now authoritative and exclusive, and the public <c>InCover</c> status
+/// is applied.
+/// </summary>
+public sealed record TakeCoverOutcome : ActionOutcome
+{
+    public required string ActorId { get; init; }
+    public required string ActorName { get; init; }
+    public required string CoverId { get; init; }
+    public required string CoverName { get; init; }
+
+    public override string OutcomeType => "take_cover";
+
+    public override string Summary =>
+        $"{ActorName} moved behind {CoverName} and took shelter there. It offers real protection while " +
+        $"{ActorName} stays behind it and attempts nothing that would expose them.";
+}
+
+/// <summary>
+/// The result of an accepted <c>leave_cover</c> (v0.9). Public: everyone present sees the character step out.
+/// No randomness. The occupancy relationship and the <c>InCover</c> status both end.
+/// </summary>
+public sealed record LeaveCoverOutcome : ActionOutcome
+{
+    public required string ActorId { get; init; }
+    public required string ActorName { get; init; }
+    public required string CoverId { get; init; }
+    public required string CoverName { get; init; }
+
+    public override string OutcomeType => "leave_cover";
+
+    public override string Summary =>
+        $"{ActorName} deliberately stepped out from behind {CoverName}, giving up its protection. " +
+        $"{ActorName} is now fully exposed.";
+}
+
+/// <summary>
+/// The result of an accepted <c>damage_environmental_object</c> (v0.9). Public: everyone present sees the
+/// blow land on the object. No hit or quality roll — a stationary object does not dodge — so the damage is
+/// the deterministic <c>max(1, weapon damage - object armour)</c>. When this reduces durability to zero the
+/// object is destroyed and, if anyone was sheltering there, they are exposed as part of the same event.
+/// </summary>
+public sealed record DamageEnvironmentalObjectOutcome : ActionOutcome
+{
+    public required string ActorId { get; init; }
+    public required string ActorName { get; init; }
+    public required string WeaponName { get; init; }
+    public required int WeaponDamage { get; init; }
+    public required string ObjectId { get; init; }
+    public required string ObjectName { get; init; }
+    public required int ObjectArmour { get; init; }
+    public required int DamageApplied { get; init; }
+    public required int DurabilityBefore { get; init; }
+    public required int DurabilityAfter { get; init; }
+    public required bool Destroyed { get; init; }
+
+    /// <summary>True when this same action also broke the actor's own cover, before the blow was struck.</summary>
+    public required bool SelfCoverBroken { get; init; }
+
+    /// <summary>The name of whoever was sheltering here when it was destroyed, when it was destroyed occupied.</summary>
+    public string? ExposedOccupantName { get; init; }
+
+    public override string OutcomeType => "damage_environmental_object";
+
+    public override string Summary
+    {
+        get
+        {
+            var selfExposed = SelfCoverBroken ? $" {ActorName} stepped out from their own cover to swing." : "";
+            var exposed = Destroyed && ExposedOccupantName is not null
+                ? $" {ExposedOccupantName}, who was sheltering there, is now exposed."
+                : "";
+            var state = Destroyed ? "DESTROYED — reduced to wreckage" : $"damaged ({DurabilityAfter} durability left)";
+            return $"{ActorName} struck {ObjectName} with {WeaponName} (damage {WeaponDamage} minus object armour " +
+                   $"{ObjectArmour} = {DamageApplied}, no roll — a stationary object does not dodge). " +
+                   $"{ObjectName} is now {state}.{exposed}{selfExposed}";
         }
     }
 }

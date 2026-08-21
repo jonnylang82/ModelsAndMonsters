@@ -88,6 +88,18 @@ public sealed record UiEvent(string Type, object? Payload)
     public static UiEvent Completed(
         string terminalCondition, string? outcome, IReadOnlyList<string> winningTeams, IReadOnlyList<string> survivors) =>
         new("completed", new { terminalCondition, outcome, winningTeams, survivors });
+
+    // Environmental cover (v0.9). Occupancy changes, deliberate object damage, and cover taking a blow each
+    // read distinctly, the same discipline applied to every other v0.7/v0.8 addition above.
+    public static UiEvent CoverOccupancyChanged(string character, string cover, string transition) =>
+        new("coverOccupancyChanged", new { character, cover, transition });
+
+    public static UiEvent CoverDamaged(string cover, int durabilityBefore, int durabilityAfter, bool destroyed, string cause) =>
+        new("coverDamaged", new { cover, durabilityBefore, durabilityAfter, destroyed, cause });
+
+    public static UiEvent EnvironmentalObjectDamaged(
+        string character, string objectName, string weapon, int damage, int durabilityBefore, int durabilityAfter, bool destroyed) =>
+        new("environmentalObjectDamaged", new { character, objectName, weapon, damage, durabilityBefore, durabilityAfter, destroyed });
 }
 
 /// <summary>An ability on a character card: its name and what is left of it.</summary>
@@ -167,6 +179,21 @@ public sealed record ObjectDto(string Id, string Name, bool IsContainer, bool Is
 public sealed record ExitDto(string Id, string Name, bool IsOpen);
 
 /// <summary>
+/// An environmental cover object as the room-state panel renders it (v0.9). Every field here is public —
+/// unlike a container's contents, nothing about cover is hidden from anyone in the room.
+/// </summary>
+public sealed record CoverDto(
+    string Id,
+    string Name,
+    string State,
+    int Capacity,
+    string? Occupant,
+    int MaximumDurability,
+    int CurrentDurability,
+    int HitChanceModifier,
+    int Armour);
+
+/// <summary>
 /// A snapshot of every character, room object, exit and ground item, sent whenever the authoritative state
 /// advances. Ground items (things dropped on the floor) are surfaced separately from ordinary containers,
 /// because — unlike a container's private contents — they lie in plain sight of everyone in the room.
@@ -179,7 +206,8 @@ public sealed record StateDto(
     IReadOnlyList<string> Ground,
     IReadOnlyList<SurrenderOfferDto> PendingOffers,
     IReadOnlyList<SurrenderOfferDto> SettledOffers,
-    IReadOnlyList<SurrenderAgreementDto> Agreements)
+    IReadOnlyList<SurrenderAgreementDto> Agreements,
+    IReadOnlyList<CoverDto> Cover)
 {
     public static StateDto From(GameState state) => new(
         state.Version,
@@ -198,13 +226,17 @@ public sealed record StateDto(
             c.IsScared,
             c.IsOutnumbered))],
         // The floor is surfaced separately as Ground, so exclude it from the ordinary object list.
-        [.. state.Room.Objects.Where(o => o is not Container { IsGround: true }).Select(o => new ObjectDto(
+        [.. state.Room.Objects.Where(o => o is not Container { IsGround: true } and not CoverObject).Select(o => new ObjectDto(
             o.Id, o.Name, o is Container, o is Container { IsOpen: true }))],
         [.. state.Room.Exits.Select(e => new ExitDto(e.Id, e.Name, e.IsOpen))],
         [.. state.Room.Objects.OfType<Container>().Where(c => c.IsGround).SelectMany(c => c.Contents).Select(i => i.DisplayName)],
         [.. state.PendingOffers().Select(o => ToOfferDto(state, o))],
         [.. state.SurrenderOffers.Where(o => !o.IsPending).Select(o => ToOfferDto(state, o))],
-        [.. state.SurrenderAgreements.Select(a => ToAgreementDto(state, a))]);
+        [.. state.SurrenderAgreements.Select(a => ToAgreementDto(state, a))],
+        [.. state.Room.Objects.OfType<CoverObject>().Select(c => new CoverDto(
+            c.Id, c.Name, c.State.ToString(), c.Capacity,
+            c.CurrentOccupantId is null ? null : NameOf(state, c.CurrentOccupantId),
+            c.MaximumDurability, c.CurrentDurability, c.HitChanceModifier, c.Armour))]);
 
     private static StatusDto ToStatusDto(GameState state, StatusEffectInstance status)
     {
@@ -306,4 +338,9 @@ public sealed record AttackDto(
     int TargetMaxHealth,
     bool Died,
     string Quality = "Solid",
-    bool Critical = false);
+    bool Critical = false,
+    // Environmental cover (v0.9). CoverId is null for an ordinary attack against an uncovered target;
+    // Intercepted is true only when the cover — not the roll alone — is what saved the target.
+    string? CoverId = null,
+    string? CoverName = null,
+    bool Intercepted = false);

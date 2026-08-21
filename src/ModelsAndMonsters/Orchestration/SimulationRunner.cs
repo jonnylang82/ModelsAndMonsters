@@ -43,6 +43,12 @@ public sealed record SimulationSummary
 /// </remarks>
 public sealed class SimulationRunner
 {
+    /// <summary>
+    /// The intent parser's sampling temperature. Above zero on purpose — see where it is applied — and
+    /// below the first transient-retry floor (0.4), so a retry still genuinely moves the draw rather than
+    /// re-sending the same one at the same temperature with only a new seed.
+    /// </summary>
+    public const float IntentParserTemperature = 0.3f;
     private readonly SimulationOptions _options;
     private readonly ScenarioDefinition _scenario;
     private readonly IChatClientFactory _chatClientFactory;
@@ -125,13 +131,21 @@ public sealed class SimulationRunner
             c => ResolveCharacterProfile(c, defaults, masterSeed, enforceWindow),
             StringComparer.OrdinalIgnoreCase);
 
-        // The intent parser reuses the Dungeon Master's model but reads at temperature zero for a stable,
-        // reproducible parse, with reasoning off and a small output budget — it only ever emits a few tool
-        // calls. It is context-free, so the window is ample; a derived seed keeps the whole run replayable.
+        // The intent parser reuses the Dungeon Master's model, with reasoning off and a small output budget
+        // — it only ever emits a few tool calls. It is context-free, so the window is ample; a derived seed
+        // keeps the whole run replayable.
+        //
+        // It reads at a LOW temperature rather than a greedy zero, which is a deliberate change from v0.7.
+        // Greedy decoding on qwen3.5 is fragile in a way this project measured: a run died at round 5 when
+        // the parser 500'd three times on the same malformed tool-call XML, because a temperature-0 draw
+        // reproduces itself and the old retry floor of 0.1 was not far enough off greedy to escape. In the
+        // same trace a character sampling at 0.8 took two 500s and shook them off. Qwen's own published
+        // sampling guidance never recommends below 0.6 for any task or mode; zero was our number, not
+        // theirs, and it bought a determinism a fixed seed already provides.
         var intentParserProfile = dungeonMasterProfile with
         {
             AgentName = IntentParser.AgentIdentifier,
-            Temperature = 0f,
+            Temperature = IntentParserTemperature,
             Effort = ReasoningEffort.None,
             Thinking = false,
             MaxOutputTokens = 500,

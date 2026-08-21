@@ -1043,7 +1043,8 @@ public sealed class TurnCoordinator
                 or DungeonMasterTools.DefendName
                 or DungeonMasterTools.GiveItemName or DungeonMasterTools.DropItemName
                 or DungeonMasterTools.StealItemName or DungeonMasterTools.IntimidateCharacterName
-                or DungeonMasterTools.SteadyAllyName =>
+                or DungeonMasterTools.SteadyAllyName or DungeonMasterTools.TakeCoverName
+                or DungeonMasterTools.LeaveCoverName or DungeonMasterTools.DamageEnvironmentalObjectName =>
                 await HandleEngineActionAsync(character, intent, primary, cancellationToken).ConfigureAwait(false),
             _ => HandleUnknownDungeonMasterTool(character, intent, primary)
         };
@@ -1353,6 +1354,12 @@ public sealed class TurnCoordinator
         // draw count, so it is provable that a guard added no roll of its own.
         EmitAttackRedirection(engineResult);
 
+        // Cover-specific companion rows (v0.9): take/leave attempts, deliberate object damage, and any attack
+        // whose target was sheltering — accepted or rejected alike, so a refusal is provable too.
+        EmitCoverInteraction(character, action, engineResult);
+        EmitEnvironmentalObjectDamaged(character, action, engineResult);
+        EmitCoverAttackInteraction(engineResult);
+
         var resultForDungeonMaster = engineResult.Accepted
             ? engineResult.Outcome!.Summary
             : $"REJECTED BY THE WORLD: {engineResult.RejectionMessage}";
@@ -1369,7 +1376,8 @@ public sealed class TurnCoordinator
             var explanation = InWorldRefusal.Render(
                 engineResult.RejectionReason!.Value,
                 character.Name,
-                InWorldRefusal.SubjectFor(action, engineResult.RejectionReason!.Value, engineResult.StateBefore));
+                InWorldRefusal.SubjectFor(action, engineResult.RejectionReason!.Value, engineResult.StateBefore),
+                InWorldRefusal.PossessorFor(action, engineResult.RejectionReason!.Value, engineResult.StateBefore));
 
             EmitAdjudication(character, intent, ActionResolutionCategory.EngineRejected, explanation, action, null);
             _console.CharacterRefused(character.Name, explanation);
@@ -1405,6 +1413,10 @@ public sealed class TurnCoordinator
             StealItemOutcome steal => await DeliverStealAsync(character, steal, cancellationToken).ConfigureAwait(false),
             IntimidateOutcome intimidate => await DeliverIntimidationAsync(character, intimidate, engineResult, cancellationToken).ConfigureAwait(false),
             SteadyAllyOutcome steady => await DeliverSteadyAsync(character, steady, engineResult, cancellationToken).ConfigureAwait(false),
+            TakeCoverOutcome takeCover => await DeliverTakeCoverAsync(character, takeCover, cancellationToken).ConfigureAwait(false),
+            LeaveCoverOutcome leaveCover => await DeliverLeaveCoverAsync(character, leaveCover, cancellationToken).ConfigureAwait(false),
+            DamageEnvironmentalObjectOutcome damageObject =>
+                await DeliverDamageEnvironmentalObjectAsync(character, damageObject, cancellationToken).ConfigureAwait(false),
             _ => await DeliverCombatOutcomeAsync(character, engineResult, cancellationToken).ConfigureAwait(false)
         };
 
@@ -1451,7 +1463,33 @@ public sealed class TurnCoordinator
                 engineResult, exitId: null, LivingRecipients());
         }
 
-        RecordPublicNarration("action-outcome", stateAfterText, engineResult.Outcome!.Summary, narration, character);
+        var factIds = new List<string>();
+
+        // An attack against a covered target: its own companion trace row is emitted uniformly alongside every
+        // other per-action row in HandleEngineActionAsync; here, when the cover took damage or was destroyed,
+        // a public knowledge fact is minted and delivered — everyone present sees it happen (v0.9).
+        if (engineResult.Outcome is AttackOutcome { CoverId: not null } covered)
+        {
+            if (covered.InterceptedByCover)
+            {
+                var recipients = LivingRecipients();
+                var worldVersion = _engine.State.Version;
+                var cause = $"a blow from {covered.AttackerName} aimed at {covered.TargetName}";
+                var fact = _knowledge.GetOrAddEnvironmentalObjectDamagedFact(
+                    covered.CoverId!, covered.CoverName!, cause, covered.CoverDestroyed, worldVersion);
+                TraceFactCreatedIfNew(fact, KnowledgeSource.PublicEvent, "attack_character", character.Name);
+                DeliverPublicFact(fact.Fact, recipients, worldVersion, "attack_character");
+                factIds.Add(fact.Fact.Id);
+
+                if (covered.CoverDestroyed)
+                {
+                    EmitEnvironmentalObjectDestroyed(covered.CoverId!, covered.CoverName!, "cover-interception",
+                        covered.AttackerId, covered.AttackerName, covered.TargetId, covered.TargetName, recipients);
+                }
+            }
+        }
+
+        RecordPublicNarration("action-outcome", stateAfterText, engineResult.Outcome!.Summary, narration, character, factIds);
         _console.DungeonMaster(narration);
         return narration;
     }
@@ -1479,6 +1517,97 @@ public sealed class TurnCoordinator
         DeliverPublicFact(fact.Fact, recipients, worldVersion, "open_exit");
 
         RecordPublicNarration("exit-opened", stateAfterText, outcome.Summary, narration, character, [fact.Fact.Id]);
+        _console.DungeonMaster(narration);
+        return narration;
+    }
+
+    /// <summary>
+    /// A character took cover behind an environmental object (v0.9). Public: everyone present sees them move
+    /// behind it, so every present character learns it as a public fact and the whole room hears the narration.
+    /// </summary>
+    private async Task<string> DeliverTakeCoverAsync(CharacterAgent character, TakeCoverOutcome outcome, CancellationToken cancellationToken)
+    {
+        var stateAfterText = WorldStateFormatter.FormatAuthoritativeState(_engine.State);
+        var narration = await _dungeonMaster
+            .NarratePublicEventAsync(character.Name, outcome.Summary, stateAfterText, cancellationToken)
+            .ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(narration))
+        {
+            narration = outcome.Summary;
+        }
+
+        var worldVersion = _engine.State.Version;
+        var recipients = LivingRecipients();
+        var fact = _knowledge.GetOrAddCoverOccupancyFact(
+            outcome.ActorId, outcome.ActorName, outcome.CoverId, outcome.CoverName, "entered", worldVersion);
+        TraceFactCreatedIfNew(fact, KnowledgeSource.PublicEvent, "take_cover", character.Name);
+        DeliverPublicFact(fact.Fact, recipients, worldVersion, "take_cover");
+
+        RecordPublicNarration("cover-taken", stateAfterText, outcome.Summary, narration, character, [fact.Fact.Id]);
+        _console.DungeonMaster(narration);
+        return narration;
+    }
+
+    /// <summary>
+    /// A character deliberately stepped out of cover (v0.9). Public: everyone present sees them expose
+    /// themselves, so every present character learns it as a public fact.
+    /// </summary>
+    private async Task<string> DeliverLeaveCoverAsync(CharacterAgent character, LeaveCoverOutcome outcome, CancellationToken cancellationToken)
+    {
+        var stateAfterText = WorldStateFormatter.FormatAuthoritativeState(_engine.State);
+        var narration = await _dungeonMaster
+            .NarratePublicEventAsync(character.Name, outcome.Summary, stateAfterText, cancellationToken)
+            .ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(narration))
+        {
+            narration = outcome.Summary;
+        }
+
+        var worldVersion = _engine.State.Version;
+        var recipients = LivingRecipients();
+        var fact = _knowledge.GetOrAddCoverOccupancyFact(
+            outcome.ActorId, outcome.ActorName, outcome.CoverId, outcome.CoverName, "left", worldVersion);
+        TraceFactCreatedIfNew(fact, KnowledgeSource.PublicEvent, "leave_cover", character.Name);
+        DeliverPublicFact(fact.Fact, recipients, worldVersion, "leave_cover");
+
+        RecordPublicNarration("cover-left", stateAfterText, outcome.Summary, narration, character, [fact.Fact.Id]);
+        _console.DungeonMaster(narration);
+        return narration;
+    }
+
+    /// <summary>
+    /// A character deliberately struck an environmental object (v0.9). Public: everyone present sees the blow
+    /// land, so every present character learns of the damage as a public fact. When it destroys the object and
+    /// exposes an occupant, that occupant's cover ends here too — a change independent of the striking
+    /// character's own turn, so it needs its own delivery rather than riding on the occupant's next turn.
+    /// </summary>
+    private async Task<string> DeliverDamageEnvironmentalObjectAsync(
+        CharacterAgent character, DamageEnvironmentalObjectOutcome outcome, CancellationToken cancellationToken)
+    {
+        var stateAfterText = WorldStateFormatter.FormatAuthoritativeState(_engine.State);
+        var narration = await _dungeonMaster
+            .NarratePublicEventAsync(character.Name, outcome.Summary, stateAfterText, cancellationToken)
+            .ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(narration))
+        {
+            narration = outcome.Summary;
+        }
+
+        var worldVersion = _engine.State.Version;
+        var recipients = LivingRecipients();
+        var cause = $"a deliberate blow from {outcome.ActorName}";
+        var fact = _knowledge.GetOrAddEnvironmentalObjectDamagedFact(
+            outcome.ObjectId, outcome.ObjectName, cause, outcome.Destroyed, worldVersion);
+        TraceFactCreatedIfNew(fact, KnowledgeSource.PublicEvent, "damage_environmental_object", character.Name);
+        DeliverPublicFact(fact.Fact, recipients, worldVersion, "damage_environmental_object");
+
+        if (outcome.Destroyed)
+        {
+            EmitEnvironmentalObjectDestroyed(outcome.ObjectId, outcome.ObjectName, "deliberate-damage",
+                outcome.ActorId, outcome.ActorName, exposedOccupantId: null, outcome.ExposedOccupantName, recipients);
+        }
+
+        RecordPublicNarration("object-damaged", stateAfterText, outcome.Summary, narration, character, [fact.Fact.Id]);
         _console.DungeonMaster(narration);
         return narration;
     }
@@ -2353,6 +2482,20 @@ public sealed class TurnCoordinator
                     ResolveActingCharacter(call, DungeonMasterTools.ThiefParameter, character),
                     ToolArguments.GetRequiredString(call, DungeonMasterTools.TargetParameter),
                     ToolArguments.GetRequiredString(call, DungeonMasterTools.ItemParameter));
+
+            case DungeonMasterTools.TakeCoverName:
+                return new TakeCoverAction(
+                    ResolveActingCharacter(call, DungeonMasterTools.ActorParameter, character),
+                    ToolArguments.GetRequiredString(call, DungeonMasterTools.CoverParameter));
+
+            case DungeonMasterTools.LeaveCoverName:
+                return new LeaveCoverAction(
+                    ResolveActingCharacter(call, DungeonMasterTools.ActorParameter, character));
+
+            case DungeonMasterTools.DamageEnvironmentalObjectName:
+                return new DamageEnvironmentalObjectAction(
+                    ResolveActingCharacter(call, DungeonMasterTools.ActorParameter, character),
+                    ToolArguments.GetRequiredString(call, DungeonMasterTools.ObjectParameter));
 
             default:
                 throw new ArgumentException($"No engine action is mapped to tool '{call.Name}'.");
@@ -3477,15 +3620,171 @@ public sealed class TurnCoordinator
     }
 
     /// <summary>
+    /// Records an attack whose target was sheltering behind environmental cover (v0.9), whatever the result —
+    /// a companion to the attack's own <c>attack.hit-check</c> draw and <c>EngineAction</c> row, so a direct
+    /// hit despite cover, a cover interception, and an ordinary miss with cover present are each provable from
+    /// the trace alone rather than inferred from the narration.
+    /// </summary>
+    private void EmitCoverAttackInteraction(EngineResult engineResult)
+    {
+        if (engineResult.Outcome is not AttackOutcome { CoverId: not null } attack)
+        {
+            return;
+        }
+
+        var classification = attack.Hit ? "DirectHit" : attack.InterceptedByCover ? "Intercepted" : "OrdinaryMiss";
+
+        _trace.Emit(TraceEventType.AttackAgainstCover, new AttackAgainstCoverPayload
+        {
+            AttackerId = attack.AttackerId,
+            AttackerName = attack.AttackerName,
+            TargetId = attack.TargetId,
+            TargetName = attack.TargetName,
+            CoverId = attack.CoverId!,
+            CoverName = attack.CoverName!,
+            PreCoverHitChance = attack.PreCoverHitChance ?? attack.HitChance,
+            CoverHitChanceModifier = attack.CoverHitChanceModifier ?? 0,
+            CoveredHitChance = attack.HitChance,
+            RawRoll = attack.HitRoll,
+            Classification = classification,
+            QualityDrawFollowed = attack.Hit,
+            DurabilityBefore = attack.CoverDurabilityBefore ?? 0,
+            DurabilityAfter = attack.CoverDurabilityAfter ?? attack.CoverDurabilityBefore ?? 0,
+            Destroyed = attack.CoverDestroyed
+        }, attack.AttackerName);
+    }
+
+    /// <summary>
+    /// Records a take-cover or leave-cover attempt (v0.9), accepted or rejected — a companion to the generic
+    /// <c>EngineAction</c> row with the cover-specific occupancy transition and capacity state.
+    /// </summary>
+    private void EmitCoverInteraction(CharacterAgent character, GameAction action, EngineResult result)
+    {
+        if (action is not (TakeCoverAction or LeaveCoverAction))
+        {
+            return;
+        }
+
+        var before = result.StateBefore;
+        var after = result.StateAfter;
+
+        var coverBefore = before.CoverOccupiedBy(character.CharacterId)
+            ?? (action is TakeCoverAction take ? before.ResolveObject(take.CoverRef).Object as CoverObject : null);
+        var coverId = (result.Outcome as TakeCoverOutcome)?.CoverId
+            ?? (result.Outcome as LeaveCoverOutcome)?.CoverId
+            ?? coverBefore?.Id;
+        var coverName = (result.Outcome as TakeCoverOutcome)?.CoverName
+            ?? (result.Outcome as LeaveCoverOutcome)?.CoverName
+            ?? coverBefore?.Name;
+        var coverAfter = coverId is null
+            ? null
+            : after.Objects.OfType<CoverObject>().FirstOrDefault(c => Same(c.Id, coverId));
+
+        _trace.Emit(TraceEventType.CoverInteraction, new CoverInteractionPayload
+        {
+            ActorId = character.CharacterId,
+            ActorName = character.Name,
+            CoverId = coverId,
+            CoverName = coverName,
+            ActionType = action.ActionType,
+            OccupantBefore = coverBefore?.CurrentOccupantId,
+            OccupantAfter = coverAfter?.CurrentOccupantId,
+            ObjectState = coverAfter?.State.ToString() ?? coverBefore?.State.ToString(),
+            Capacity = coverAfter?.Capacity ?? coverBefore?.Capacity,
+            ValidationResult = result.Accepted ? "accepted" : "rejected",
+            RejectionReason = result.RejectionReason?.ToString(),
+            WorldVersionBefore = before.Version,
+            WorldVersionAfter = after.Version,
+            PublicRecipients = result.Accepted ? LivingRecipients() : []
+        }, character.Name);
+    }
+
+    /// <summary>
+    /// Records an attempt to deliberately damage an environmental object (v0.9), accepted or rejected — a
+    /// companion to the generic <c>EngineAction</c> row with the weapon/armour arithmetic and durability
+    /// transition.
+    /// </summary>
+    private void EmitEnvironmentalObjectDamaged(CharacterAgent character, GameAction action, EngineResult result)
+    {
+        if (action is not DamageEnvironmentalObjectAction damage)
+        {
+            return;
+        }
+
+        var before = result.StateBefore;
+        var after = result.StateAfter;
+        var outcome = result.Outcome as DamageEnvironmentalObjectOutcome;
+        var objectBefore = outcome is not null
+            ? before.Objects.OfType<CoverObject>().FirstOrDefault(c => Same(c.Id, outcome.ObjectId))
+            : before.ResolveObject(damage.ObjectRef).Object as CoverObject;
+
+        _trace.Emit(TraceEventType.EnvironmentalObjectDamaged, new EnvironmentalObjectDamagedPayload
+        {
+            ActorId = character.CharacterId,
+            ActorName = character.Name,
+            WeaponName = outcome?.WeaponName,
+            WeaponDamage = outcome?.WeaponDamage,
+            ObjectId = outcome?.ObjectId ?? objectBefore?.Id,
+            ObjectName = outcome?.ObjectName ?? objectBefore?.Name,
+            ObjectArmour = outcome?.ObjectArmour ?? objectBefore?.Armour,
+            DamageApplied = outcome?.DamageApplied,
+            DurabilityBefore = outcome?.DurabilityBefore ?? objectBefore?.CurrentDurability,
+            DurabilityAfter = outcome?.DurabilityAfter,
+            Destroyed = outcome?.Destroyed ?? false,
+            SelfCoverBroken = outcome?.SelfCoverBroken ?? false,
+            ExposedOccupantName = outcome?.ExposedOccupantName,
+            ValidationResult = result.Accepted ? "accepted" : "rejected",
+            RejectionReason = result.RejectionReason?.ToString(),
+            WorldVersionBefore = before.Version,
+            WorldVersionAfter = after.Version,
+            PublicRecipients = result.Accepted ? LivingRecipients() : []
+        }, character.Name);
+    }
+
+    /// <summary>
+    /// Records an environmental object's destruction as one focused, semantic event (v0.9) — the same
+    /// relationship <see cref="TraceEventType.CharacterSurrendered"/> and
+    /// <see cref="TraceEventType.CharacterEscaped"/> have to <see cref="TraceEventType.DispositionChanged"/>.
+    /// </summary>
+    private void EmitEnvironmentalObjectDestroyed(
+        string objectId, string objectName, string cause,
+        string? destroyedByCharacterId, string? destroyedByCharacterName,
+        string? exposedOccupantId, string? exposedOccupantName,
+        IReadOnlyList<string> publicRecipients) =>
+        _trace.Emit(TraceEventType.EnvironmentalObjectDestroyed, new EnvironmentalObjectDestroyedPayload
+        {
+            ObjectId = objectId,
+            ObjectName = objectName,
+            Cause = cause,
+            DestroyedByCharacterId = destroyedByCharacterId,
+            DestroyedByCharacterName = destroyedByCharacterName,
+            ExposedOccupantId = exposedOccupantId,
+            ExposedOccupantName = exposedOccupantName,
+            Round = _trace.Round,
+            Turn = _trace.Turn,
+            PublicRecipients = publicRecipients
+        }, destroyedByCharacterName);
+
+    /// <summary>
     /// Records the item movements an accepted surrender caused: each piece of tribute, and the forfeited weapon.
     /// They get their own action types so provenance distinguishes surrender tribute and weapon forfeiture from
     /// an ordinary give or drop.
     /// </summary>
     /// <summary>
-    /// Adds the state-dependent actions the stateless resolver cannot know to ask for: accepting a surrender
-    /// when terms are on the table for this character, and taking from a body when the grab the resolver saw
-    /// may be a looting. Anything already offered is left alone, and nothing is ever removed.
+    /// Reconciles the stateless rulebook's guidance with the state it cannot see — adding the actions it could
+    /// not know to ask for, and withdrawing the ones the state has already ruled out.
     /// </summary>
+    /// <remarks>
+    /// Added: accepting a surrender when terms are on the table for this character, and taking from a body
+    /// when the grab the resolver saw may be a looting. Withdrawn: accepting when nothing has been offered,
+    /// threatening when every enemy has already been threatened once, and steadying when nobody needs it.
+    ///
+    /// Both directions exist for the same reason. The resolver reads words and is usually right about them;
+    /// whether the world can act on them is a separate question that only the snapshot answers. Leaving an
+    /// impossible affordance up costs a character its turn and invites the Dungeon Master to invent the
+    /// binding it needs — which is how one run ended with three refused acceptances of an offer that had
+    /// never been made.
+    /// </remarks>
     private (IReadOnlyList<AITool>? Tools, string? Guidance) WidenCandidateToolsForState(
         CharacterAgent character, IReadOnlyList<AITool>? tools)
     {
@@ -3536,6 +3835,30 @@ public sealed class TurnCoordinator
             notes.Add(
                 $"STATE THE RULEBOOK COULD NOT SEE: a fallen character's body lies here holding what they carried. " +
                 $"Nothing can be stolen from the dead; looting a body is {DungeonMasterTools.TakeItemName} from it.");
+        }
+
+        // Withdraw acceptance when there is nothing to accept. The rulebook reads an intent like "I accept
+        // Vark's offer and take the purse" as an acceptance and is right about the WORDS — but whether terms
+        // actually stand is state, which it never sees. A live run ended on this: Vark handed his purse over
+        // while stating terms, which resolved as an ordinary give_item and recorded no offer, so when Elara
+        // spent her whole final turn trying three times to accept it, the Dungeon Master reached for
+        // accept_surrender and invented an offer id ("offer-1") to fill the binding. The engine refused all
+        // three (UnknownOffer) and the encounter hit the round limit unresolved.
+        //
+        // Leaving the affordance up invites exactly that: a tool the model cannot use correctly, and a
+        // binding it can only guess at. Withdrawing it forces an honest refusal instead, which is also the
+        // truthful one — nobody has offered this character anything.
+        if (names.Contains(DungeonMasterTools.AcceptSurrenderName)
+            && _engine.State.PendingOffersTo(character.CharacterId).Count() == 0)
+        {
+            widened.RemoveAll(t => string.Equals(t.Name, DungeonMasterTools.AcceptSurrenderName, StringComparison.OrdinalIgnoreCase));
+            names.Remove(DungeonMasterTools.AcceptSurrenderName);
+            notes.Add(
+                $"STATE THE RULEBOOK COULD NOT SEE: nobody has offered {character.Name} terms. The rulebook is " +
+                "stateless and cannot tell an acceptance from the words alone. Whatever was said or handed over, " +
+                "no terms stand, so there is nothing to accept and that action is not available. If they are " +
+                "reaching for something a living character holds it is a theft; if it lies loose it is a take; " +
+                "otherwise refuse in-world, without mentioning offers or terms.");
         }
 
         // Withdraw a threat the actor has already spent on everyone available, and a steadying nobody needs.

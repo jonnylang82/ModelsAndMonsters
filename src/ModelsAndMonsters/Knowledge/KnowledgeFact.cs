@@ -70,7 +70,20 @@ public enum FactType
     /// One character openly threatened another, and everyone present saw whether it told. Public, because the
     /// threat was spoken aloud in a small room and its effect is visible on the one threatened.
     /// </summary>
-    IntimidationAttempted
+    IntimidationAttempted,
+
+    /// <summary>
+    /// A character entered or left environmental cover — voluntarily, or exposed by another action, an
+    /// interception's destruction, or leaving active play (v0.9). Public: everyone present sees who is
+    /// sheltering where. No hidden-information mechanic applies to cover at all.
+    /// </summary>
+    CoverOccupancyChanged,
+
+    /// <summary>
+    /// An environmental object's durability changed — a cover interception, or deliberate damage — including
+    /// its destruction (v0.9). Public: everyone present sees the object take the blow and its condition change.
+    /// </summary>
+    EnvironmentalObjectDamaged
 }
 
 /// <summary>

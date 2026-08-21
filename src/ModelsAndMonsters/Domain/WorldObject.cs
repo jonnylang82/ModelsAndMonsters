@@ -22,6 +22,7 @@ namespace ModelsAndMonsters.Domain;
 /// </remarks>
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "$type")]
 [JsonDerivedType(typeof(Container), "container")]
+[JsonDerivedType(typeof(CoverObject), "cover")]
 public abstract record WorldObject
 {
     public required string Id { get; init; }
@@ -120,4 +121,83 @@ public sealed record Container : WorldObject
     /// first match.
     /// </summary>
     public InventoryItem? FindItem(string idOrName) => ResolveItem(idOrName).Item;
+}
+
+/// <summary>
+/// How intact an environmental object is (v0.9). Deliberately closed and derived — never stored directly —
+/// so it can never disagree with the durability it is computed from.
+/// </summary>
+public enum EnvironmentalObjectState
+{
+    Intact,
+    Damaged,
+    Destroyed
+}
+
+/// <summary>
+/// A piece of the room a character can take shelter behind — authoritative state, not descriptive scenery.
+/// </summary>
+/// <remarks>
+/// <para>
+/// This is a distinct <see cref="WorldObject"/> kind, not a container with a flag: a container's whole
+/// identity is what it holds, while cover's is its durability, capacity and occupancy — a different shape of
+/// state entirely. It shares <see cref="Container"/>'s home in <see cref="Room.Objects"/> so the existing
+/// id/name resolution (<see cref="GameState.ResolveObject"/>) already knows how to find one and refuse an
+/// ambiguous reference, without a parallel lookup path.
+/// </para>
+/// <para>
+/// Occupancy is a single slot (<see cref="CurrentOccupantId"/>), not a list, because the one object this
+/// vertical slice seeds has a capacity of exactly one. <see cref="Capacity"/> is still carried as its own
+/// field — not derived from the occupant slot — so a later multi-occupant cover object has somewhere to grow
+/// into without another schema change; nothing in v0.9 exercises a capacity above one.
+/// </para>
+/// </remarks>
+public sealed record CoverObject : WorldObject
+{
+    /// <summary>
+    /// Whether this object can shelter anyone at all. Always true for the one v0.9 seeds; carried explicitly,
+    /// as the spec's field list requires, rather than assumed from an object simply being a <see cref="CoverObject"/>.
+    /// </summary>
+    public bool ProvidesCover { get; init; } = true;
+
+    /// <summary>How many characters this cover can shelter at once. v0.9 seeds exactly one.</summary>
+    public required int Capacity { get; init; }
+
+    /// <summary>The id of the character currently sheltering here, or null when nobody is.</summary>
+    public string? CurrentOccupantId { get; init; }
+
+    /// <summary>
+    /// Added to an attacker's effective hit chance when their target is sheltering here — negative, since
+    /// cover makes a target harder to hit. Applied only while <see cref="State"/> is not
+    /// <see cref="EnvironmentalObjectState.Destroyed"/>; unaffected by <see cref="EnvironmentalObjectState.Damaged"/>.
+    /// </summary>
+    public required int HitChanceModifier { get; init; }
+
+    public required int MaximumDurability { get; init; }
+
+    public required int CurrentDurability { get; init; }
+
+    /// <summary>
+    /// Subtracted from a weapon's damage when this object is deliberately struck (<c>damage_environmental_object</c>).
+    /// Ignored by a cover interception, which always costs exactly one point of durability regardless of the
+    /// weapon that would have struck the sheltering character.
+    /// </summary>
+    public required int Armour { get; init; }
+
+    public override string Kind => "cover";
+
+    /// <summary>
+    /// Intact, damaged or destroyed, derived from durability so the two can never disagree. Full durability is
+    /// intact; zero is destroyed; anything between is damaged.
+    /// </summary>
+    public EnvironmentalObjectState State =>
+        CurrentDurability <= 0 ? EnvironmentalObjectState.Destroyed
+        : CurrentDurability < MaximumDurability ? EnvironmentalObjectState.Damaged
+        : EnvironmentalObjectState.Intact;
+
+    /// <summary>Whether an attacker's target sheltering here right now actually benefits from it.</summary>
+    public bool CanProvideCover => ProvidesCover && State != EnvironmentalObjectState.Destroyed;
+
+    /// <summary>Whether one more character could take shelter here right now.</summary>
+    public bool HasSpareCapacity => CanProvideCover && CurrentOccupantId is null && Capacity > 0;
 }

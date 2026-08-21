@@ -141,6 +141,20 @@ public sealed class AgentProfileOptions
 
     public int? MaxOutputTokens { get; set; }
 
+    /// <summary>
+    /// Flat penalty on tokens already seen recently. **Leave at 0 for this harness unless you have a reason
+    /// not to.** Null does NOT mean "off" — it means the model's own default applies, and Qwen ships a chat
+    /// default of 1.5 that penalises exactly the exact-string copying tool calling depends on. See
+    /// <see cref="AI.AgentModelProfile.PresencePenalty"/>. Dropped on Anthropic, which has no equivalent.
+    /// </summary>
+    public float? PresencePenalty { get; set; }
+
+    /// <summary>
+    /// Penalty scaled by how often a token has already appeared. Null leaves the model default. Dropped on
+    /// Anthropic, which has no equivalent.
+    /// </summary>
+    public float? FrequencyPenalty { get; set; }
+
     // The model sampling seed is not configured per agent. It is derived from the run's master seed
     // (Harness.Seed) so a whole run — game rolls and all three agents — replays from one number.
 
@@ -202,6 +216,8 @@ public sealed class AgentProfileOptions
             TopP = TopP ?? baseOptions.TopP,
             TopK = TopK ?? baseOptions.TopK,
             MaxOutputTokens = MaxOutputTokens ?? baseOptions.MaxOutputTokens,
+            PresencePenalty = PresencePenalty ?? baseOptions.PresencePenalty,
+            FrequencyPenalty = FrequencyPenalty ?? baseOptions.FrequencyPenalty,
             ContextWindow = ContextWindow ?? baseOptions.ContextWindow,
             Effort = string.IsNullOrWhiteSpace(Effort) ? baseOptions.Effort : Effort,
             Thinking = Thinking ?? baseOptions.Thinking,

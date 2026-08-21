@@ -58,6 +58,36 @@ public sealed record AgentModelProfile
     public bool? Thinking { get; init; }
 
     /// <summary>
+    /// Flat penalty applied to any token that has already appeared in the recent window, discouraging the
+    /// model from using it again. Null leaves the model's own default in place.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Worth setting explicitly, and worth setting to zero for the agents that must produce structure. The
+    /// value is a MODEL default when unset, not a neutral one: every local call in a v0.8 run carried
+    /// <c>presence_penalty = 1.5</c> — Qwen's own recommended chat default, applied 605 times out of 605 —
+    /// without the harness knowing it existed or recording it anywhere.
+    /// </para>
+    /// <para>
+    /// That default is written for open-ended conversation, where the failure being avoided is repetition.
+    /// This harness needs the opposite: a model that faithfully repeats exact strings — tool names, stable
+    /// ids, item names copied out of the state block, and structural punctuation. A penalty that pushes the
+    /// model off a token it has just seen is pushing it off the token it is supposed to copy, and Qwen's
+    /// documentation warns that a high value can cause language mixing. A live run produced a spoken line
+    /// closed with <c>】</c> (U+3011, a CJK lenticular bracket) where <c>]</c> belonged, which is what
+    /// language mixing looks like when it lands on punctuation.
+    /// </para>
+    /// </remarks>
+    public float? PresencePenalty { get; init; }
+
+    /// <summary>
+    /// Penalty scaled by how often a token has already appeared. Null leaves the model default. Carried
+    /// alongside <see cref="PresencePenalty"/> so the whole penalty group is configurable and recorded,
+    /// rather than half of it being visible and half inherited silently.
+    /// </summary>
+    public float? FrequencyPenalty { get; init; }
+
+    /// <summary>
     /// Input context window in tokens.
     /// </summary>
     /// <remarks>
@@ -160,6 +190,8 @@ public sealed record AgentModelProfile
             TopP = options.TopP,
             TopK = options.TopK,
             MaxOutputTokens = options.MaxOutputTokens,
+            PresencePenalty = options.PresencePenalty,
+            FrequencyPenalty = options.FrequencyPenalty,
             // Seed is not read from config here; the runner derives it from the master seed.
             ContextWindow = options.ContextWindow,
             EnforceContextWindowOnHostedModels = enforceContextWindowOnHostedModels,

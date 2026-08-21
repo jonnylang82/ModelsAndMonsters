@@ -171,3 +171,14 @@ button.ghost { background: transparent; color: var(--muted); border: 1px solid v
 .line.threat { color: #d8a06a; font-size: 13px; }
 .line.threat.told { color: #e8968c; }
 .line.steady { color: #8fc79a; font-size: 13px; }
+
+/* v0.9 — environmental cover. A chip alongside containers/exits, and its own transcript colour so an
+   interception (the cover, not luck, saved the target) never reads like an ordinary miss. */
+.obj.cover { border-style: solid; }
+.obj.cover.intact { border-color: #6f86a8; }
+.obj.cover.damaged { border-color: var(--accent); }
+.obj.cover.damaged .obj-state { color: var(--accent); }
+.obj.cover.destroyed { opacity: 0.55; border-style: dashed; border-color: var(--monsters); }
+.badge.incover { color: #6f86a8; border-color: #6f86a8; }
+.line.combat.intercepted { color: #6f86a8; font-weight: 600; }
+.line.cover { color: #6f86a8; font-size: 13px; }

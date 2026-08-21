@@ -467,6 +467,40 @@ internal static class TestWorld
         return scenario;
     }
 
+    // ------------------------------------------------------------------------------------------
+    // Environmental cover (v0.9 vertical slice).
+    // ------------------------------------------------------------------------------------------
+
+    public const string WorkbenchId = "mill-workbench";
+
+    /// <summary>
+    /// The seeded cover object, mirroring the shipped scenario's values unless a test overrides them:
+    /// capacity 1, -20 hit chance, 2/2 durability, armour 2, unoccupied.
+    /// </summary>
+    public static CoverObject Workbench(
+        int capacity = 1, int hitChanceModifier = -20, int maxDurability = 2, int? currentDurability = null,
+        int armour = 2, string? occupantId = null) => new()
+        {
+            Id = WorkbenchId,
+            Name = "Overturned Mill Workbench",
+            Description = "A heavy mill workbench, knocked on its side.",
+            Capacity = capacity,
+            HitChanceModifier = hitChanceModifier,
+            MaximumDurability = maxDurability,
+            CurrentDurability = currentDurability ?? maxDurability,
+            Armour = armour,
+            CurrentOccupantId = occupantId
+        };
+
+    /// <summary>The 2v2 state with the seeded workbench present, otherwise unoccupied.</summary>
+    public static GameState TwoVsTwoStateWithCover(CoverObject? cover = null) =>
+        StateWith([cover ?? Workbench()], Rowan(), Elara(health: 6), Vark(), Skrit());
+
+    /// <summary>An engine over a state that includes the seeded workbench; attacks land for full damage unless a rng/rules pair is given.</summary>
+    public static GameEngine EngineWithCover(CoverObject? cover = null, IRng? rng = null, CombatRules? rules = null, params Character[] characters) =>
+        new(StateWith([cover ?? Workbench()], characters.Length == 0 ? [Rowan(), Elara(health: 6), Vark(), Skrit()] : characters),
+            rng ?? new SeededRng(1), rules ?? CombatRules.NoGlancing);
+
     public static ScenarioDefinition Scenario() => new()
     {
         Id = "test-scenario",

@@ -88,6 +88,9 @@ public sealed class GameEngine : IGameEngine
             GiveItemAction give => ResolveGiveItem(give),
             DropItemAction drop => ResolveDropItem(drop),
             StealItemAction steal => ResolveStealItem(steal),
+            TakeCoverAction takeCover => ResolveTakeCover(takeCover),
+            LeaveCoverAction leaveCover => ResolveLeaveCover(leaveCover),
+            DamageEnvironmentalObjectAction damageObject => ResolveDamageEnvironmentalObject(damageObject),
             _ => EngineResult.Reject(action, _state, EngineRejectionReason.UnsupportedAction,
                 $"The engine has no handler for action type '{action.ActionType}'.")
         };
@@ -723,6 +726,13 @@ public sealed class GameEngine : IGameEngine
         var draws = new List<RngDraw>(2);
         var consumedStatusIds = new List<string>();
 
+        // ---- The attacker's own cover, if any, breaks the instant they swing (v0.9) — before the roll, and
+        // whether the swing lands, is intercepted or misses. A no-op when the attacker is not sheltering
+        // behind anything. Computed as a delta against `state` and folded into `after` below, never mutating
+        // `state` itself: `state` stays the true snapshot from before this whole action, so the trace shows
+        // the attacker still behind cover in StateBefore and exposed only in StateAfter. ----
+        var selfExposure = ExposeIfInCover(state, attacker.Id);
+
         // ---- Guard redirection: who the blow actually lands on. No draw is made or spent here. ----
         var target = intendedTarget;
         var redirected = false;
@@ -770,13 +780,44 @@ public sealed class GameEngine : IGameEngine
         }
 
         var baseHitChance = attacker.HitChance;
-        var effectiveHitChance = Math.Clamp(baseHitChance + modifiers.Sum(m => m.Value), 0, 100);
+        var preCoverEffectiveHitChance = Math.Clamp(baseHitChance + modifiers.Sum(m => m.Value), 0, 100);
         var healthBefore = target.Health;
 
-        // ---- The one hit draw. ----
+        // ---- Environmental cover (v0.9): does the TARGET currently shelter behind something intact or
+        // damaged? Looked up fresh from state, never cached on the status, so a modifier always reflects the
+        // cover's current durability. Destroyed cover (should the invariant ever slip) provides nothing. ----
+        var targetInCover = state.StatusOn(target.Id, StatusEffectKind.InCover);
+        var cover = targetInCover is null ? null : state.CoverOccupiedBy(target.Id);
+        if (cover is { CanProvideCover: false })
+        {
+            cover = null;
+        }
+
+        var coveredEffectiveHitChance = preCoverEffectiveHitChance;
+        var drawModifiers = modifiers;
+        if (cover is not null)
+        {
+            var coverModifier = new RngModifier("Cover", cover.Id, cover.HitChanceModifier, modifiers.Count + 1, Consumed: false);
+            drawModifiers = [.. modifiers, coverModifier];
+            coveredEffectiveHitChance = Math.Clamp(preCoverEffectiveHitChance + cover.HitChanceModifier, 0, 100);
+        }
+
+        // ---- The one hit draw. Three outcomes when cover is present: a DIRECT HIT (roll beats the covered
+        // chance), a COVER INTERCEPTION (roll would have beaten the pre-cover chance but not the covered one —
+        // the cover, not luck, is what saved the target), or an ORDINARY MISS (roll beats neither). Without
+        // cover this collapses to the ordinary two-outcome draw, unchanged from before v0.9. ----
         var hitSequenceBefore = _rng.DrawCount;
         var hitRoll = _rng.RollPercent();
-        var hit = hitRoll <= effectiveHitChance;
+        var hit = hitRoll <= coveredEffectiveHitChance;
+        var interceptedByCover = !hit && cover is not null && hitRoll <= preCoverEffectiveHitChance;
+        var hitResult = hit ? "hit" : interceptedByCover ? "intercepted-by-cover" : "miss";
+        var hitComparison = cover is null
+            ? $"roll {hitRoll} {(hit ? "<=" : ">")} effective hit chance {coveredEffectiveHitChance}"
+            : hit
+                ? $"roll {hitRoll} <= covered effective hit chance {coveredEffectiveHitChance} (pre-cover chance was {preCoverEffectiveHitChance}) — a direct hit despite cover"
+                : interceptedByCover
+                    ? $"roll {hitRoll} > covered effective hit chance {coveredEffectiveHitChance} but <= pre-cover effective hit chance {preCoverEffectiveHitChance} — {cover.Name} intercepted the blow"
+                    : $"roll {hitRoll} > pre-cover effective hit chance {preCoverEffectiveHitChance} (covered chance was {coveredEffectiveHitChance}) — an ordinary miss; the cover changed nothing";
         draws.Add(new RngDraw
         {
             Purpose = "attack.hit-check",
@@ -785,21 +826,41 @@ public sealed class GameEngine : IGameEngine
             ActorName = attacker.Name,
             TargetId = target.Id,
             TargetName = target.Name,
-            OutcomeSelected = "hit or miss",
+            OutcomeSelected = cover is null ? "hit or miss" : "direct hit, cover interception, or ordinary miss",
             Sides = 100,
             RangeMin = 1,
             RangeMax = 100,
             RawRoll = hitRoll,
             BaseChance = baseHitChance,
-            Modifiers = [.. modifiers.Select(m => m.Note)],
-            ModifierDetails = modifiers,
-            Threshold = effectiveHitChance,
-            Comparison = $"roll {hitRoll} {(hit ? "<=" : ">")} effective hit chance {effectiveHitChance}",
-            Result = hit ? "hit" : "miss",
+            Modifiers = [.. drawModifiers.Select(m => m.Note)],
+            ModifierDetails = drawModifiers,
+            Threshold = coveredEffectiveHitChance,
+            Comparison = hitComparison,
+            Result = hitResult,
             Seed = _rng.Seed,
             SequenceBefore = hitSequenceBefore,
             SequenceAfter = _rng.DrawCount
         });
+
+        // ---- A cover interception: the blow never reaches the target. No quality draw — nothing landed.
+        // Exactly one point of durability is lost, ignoring the cover's own armour (that only applies to
+        // deliberate damage_environmental_object). Reducing durability to zero destroys the cover and exposes
+        // whoever was behind it, in the same event. ----
+        CoverObject? coverAfter = null;
+        var coverDestroyedNow = false;
+        if (interceptedByCover)
+        {
+            var newDurability = Math.Max(0, cover!.CurrentDurability - 1);
+            coverAfter = cover with { CurrentDurability = newDurability };
+            coverDestroyedNow = coverAfter.State == EnvironmentalObjectState.Destroyed;
+            if (coverDestroyedNow)
+            {
+                coverAfter = coverAfter with { CurrentOccupantId = null };
+                consumedStatusIds.Add(targetInCover!.Id);
+                statusEvents.Add(new StatusEvent(StatusEventKind.Consumed, targetInCover with { Consumed = true },
+                    $"{cover.Name} was destroyed and {target.Name} was exposed"));
+            }
+        }
 
         int? qualityRoll = null;
         var quality = AttackQuality.Solid;
@@ -870,6 +931,18 @@ public sealed class GameEngine : IGameEngine
         // rejected offer. Nothing is assumed unchanged just because no damage was dealt. ----
         var after = state.WithoutStatuses(consumedStatusIds);
         var changed = consumedStatusIds.Count > 0;
+
+        if (selfExposure.Occurred)
+        {
+            after = ApplyExposure(after, selfExposure, $"{attacker.Name} broke cover to strike", statusEvents);
+            changed = true;
+        }
+
+        if (coverAfter is not null)
+        {
+            after = after.WithCover(coverAfter);
+            changed = true;
+        }
 
         if (hit)
         {
@@ -999,9 +1072,9 @@ public sealed class GameEngine : IGameEngine
             WeaponDamage = weapon.Damage,
             TargetArmour = target.Armour,
             HitRoll = hitRoll,
-            HitChance = effectiveHitChance,
+            HitChance = coveredEffectiveHitChance,
             BaseHitChance = baseHitChance,
-            HitModifiers = modifiers,
+            HitModifiers = drawModifiers,
             Hit = hit,
             GlancingRoll = qualityRoll,
             GlancingChance = _combatRules.GlancingBlowChance,
@@ -1023,7 +1096,17 @@ public sealed class GameEngine : IGameEngine
             IntendedTargetId = intendedTarget.Id,
             IntendedTargetName = intendedTarget.Name,
             Redirected = redirected,
-            FearChanges = fearChanges
+            FearChanges = fearChanges,
+            CoverId = cover?.Id,
+            CoverName = cover?.Name,
+            PreCoverHitChance = cover is null ? null : preCoverEffectiveHitChance,
+            CoverHitChanceModifier = cover?.HitChanceModifier,
+            InterceptedByCover = interceptedByCover,
+            CoverDurabilityBefore = cover?.CurrentDurability,
+            // Falls back to the unchanged value on a direct hit or an ordinary miss, so "before" and "after"
+            // are always both present or both absent together whenever cover was involved at all.
+            CoverDurabilityAfter = coverAfter?.CurrentDurability ?? cover?.CurrentDurability,
+            CoverDestroyed = coverDestroyedNow
         };
 
         return EngineResult.Accept(action, state, after, outcome, draws, statusEvents, offerTransitions, fearChanges);
@@ -1592,7 +1675,18 @@ public sealed class GameEngine : IGameEngine
         var guardedStatus = NewStatus(StatusEffectKind.Guarded, guardian.Id, ally.Id, 0,
             StatusExpiryRule.StartOfSourceNextTurn, definition.Id, relationshipId);
 
+        // Standing over a companion means leaving whatever the guardian was sheltering behind (v0.9).
+        var selfExposure = ExposeIfInCover(state, guardian.Id);
+
         var after = SpendCharge(state.WithStatus(guarding).WithStatus(guardedStatus), guardian.Id, definition, held);
+
+        var statusEvents = new List<StatusEvent>
+        {
+            new(StatusEventKind.Applied, guarding, $"{guardian.Name} took up a guard over {ally.Name}"),
+            new(StatusEventKind.Applied, guardedStatus, $"{ally.Name} is guarded by {guardian.Name}")
+        };
+        after = ApplyExposure(after, selfExposure, $"{guardian.Name} broke cover to stand over {ally.Name}", statusEvents);
+
         after = after with { Version = state.Version + 1 };
 
         var outcome = new GuardAllyOutcome
@@ -1604,11 +1698,7 @@ public sealed class GameEngine : IGameEngine
             RelationshipId = relationshipId
         };
 
-        return EngineResult.Accept(action, state, after, outcome, statusEvents:
-        [
-            new StatusEvent(StatusEventKind.Applied, guarding, $"{guardian.Name} took up a guard over {ally.Name}"),
-            new StatusEvent(StatusEventKind.Applied, guardedStatus, $"{ally.Name} is guarded by {guardian.Name}")
-        ]);
+        return EngineResult.Accept(action, state, after, outcome, statusEvents: statusEvents);
     }
 
     /// <summary>
@@ -1630,6 +1720,16 @@ public sealed class GameEngine : IGameEngine
 
         var after = state.WithCharacter(target with { Health = healthAfter });
         after = SpendCharge(after, caster.Id, definition, held);
+
+        // Praying over oneself needs no reach; praying over a companion does — that breaks the caster's own
+        // cover (v0.9). A prayer worked on oneself while sheltering stays sheltered.
+        var statusEvents = new List<StatusEvent>();
+        if (!Same(caster.Id, target.Id))
+        {
+            after = ApplyExposure(after, ExposeIfInCover(state, caster.Id),
+                $"{caster.Name} broke cover to lay hands on {target.Name}", statusEvents);
+        }
+
         after = after with { Version = state.Version + 1 };
 
         var remaining = after.FindById(caster.Id)?.FindAbility(definition.Id)?.RemainingUses ?? 0;
@@ -1648,7 +1748,7 @@ public sealed class GameEngine : IGameEngine
             RemainingUses = remaining
         };
 
-        return EngineResult.Accept(action, state, after, outcome);
+        return EngineResult.Accept(action, state, after, outcome, statusEvents: statusEvents);
     }
 
     /// <summary>Applies <see cref="StatusEffectKind.Rallied"/> to an ally. No randomness when applied.</summary>
@@ -1787,7 +1887,10 @@ public sealed class GameEngine : IGameEngine
         }
 
         var opened = container with { IsOpen = true };
-        var after = state.WithContainer(opened) with { Version = state.Version + 1 };
+        var statusEvents = new List<StatusEvent>();
+        var after = ApplyExposure(state.WithContainer(opened), ExposeIfInCover(state, actor.Id),
+            $"{actor.Name} broke cover to open the {container.Name}", statusEvents);
+        after = after with { Version = state.Version + 1 };
 
         var outcome = new OpenContainerOutcome
         {
@@ -1798,7 +1901,7 @@ public sealed class GameEngine : IGameEngine
             RevealedContents = [.. opened.Contents.Select(i => i.DisplayName)]
         };
 
-        return EngineResult.Accept(action, state, after, outcome);
+        return EngineResult.Accept(action, state, after, outcome, statusEvents: statusEvents);
     }
 
     /// <summary>
@@ -1857,10 +1960,13 @@ public sealed class GameEngine : IGameEngine
         var emptiedContainer = container with { Contents = container.Contents.RemoveAt(index) };
         var carryingActor = actor with { Inventory = actor.Inventory.Add(item) };
 
-        // One new state carries both halves of the transfer, then a single version increment.
-        var after = state
-            .WithContainer(emptiedContainer)
-            .WithCharacter(carryingActor) with { Version = state.Version + 1 };
+        // Both halves of the transfer, plus the actor's own cover breaking if they occupy any (v0.9), in one
+        // new state, then a single version increment.
+        var statusEvents = new List<StatusEvent>();
+        var after = ApplyExposure(
+            state.WithContainer(emptiedContainer).WithCharacter(carryingActor),
+            ExposeIfInCover(state, actor.Id), $"{actor.Name} broke cover to reach for the {item.DisplayName}", statusEvents);
+        after = after with { Version = state.Version + 1 };
 
         var outcome = new TakeItemOutcome
         {
@@ -1873,7 +1979,7 @@ public sealed class GameEngine : IGameEngine
             RemainingContents = [.. emptiedContainer.Contents.Select(i => i.DisplayName)]
         };
 
-        return EngineResult.Accept(action, state, after, outcome);
+        return EngineResult.Accept(action, state, after, outcome, statusEvents: statusEvents);
     }
 
     /// <summary>
@@ -1936,8 +2042,18 @@ public sealed class GameEngine : IGameEngine
                 : []
         };
 
-        // No mutation and no version change: inspection is observation, not action-on-the-world.
-        return EngineResult.Accept(action, state, state, outcome);
+        // Ordinarily no mutation and no version change at all: inspection is observation, not
+        // action-on-the-world. The one exception is v0.9's own cover: leaning out to examine something breaks
+        // it, so an inspector who occupies cover is exposed as a real side effect of an accepted inspection.
+        var statusEvents = new List<StatusEvent>();
+        var after = ApplyExposure(state, ExposeIfInCover(state, actor.Id),
+            $"{actor.Name} broke cover to examine the {worldObject.Name}", statusEvents);
+        if (statusEvents.Count > 0)
+        {
+            after = after with { Version = state.Version + 1 };
+        }
+
+        return EngineResult.Accept(action, state, after, outcome, statusEvents: statusEvents);
     }
 
     /// <summary>
@@ -1981,7 +2097,10 @@ public sealed class GameEngine : IGameEngine
         }
 
         var opened = exit with { IsOpen = true };
-        var after = state.WithExit(opened) with { Version = state.Version + 1 };
+        var statusEvents = new List<StatusEvent>();
+        var after = ApplyExposure(state.WithExit(opened), ExposeIfInCover(state, actor.Id),
+            $"{actor.Name} broke cover to haul the {exit.Name} open", statusEvents);
+        after = after with { Version = state.Version + 1 };
 
         var outcome = new OpenExitOutcome
         {
@@ -1992,7 +2111,7 @@ public sealed class GameEngine : IGameEngine
             DestinationDescription = exit.DestinationDescription
         };
 
-        return EngineResult.Accept(action, state, after, outcome);
+        return EngineResult.Accept(action, state, after, outcome, statusEvents: statusEvents);
     }
 
     /// <summary>
@@ -2127,13 +2246,16 @@ public sealed class GameEngine : IGameEngine
                 $"{giver.Name} is not carrying '{action.ItemRef}'.");
         }
 
-        // One new state carries both halves of the transfer, then a single version increment: the item can
-        // never momentarily exist in both inventories or in neither.
+        // Both halves of the transfer, plus the giver's own cover breaking if they occupy any (v0.9) — handing
+        // something to someone else means reaching toward them — in one new state, then a single version
+        // increment: the item can never momentarily exist in both inventories or in neither.
         var strippedGiver = giver with { Inventory = RemoveFirst(giver, item) };
         var carryingRecipient = recipient with { Inventory = recipient.Inventory.Add(item) };
-        var after = state
-            .WithCharacter(strippedGiver)
-            .WithCharacter(carryingRecipient) with { Version = state.Version + 1 };
+        var statusEvents = new List<StatusEvent>();
+        var after = ApplyExposure(
+            state.WithCharacter(strippedGiver).WithCharacter(carryingRecipient),
+            ExposeIfInCover(state, giver.Id), $"{giver.Name} broke cover to hand over the {item.DisplayName}", statusEvents);
+        after = after with { Version = state.Version + 1 };
 
         var transitions = new List<OfferTransition>();
         after = InvalidateOffersPromising(after, giver.Id, item.Id, "a promised item was given away", transitions);
@@ -2148,7 +2270,7 @@ public sealed class GameEngine : IGameEngine
             ItemName = item.DisplayName
         };
 
-        return EngineResult.Accept(action, state, after, outcome, offerTransitions: transitions);
+        return EngineResult.Accept(action, state, after, outcome, statusEvents: statusEvents, offerTransitions: transitions);
     }
 
     /// <summary>
@@ -2319,18 +2441,24 @@ public sealed class GameEngine : IGameEngine
         };
 
         // Reaching into an opponent's belt is a hostile act, so it rejects any offer that opponent had on the
-        // table with the thief's side — whether the grab came off or not.
+        // table with the thief's side — whether the grab came off or not. Reaching also breaks the thief's own
+        // cover (v0.9), whether the grab comes off or not — exactly like a missed attack, an attempt is
+        // exposure regardless of its result.
         var transitions = new List<OfferTransition>();
+        var statusEvents = new List<StatusEvent>();
         var after = state;
         var (afterHostility, hostilityChanged) = ApplyHostility(after, thief, [target.Id], transitions);
         after = afterHostility;
+        after = ApplyExposure(after, ExposeIfInCover(state, thief.Id),
+            $"{thief.Name} broke cover to reach for the {item.DisplayName}", statusEvents);
+        var selfExposed = statusEvents.Count > 0;
 
         if (!succeeded)
         {
-            if (hostilityChanged)
+            if (hostilityChanged || selfExposed)
             {
                 after = after with { Version = state.Version + 1 };
-                return EngineResult.Accept(action, state, after, outcome, [draw], offerTransitions: transitions);
+                return EngineResult.Accept(action, state, after, outcome, [draw], statusEvents: statusEvents, offerTransitions: transitions);
             }
 
             // Nothing changes hands. Like a missed attack, the state and its version are untouched, but the
@@ -2346,7 +2474,245 @@ public sealed class GameEngine : IGameEngine
 
         after = InvalidateOffersPromising(after, target.Id, item.Id, "a promised item was stolen", transitions);
 
-        return EngineResult.Accept(action, state, after, outcome, [draw], offerTransitions: transitions);
+        return EngineResult.Accept(action, state, after, outcome, [draw], statusEvents: statusEvents, offerTransitions: transitions);
+    }
+
+    // ===============================================================================================
+    // Environmental cover (v0.9)
+    // ===============================================================================================
+
+    /// <summary>
+    /// Resolves a character taking shelter behind one environmental object with the cover capability. No
+    /// randomness. Capacity is enforced authoritatively here: a second character cannot occupy capacity-one
+    /// cover, whatever a model describes them doing.
+    /// </summary>
+    private EngineResult ResolveTakeCover(TakeCoverAction action)
+    {
+        var state = _state;
+
+        var actor = state.Resolve(action.ActorRef);
+        if (actor is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.UnknownActor,
+                $"There is no character called '{action.ActorRef}' in the room.");
+        }
+
+        if (!actor.CanAct)
+        {
+            return RejectInactiveActor(action, state, actor);
+        }
+
+        var resolution = state.ResolveObject(action.CoverRef);
+        if (resolution.Ambiguous)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.CoverReferenceAmbiguous,
+                $"'{action.CoverRef}' could mean more than one thing in the room; it is not clear which is meant.");
+        }
+
+        if (resolution.Object is not CoverObject cover)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.UnknownCover,
+                $"There is no cover called '{action.CoverRef}' in the room.");
+        }
+
+        if (!cover.CanProvideCover)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.CoverCannotBeUsed,
+                $"The {cover.Name} is destroyed and offers no shelter.");
+        }
+
+        if (Same(cover.CurrentOccupantId, actor.Id))
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.AlreadyInThatCover,
+                $"{actor.Name} is already behind the {cover.Name}.");
+        }
+
+        if (!cover.HasSpareCapacity)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.CoverFull,
+                $"There is no room left behind the {cover.Name}.");
+        }
+
+        // Occupying cover is exclusive, so taking this one first releases whatever the actor already occupied
+        // (never reachable with the one cover object v0.9 seeds, but the invariant — behind at most one thing
+        // at a time — has to hold in general).
+        var previousExposure = ExposeIfInCover(state, actor.Id);
+
+        var status = NewStatus(StatusEffectKind.InCover, actor.Id, actor.Id, 0,
+            StatusExpiryRule.WhileConditionHolds, relatedObjectId: cover.Id);
+
+        var statusEvents = new List<StatusEvent>
+        {
+            new(StatusEventKind.Applied, status, $"{actor.Name} took cover behind {cover.Name}")
+        };
+
+        var after = ApplyExposure(state, previousExposure,
+            $"{actor.Name} left it to take cover behind {cover.Name} instead", statusEvents);
+        after = after.WithCover(cover with { CurrentOccupantId = actor.Id }).WithStatus(status);
+        after = after with { Version = state.Version + 1 };
+
+        var outcome = new TakeCoverOutcome
+        {
+            ActorId = actor.Id,
+            ActorName = actor.Name,
+            CoverId = cover.Id,
+            CoverName = cover.Name
+        };
+
+        return EngineResult.Accept(action, state, after, outcome, statusEvents: statusEvents);
+    }
+
+    /// <summary>
+    /// Resolves a character deliberately stepping out from behind the cover they occupy, with nothing else
+    /// attempted. No randomness. Distinct from cover ending as a side effect of some other accepted action —
+    /// see <see cref="ExposeIfInCover"/> — which needs no separate turn.
+    /// </summary>
+    private EngineResult ResolveLeaveCover(LeaveCoverAction action)
+    {
+        var state = _state;
+
+        var actor = state.Resolve(action.ActorRef);
+        if (actor is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.UnknownActor,
+                $"There is no character called '{action.ActorRef}' in the room.");
+        }
+
+        if (!actor.CanAct)
+        {
+            return RejectInactiveActor(action, state, actor);
+        }
+
+        var exposure = ExposeIfInCover(state, actor.Id);
+        if (!exposure.Occurred)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.NotInCover,
+                $"{actor.Name} is not sheltering behind anything to step out of.");
+        }
+
+        var statusEvents = new List<StatusEvent>();
+        var after = ApplyExposure(state, exposure, $"{actor.Name} deliberately stepped out from cover", statusEvents);
+        after = after with { Version = state.Version + 1 };
+
+        var outcome = new LeaveCoverOutcome
+        {
+            ActorId = actor.Id,
+            ActorName = actor.Name,
+            CoverId = exposure.ReleasedCover?.Id ?? "",
+            CoverName = exposure.ReleasedCover?.Name ?? "cover"
+        };
+
+        return EngineResult.Accept(action, state, after, outcome, statusEvents: statusEvents);
+    }
+
+    /// <summary>
+    /// Resolves a character deliberately striking one present, non-destroyed environmental object with the
+    /// weapon in hand, rather than a character. No hit or quality roll — a stationary room object does not
+    /// dodge — so damage is the deterministic <c>max(1, weapon damage - object armour)</c>. Breaks the
+    /// actor's own cover, when they occupy any, before the blow lands; refused against the very cover the
+    /// actor currently occupies. Reducing durability to zero destroys the object and, if anyone was
+    /// sheltering there, exposes them as part of the same event.
+    /// </summary>
+    private EngineResult ResolveDamageEnvironmentalObject(DamageEnvironmentalObjectAction action)
+    {
+        var state = _state;
+
+        var actor = state.Resolve(action.ActorRef);
+        if (actor is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.UnknownActor,
+                $"There is no character called '{action.ActorRef}' in the room.");
+        }
+
+        if (!actor.CanAct)
+        {
+            return RejectInactiveActor(action, state, actor);
+        }
+
+        if (actor.Weapon is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.ActorHasNoWeapon,
+                $"{actor.Name} is not carrying a weapon.");
+        }
+
+        var resolution = state.ResolveObject(action.ObjectRef);
+        if (resolution.Ambiguous)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.ObjectReferenceAmbiguous,
+                $"'{action.ObjectRef}' could mean more than one thing in the room; it is not clear which is meant.");
+        }
+
+        if (resolution.Object is not CoverObject target)
+        {
+            return resolution.Found
+                ? EngineResult.Reject(action, state, EngineRejectionReason.ObjectCannotBeDamaged,
+                    $"There is nothing about the {resolution.Object!.Name} that a blow can do anything to.")
+                : EngineResult.Reject(action, state, EngineRejectionReason.UnknownObject,
+                    $"There is no object called '{action.ObjectRef}' in the room.");
+        }
+
+        if (target.State == EnvironmentalObjectState.Destroyed)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.ObjectAlreadyDestroyed,
+                $"The {target.Name} is already wreckage; there is nothing left to strike.");
+        }
+
+        if (Same(target.CurrentOccupantId, actor.Id))
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.CannotDamageOwnCover,
+                $"{actor.Name} will not tear apart the {target.Name} while sheltering behind it.");
+        }
+
+        var weapon = actor.Weapon;
+        var durabilityBefore = target.CurrentDurability;
+        var damage = Math.Max(1, weapon.Damage - target.Armour);
+        var durabilityAfter = Math.Max(0, durabilityBefore - damage);
+        var destroyed = durabilityAfter == 0;
+        var exposedOccupantId = destroyed ? target.CurrentOccupantId : null;
+        var exposedOccupant = exposedOccupantId is null ? null : state.FindById(exposedOccupantId);
+
+        var updatedObject = target with
+        {
+            CurrentDurability = durabilityAfter,
+            CurrentOccupantId = destroyed ? null : target.CurrentOccupantId
+        };
+
+        var statusEvents = new List<StatusEvent>();
+        var after = state.WithCover(updatedObject);
+
+        if (destroyed && exposedOccupantId is not null
+            && state.StatusOn(exposedOccupantId, StatusEffectKind.InCover) is { } occupantInCover)
+        {
+            after = after.WithoutStatuses([occupantInCover.Id]);
+            statusEvents.Add(new StatusEvent(StatusEventKind.Consumed, occupantInCover with { Consumed = true },
+                $"the {target.Name} was destroyed and {exposedOccupant?.Name ?? exposedOccupantId} was exposed"));
+        }
+
+        // The actor's own cover (if any — necessarily a different object than the one just struck, since
+        // striking the actor's own cover was refused above) breaks the instant they swing.
+        var selfExposure = ExposeIfInCover(state, actor.Id);
+        after = ApplyExposure(after, selfExposure, $"{actor.Name} broke cover to strike the {target.Name}", statusEvents);
+
+        after = after with { Version = state.Version + 1 };
+
+        var outcome = new DamageEnvironmentalObjectOutcome
+        {
+            ActorId = actor.Id,
+            ActorName = actor.Name,
+            WeaponName = weapon.Name,
+            WeaponDamage = weapon.Damage,
+            ObjectId = target.Id,
+            ObjectName = target.Name,
+            ObjectArmour = target.Armour,
+            DamageApplied = damage,
+            DurabilityBefore = durabilityBefore,
+            DurabilityAfter = durabilityAfter,
+            Destroyed = destroyed,
+            SelfCoverBroken = selfExposure.Occurred,
+            ExposedOccupantName = destroyed ? exposedOccupant?.Name ?? exposedOccupantId : null
+        };
+
+        return EngineResult.Accept(action, state, after, outcome, statusEvents: statusEvents);
     }
 
     // ===============================================================================================
@@ -2356,7 +2722,8 @@ public sealed class GameEngine : IGameEngine
     /// <summary>Mints a new status instance with a stable, run-reproducible id.</summary>
     private StatusEffectInstance NewStatus(
         StatusEffectKind kind, string sourceId, string targetId, int modifier,
-        StatusExpiryRule expiry, string? abilityId = null, string? relationshipId = null) => new()
+        StatusExpiryRule expiry, string? abilityId = null, string? relationshipId = null,
+        string? relatedObjectId = null) => new()
         {
             Id = $"status-{++_statusCounter}",
             Kind = kind,
@@ -2368,7 +2735,8 @@ public sealed class GameEngine : IGameEngine
             ExpiryRule = expiry,
             Visibility = StatusVisibility.Public,
             RelationshipId = relationshipId,
-            SourceAbilityId = abilityId
+            SourceAbilityId = abilityId,
+            RelatedObjectId = relatedObjectId
         };
 
     /// <summary>
@@ -2379,6 +2747,58 @@ public sealed class GameEngine : IGameEngine
         status.RelationshipId is null
             ? [status]
             : [.. state.Statuses.Where(s => string.Equals(s.RelationshipId, status.RelationshipId, StringComparison.OrdinalIgnoreCase))];
+
+    /// <summary>
+    /// What breaking a character's own cover releases, computed as a delta against a snapshot rather than
+    /// applied to it — see <see cref="ExposeIfInCover"/>.
+    /// </summary>
+    private readonly record struct CoverExposure(StatusEffectInstance? ReleasedStatus, CoverObject? ReleasedCover)
+    {
+        /// <summary>True when the character was actually sheltering behind something.</summary>
+        public bool Occurred => ReleasedStatus is not null;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="actorId"/> currently occupies cover and, if so, what releasing it would mean:
+    /// the <c>InCover</c> status to remove, and the cover object (with the occupant cleared) to write back.
+    /// Deliberately a pure query — it does NOT mutate <paramref name="state"/> — because <c>state</c> in a
+    /// Resolve method is the action's true "before" snapshot, reused as <see cref="EngineResult.StateBefore"/>;
+    /// the caller folds the returned delta into the "after" state it is already building, atomically with the
+    /// rest of that action's own effect (v0.9 §4: "release cover immediately before resolving that accepted
+    /// action" — immediately before the *result*, not before validation, and never for a rejected attempt,
+    /// since a Resolve method only reaches this point once every precondition of its own action has passed).
+    /// A no-op, returning an empty <see cref="CoverExposure"/>, when the actor occupies nothing.
+    /// </summary>
+    private static CoverExposure ExposeIfInCover(GameState state, string actorId)
+    {
+        var inCover = state.StatusOn(actorId, StatusEffectKind.InCover);
+        return inCover is null
+            ? default
+            : new CoverExposure(inCover, state.CoverOccupiedBy(actorId));
+    }
+
+    /// <summary>
+    /// Folds a computed <see cref="CoverExposure"/> into a state already being assembled as an action's
+    /// "after" result: removes the released <c>InCover</c> status, clears the released cover's occupant, and
+    /// records the transition. A no-op, returning <paramref name="after"/> unchanged, when nothing was
+    /// occupied.
+    /// </summary>
+    private static GameState ApplyExposure(GameState after, CoverExposure exposure, string cause, List<StatusEvent> statusEvents)
+    {
+        if (!exposure.Occurred)
+        {
+            return after;
+        }
+
+        after = after.WithoutStatuses([exposure.ReleasedStatus!.Id]);
+        if (exposure.ReleasedCover is not null)
+        {
+            after = after.WithCover(exposure.ReleasedCover with { CurrentOccupantId = null });
+        }
+
+        statusEvents.Add(new StatusEvent(StatusEventKind.Consumed, exposure.ReleasedStatus with { Consumed = true }, cause));
+        return after;
+    }
 
     /// <summary>
     /// Removes a set of statuses as expired, expanding each to its whole linked relationship and recording one
@@ -2446,6 +2866,14 @@ public sealed class GameEngine : IGameEngine
             }
 
             state = state.WithoutStatuses(removing.Keys);
+            changed = true;
+        }
+
+        // Cover occupancy (v0.9) is authoritative on the object, not only on the InCover status swept above —
+        // a character who leaves active play while sheltering must be cleared from the object itself too.
+        if (state.CoverOccupiedBy(characterId) is { } occupiedCover)
+        {
+            state = state.WithCover(occupiedCover with { CurrentOccupantId = null });
             changed = true;
         }
 

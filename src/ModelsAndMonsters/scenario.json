@@ -10,8 +10,18 @@
       "Description": "A low, brick-vaulted cellar under the ruined mill. Ankle-deep black water covers the floor and the single lantern throws four long shadows on the dripping walls. All four stand within a few paces of one another, face to face. Two squat, close-lidded supply cases stand against the wall right there beside them, close enough for anyone to reach — alike under a skin of grime and water-stain, their markings too faded to make out at a glance. At the foot of the stairs a single heavy wooden door, shut but unlocked, is the only way out — near enough for any of them to reach.",
       "Features": [
         "A guttering lantern hung from an iron hook",
-        "Ankle-deep cold water across the whole floor",
-        "Rotten crates stacked against one wall"
+        "Ankle-deep cold water across the whole floor"
+      ],
+      "Cover": [
+        {
+          "Id": "mill-workbench",
+          "Name": "Overturned Mill Workbench",
+          "Description": "A heavy mill workbench, knocked on its side against the flow of the fight. Its thick oak top and iron braces stand between whoever crouches behind it and the room, solid enough to duck behind and take a real blow on.",
+          "Capacity": 1,
+          "HitChanceModifier": -20,
+          "MaximumDurability": 2,
+          "Armour": 2
+        }
       ],
       "Containers": [
         {

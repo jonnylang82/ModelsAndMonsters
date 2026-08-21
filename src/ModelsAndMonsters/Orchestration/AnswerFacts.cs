@@ -283,6 +283,12 @@ public sealed class AnswerFactsProjector : IAnswerFactsProjector
 
         foreach (var worldObject in state.Room.Objects)
         {
+            if (worldObject is CoverObject cover)
+            {
+                lines.Add(DescribeCoverForAnswer(cover, state));
+                continue;
+            }
+
             if (worldObject is not Container container)
             {
                 lines.Add($"There is {worldObject.Name} in the room.");
@@ -609,6 +615,34 @@ public sealed class AnswerFactsProjector : IAnswerFactsProjector
         lines.Add("Try to snatch something from somebody, but only something you have a real reason to believe they " +
                   "are carrying. The grab is always noticed, and it may fail.");
 
+        var ownCover = state.CoverOccupiedBy(asker.Id);
+        if (ownCover is not null)
+        {
+            lines.Add($"Deliberately step out from behind {ownCover.Name}, with nothing else attempted. No roll. " +
+                      "You do not need to do this before attacking, reaching for something, or opening something — " +
+                      "an accepted action like that exposes you automatically as part of doing it.");
+        }
+
+        var freeCover = state.Room.Objects.OfType<CoverObject>()
+            .Where(c => c.CanProvideCover && c.CurrentOccupantId is null)
+            .ToList();
+        if (freeCover.Count > 0)
+        {
+            lines.Add($"Move behind one of these and take real shelter there, which costs your whole turn and makes " +
+                      $"no roll: {NaturalJoin([.. freeCover.Select(c => c.Name)])}.");
+        }
+
+        var damageableCover = state.Room.Objects.OfType<CoverObject>()
+            .Where(c => c.State != EnvironmentalObjectState.Destroyed
+                        && !string.Equals(c.CurrentOccupantId, asker.Id, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (asker.Weapon is not null && damageableCover.Count > 0)
+        {
+            lines.Add($"Deliberately strike one of these with your {asker.Weapon.Name} rather than a person, which " +
+                      $"makes no roll: {NaturalJoin([.. damageableCover.Select(c => c.Name)])}. It breaks your own " +
+                      "cover first, if you are behind any.");
+        }
+
         var closed = state.Room.Objects.OfType<Container>().Where(c => !c.IsOpen && !c.IsGround && !c.IsCorpse).ToList();
         if (closed.Count > 0)
         {
@@ -693,8 +727,12 @@ public sealed class AnswerFactsProjector : IAnswerFactsProjector
     [
         "There is no position, distance, facing, movement or spacing of any kind. Nobody has a location; " +
         "everyone in this room is already within arm's reach of everyone else, always. There is no closing in, " +
-        "no backing away, no circling, no flanking, no line of sight, no cover to get behind, no high ground, " +
-        "and no distance to measure or gain. Never describe any of that and never suggest it is possible.",
+        "no backing away, no circling, no flanking, no line of sight, no high ground, and no distance to measure " +
+        "or gain. The one exception, listed above if this room has any, is named environmental cover — a real " +
+        "object a character can move behind for real protection — which works without any distance or " +
+        "positioning at all: taking it costs a turn and gives up when the character leaves it, is exposed by " +
+        "another action, or the cover is destroyed, never by anyone moving toward or away from anything. Never " +
+        "describe distance, closing in or flanking, and never invent a second kind of cover this room does not list.",
 
         "There are no numbers anybody can perceive: no health totals, no armour values, no damage figures, no " +
         "chances to hit. Wounds are only ever described in words.",
@@ -709,6 +747,26 @@ public sealed class AnswerFactsProjector : IAnswerFactsProjector
         "Nobody can be forced into anything by words. A threat, a demand or a promise changes nothing until " +
         "somebody chooses to act on it on their own turn."
     ];
+
+    /// <summary>
+    /// Cover, for an answer (v0.9). Nothing here is hidden — everyone present can see the object, its
+    /// condition and who is behind it — so, unlike a container, none of it is omitted or marked withheld.
+    /// </summary>
+    private static string DescribeCoverForAnswer(CoverObject cover, GameState state)
+    {
+        if (cover.State == EnvironmentalObjectState.Destroyed)
+        {
+            return $"{cover.Name} has been destroyed and is wreckage now; it shelters nobody.";
+        }
+
+        var condition = cover.State == EnvironmentalObjectState.Damaged
+            ? "damaged, but still gives real protection"
+            : "intact";
+        var occupant = cover.CurrentOccupantId is null
+            ? "Nobody is behind it right now."
+            : $"{state.FindById(cover.CurrentOccupantId)?.Name ?? cover.CurrentOccupantId} is behind it right now.";
+        return $"{cover.Name} stands within reach, {condition}. {occupant}";
+    }
 
     private static string DescribeItem(InventoryItem item) =>
         item.HealingAmount is not null ? $"{item.DisplayName} (it would mend a wound if you used it)" : item.DisplayName;

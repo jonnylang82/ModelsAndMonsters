@@ -271,12 +271,14 @@ public sealed class AnswerFactsTests
         Assert.Contains("no position, distance, facing, movement or spacing of any kind", text, StringComparison.Ordinal);
         Assert.Contains("no backing away", text, StringComparison.Ordinal);
         Assert.Contains("no flanking", text, StringComparison.Ordinal);
-        Assert.Contains("no cover to get behind", text, StringComparison.Ordinal);
         Assert.Contains("no stunning, no knocking down", text, StringComparison.Ordinal);
 
-        // And nothing in the affordance list offers any of it.
+        // v0.9: cover is the one named exception to the no-positioning rule, but V07State() seeds none, so
+        // nothing in the affordance list may offer it here.
+        Assert.Contains("environmental cover", text, StringComparison.Ordinal);
         Assert.DoesNotContain(facts.Affordances, a => a.Contains("flank", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(facts.Affordances, a => a.Contains("back away", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(facts.Affordances, a => a.Contains("take cover", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

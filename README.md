@@ -1,4 +1,4 @@
-# Models & Monsters — v0.8
+# Models & Monsters — v0.9
 
 A small experimental harness for autonomous LLM characters interacting inside a deterministic fantasy
 world through an LLM Dungeon Master.
@@ -50,6 +50,18 @@ The project has grown release by release from a single 1v1 duel (v0.1) into the 
   [`reports/rulebook-efficiency.md`](reports/rulebook-efficiency.md). See
   [Morale: fear, threats and steadying](#morale-fear-threats-and-steadying) and
   [Attack quality](#attack-quality-one-draw-three-outcomes).
+- **v0.9** — **environmental cover**, the final planned feature phase: one authoritative cover object (an
+  overturned mill workbench) that a character can take, hold and lose, with exclusive capacity, a
+  hit-chance modifier, and its own durability. `take_cover` and `leave_cover` are explicit, RNG-free
+  actions; every other action that reaches toward someone or something is structured metadata
+  (`GameAction.ExposesActor`) that vacates cover as a side effect of resolving, never a second turn. An
+  attack against a covered character makes exactly the one existing hit-check roll, which the engine alone
+  resolves into a direct hit, a **cover interception** (the cover, not the roll, saved the target — one
+  point of durability lost, no quality draw, no character damage), or an ordinary miss the cover had
+  nothing to do with. `damage_environmental_object` lets a character batter the cover itself down instead
+  of the person behind it. Reducing durability to zero destroys the object — which stays in the room as
+  wreckage rather than disappearing — and exposes whoever was sheltering there. See
+  [Environmental cover](#environmental-cover).
 
 **New in v0.8: [`docs/architecture.md`](docs/architecture.md)** — the structural companion to this file.
 It maps the components and the five model-driven agents, walks a character's turn end to end through every
@@ -451,6 +463,56 @@ Exceeding the allowance now traces **`SpeechNotHeard`**, not `HarnessLimitReache
 something went wrong; a character running out of breath is the fiction working. Filing it under the former
 made a good run read as a troubled one — three of one run's four "harness limits" were this rule behaving
 exactly as designed.
+
+### Sampling parameters you do not set are not off (v0.8)
+
+**A sampling parameter the harness leaves unset takes the model's own default, and a chat-tuned model's
+defaults are tuned for conversation — not for producing exact structured output.** That is not a
+hypothetical: it was true of every local call this project has ever made, and nobody knew.
+
+A v0.8 Ollama log settles it. The per-agent temperatures reach the model exactly as configured:
+
+```text
+215 calls  top_k=40  top_p=0.900  temp=0.200   Dungeon Master
+137 calls  top_k=40  top_p=0.950  temp=0.800   characters
+131 calls  top_k=40  top_p=0.900  temp=0.100   Rulebook Resolver
+ 77 calls  top_k=40  top_p=0.900  temp=0.300   History Summariser
+ 31 calls  top_k=40  top_p=0.900  temp=0.000   Intent Parser
+```
+
+…and **all 605 of them** also carried this, which the harness never set and never recorded:
+
+```text
+repeat_penalty = 1.000   frequency_penalty = 0.000   presence_penalty = 1.500
+```
+
+`presence_penalty = 1.5` is Qwen's recommended default for general chat. A presence penalty exists to stop a
+model repeating itself. **This harness depends on the model repeating itself exactly** — tool names, stable
+ids, item names copied verbatim out of the state block, structural punctuation. Qwen's own sampling table
+puts the value at `1.5` for general tasks and `0.0` for *precise coding* — the one category where output
+must be structurally exact, which describes every call made here. Their documentation also warns that a high
+value can cause **language mixing**, and a live run closed a spoken line with `】` (U+3011, a CJK lenticular
+bracket) where `]` belonged.
+
+Whether that penalty *caused* the malformed tool calls is **not established** — it fits the evidence and it
+fits the vendor's own caveat, and it has not been tested. What is now true is that the harness sets the value
+instead of inheriting it, and records what it sent, so the question is answerable by changing one number and
+re-running under the same seed.
+
+**The second trap is greedy decoding.** `Temperature: 0` looks like the safe choice for a parser or a
+classifier. On qwen3.5 it is the opposite: a temperature-0 draw reproduces itself exactly, so a malformed
+reply comes back malformed identically however many times you retry. That is how a run died at round 5 — the
+intent parser 500'd three times on the same broken XML, while a character sampling at 0.8 shook the same
+fault off in the same trace. Qwen never recommends below 0.6 for any task or mode; zero was our number, not
+theirs, and the determinism it bought is already provided by the derived seed.
+
+Both are now explicit in `Agents:Default` (`PresencePenalty: 0.0`, `TopK: 20`) and the parser reads at 0.3.
+`PresencePenalty` and `FrequencyPenalty` are recorded per agent in `run.json` and per call in the trace's
+`RequestedOptions` — so two runs that differ on them no longer produce identical-looking artefacts. Anthropic
+has no equivalent parameter, so both are dropped and reported there like any other unsupported option.
+
+**Before blaming a model for malformed output, read the provider's log and check what sampler it actually
+ran under.** It is not necessarily what the config says.
 
 ### A local-model accommodation must not become a global rule (v0.8)
 
@@ -881,6 +943,120 @@ damage" means in a scripted test).
 Note for tests: `ScriptedRng.Solid` is **50**, not 100. Under three bands a maximum roll is a *critical*
 hit, so a test meaning "no quality variance" has to say so in the middle of the range.
 
+## Environmental cover
+
+v0.9 is the final planned feature phase, and its purpose is to prove one thing: that a piece of the room
+can carry the same authoritative state, structured actions, deterministic resolution, character knowledge,
+narration, tracing, UI and reporting already built for characters, items and abilities — without becoming a
+physics engine. The design principle stated in the build spec is worth repeating verbatim, because every
+choice below follows from it:
+
+> Environmental features are authoritative state with explicit affordances and deterministic consequences,
+> not decorative prose that the Dungeon Master may reinterpret freely.
+
+### One typed object, sharing the room's existing resolution
+
+`CoverObject` is a new `WorldObject` subtype (`Domain/WorldObject.cs`), living in the same `Room.Objects`
+array as `Container`. That was a deliberate fit to the existing shape rather than a new parallel
+collection: `GameState.ResolveObject` already resolves any room object by id or name and already reports
+ambiguity instead of guessing, so cover gets that discipline for free. Its mechanical fields —
+`ProvidesCover`, `Capacity`, `CurrentOccupantId`, `HitChanceModifier`, `MaximumDurability`,
+`CurrentDurability`, `Armour` — are exactly what the build spec asked for; `State` (Intact/Damaged/Destroyed)
+is *derived* from durability rather than stored, so the two can never disagree. The shipped scenario seeds
+one: an overturned mill workbench, capacity 1, `-20` hit chance, `2/2` durability, armour `2` — replacing
+the "Rotten crates" flavour feature so the room does not carry both a decorative object and a mechanical
+duplicate of the same thing.
+
+Occupancy is a single slot, not a list, because the one seeded object has a capacity of exactly one;
+`Capacity` is still carried as its own field, not derived from the slot, so a later multi-occupant object
+has somewhere to grow into without another schema change — nothing in v0.9 exercises a capacity above one,
+and no code was written to pretend otherwise.
+
+### A new status, not a hidden mechanic
+
+Occupying cover is `StatusEffectKind.InCover` — a public status, like every other v0.7/v0.8 status, that
+lives on `GameState.Statuses` rather than on `Character`. It carries a new `RelatedObjectId` field (the one
+addition to `StatusEffectInstance` itself) naming which object it concerns, and it expires
+`WhileConditionHolds` — the same rule `Scared` uses — so the turn-upkeep sweep never touches it; only an
+explicit removal ends it. No hidden-information mechanic applies to cover at all: everyone present sees the
+object, its condition and its occupant, exactly like an exit's open state, never like a closed container's
+contents.
+
+### Structured exposure, not language parsing
+
+The build spec's hardest constraint was this: *whether an action breaks cover must be decided from
+structured metadata, never by reading what a model wrote.* The answer is `GameAction.ExposesActor`, a
+virtual property every action states its own true/false for at the declaration site, next to `ActionType`
+and `Describe()`. `attack_character`, `steal_item`, `take_item`, `open_container`, `inspect_object`,
+`open_exit`, `damage_environmental_object` and (by the same reasoning, though enforced through the
+disposition-driven purge rather than a direct call) `escape_encounter` all expose; `defend`, self-targeted
+`use_item`, `offer_surrender`, `accept_surrender`, `intimidate_character` and `steady_ally` do not. Two
+actions the spec left unlisted needed a judgement call, made and documented at the point it is made rather
+than guessed from wording: `give_item` exposes (reaching toward another character), `drop_item` does not
+(nothing leaves your own feet). `use_ability` is generic across five different abilities, so its exposure is
+resolved per-ability inside the engine instead of on the action type — Guard Ally always exposes (you cannot
+stand over a companion from behind cover), Rally Grunt never does (a shouted order needs no reach), and
+Healing Prayer exposes only when the target is someone other than the caster.
+
+The actual mechanism is a query/apply pair in `GameEngine`: `ExposeIfInCover(state, actorId)` reads whether
+an actor occupies cover and returns the delta (the status to remove, the cover object to update) *without
+mutating the snapshot it was given* — because that snapshot is the action's `EngineResult.StateBefore`, and
+the trace has to show the actor still behind cover there, exposed only in `StateAfter`. `ApplyExposure` folds
+that delta into whatever "after" state a `Resolve*` method is already building, atomically with the rest of
+that action's own effect. Ten call sites wire it in: the shared weapon-strike resolution (covering both
+`attack_character` and Dirty Strike in one place), `steal_item`, `take_item`, `open_container`,
+`inspect_object`, `open_exit`, `give_item`, `damage_environmental_object`, Guard Ally, and Healing Prayer.
+Death, surrender and escape release cover through the existing `PurgeForInactive` sweep instead — extended
+with one more check (clear the object's occupant slot alongside the status it already swept) — because those
+are already the one place every other status-cleanup for a character leaving active play happens.
+
+### One roll, three outcomes
+
+An attack against a covered character still makes exactly the *existing* single hit-check roll — v0.9 adds
+no second draw. What changes is how that one roll is read. The attacker's ordinary effective hit chance
+(every existing status modifier, in the existing fixed order) becomes the **pre-cover** chance; the cover's
+own `HitChanceModifier` is folded in afterward, clamped again, to reach the **covered** chance:
+
+```text
+raw roll <= covered chance                            -> DIRECT HIT   (cover irrelevant this time)
+covered chance < raw roll <= pre-cover chance          -> INTERCEPTION (the cover, not luck, saved them)
+raw roll > pre-cover chance                            -> ORDINARY MISS (would have missed regardless)
+```
+
+Only a direct hit proceeds to the existing quality draw, armour subtraction, Defend reduction and fear
+rules — all of it completely unchanged; cover modifies the hit check and nothing downstream of it. An
+interception costs the cover exactly one point of durability, ignoring the cover's own armour (that only
+applies to *deliberate* damage), makes no quality draw, and does no damage to the character at all — reduced
+to zero, it destroys the object and evicts its occupant in the same event. An ordinary miss changes nothing
+about the cover, and the report is careful never to credit it: `AttackOutcome` carries `InterceptedByCover`
+as a distinct fact from `Hit`, so a covered miss and a cover interception are never conflated in the trace,
+the report or the transcript. No damage-prevented *number* is ever reported for an interception, because the
+attack never reached the quality draw that would have produced one — reporting one would be inventing data
+the engine never had.
+
+### Deliberately damaging the object itself
+
+`damage_environmental_object` is the other new action: a character striking the cover rather than whoever
+shelters behind it. It makes no roll at all — a stationary room object does not dodge — so damage is the
+deterministic `max(1, weapon damage - object armour)`, distinct from a character's own damage formula
+(`max(0, ...)`, which lets armour fully stop a blow) because cover always takes *some* chip damage from a
+real weapon. It breaks the striker's own cover first, if they occupy any, and is refused outright against
+the very cover the striker currently occupies — battering down your own shelter mid-fight is not a
+representable intent.
+
+### What a run actually shows
+
+The run report gained one new section family (`Tracing/RunReportWriter.cs`): an environmental-object summary
+table (initial/final state, capacity, final occupant, who destroyed it), an occupancy timeline built entirely
+from `InCover` status transitions (so entering, leaving, being exposed, and being evicted by destruction all
+read as one timeline without a separate trace-event vocabulary for each), a cover-effectiveness table
+(direct hits vs. interceptions vs. ordinary misses, per object), and an object-damage table. Four new trace
+event types support this: `CoverInteraction` and `EnvironmentalObjectDamaged` (companion rows to the generic
+`EngineAction` row, emitted for accepted *and* rejected attempts alike, the same discipline `ExitInteraction`
+already has), `AttackAgainstCover` (the covered-attack companion, always emitted when an attack's target was
+sheltering, whatever the result), and the focused `EnvironmentalObjectDestroyed` — the same relationship
+`CharacterSurrendered`/`CharacterEscaped` have to `DispositionChanged`.
+
 ## Grounded answers: `AnswerFacts`
 
 Weak-model runs exposed a class of failure the DM prompt could not fix: asked a question, the Dungeon
@@ -902,8 +1078,10 @@ that character may be answered from:
 - the **complete closed list** of what they could actually attempt, derived from state — a spent ability
   does not appear, a strike does not appear for empty hands, an acceptance appears only for the named
   recipient of a live offer, and the list ends by saying nothing else exists;
-- explicit statements of what this world does not have: no position, distance, facing, movement, cover,
-  flanking or line of sight; no numbers anybody can perceive; no stun, knockdown, trip, disarm or grapple.
+- explicit statements of what this world does not have: no position, distance, facing, movement, flanking
+  or line of sight; no numbers anybody can perceive; no stun, knockdown, trip, disarm or grapple. Named
+  environmental cover is the one deliberate exception (v0.9) — real when the room has it, and stated as
+  such, never invented where it does not.
 
 The DM's job is reduced from *deciding what is true* to *saying it naturally*. Anything the projection
 withholds is recorded separately on `AnswerFactsProjected` — never sent to any model — so a run's trace
@@ -1264,11 +1442,14 @@ src/ModelsAndMonsters/
     AI/              model profiles (with per-agent inheritance), provider capabilities, chat client factory
     Configuration/   options and scenario definitions (teams, per-character profiles, exits, abilities, rulebook flags)
     Domain/          characters (team, disposition, abilities, fear), weapons (with stable ids), items, injuries,
-                     room, exits, status effects, surrender offers and agreements, intimidation attempts,
-                     the one health-band definition (v0.8), the morale rules (v0.8), game state
-    Engine/          game actions, results, combat rules (the three-band quality draw + intimidation
-                     modifiers, v0.8), RNG draw records + modifiers, turn upkeep, team terminal condition,
-                     deterministic in-world refusal rendering (v0.7), the engine
+                     room, exits, environmental cover objects (v0.9), status effects (including InCover, v0.9),
+                     surrender offers and agreements, intimidation attempts, the one health-band definition
+                     (v0.8), the morale rules (v0.8), game state
+    Engine/          game actions (each stating its own ExposesActor, v0.9), results, combat rules (the
+                     three-band quality draw + intimidation modifiers, v0.8), RNG draw records + modifiers,
+                     turn upkeep, team terminal condition, deterministic in-world refusal rendering (v0.7),
+                     the engine (including the three-way covered-attack resolution and cover-exposure
+                     query/apply pair, v0.9)
     Knowledge/       the knowledge ledger — facts, sources, per-character learned records, backstory seeding
     Orchestration/   simulation runner (fixed turn order, team terminal check), turn coordinator,
                      narration log, the deterministic AnswerFacts projection (v0.7)
@@ -1331,6 +1512,10 @@ A few things worth knowing that aren't obvious from reading any single file:
   character malformed; everything it does was survivable before it was added. It had no failure path, so
   when its provider returned 500 the exception unwound through the turn, the round loop and the run
   (v0.8, `reports/v0_8_issues.md` §11). Every convenience component is worth checking for this.
+- **Check the provider's sampler log before blaming the model.** A parameter the harness does not set takes
+  the model's default, which for a chat-tuned model is tuned for conversation. Every local call in this
+  project carried an inherited `presence_penalty = 1.5` — a knob that discourages exactly the exact-string
+  repetition tool calling depends on — set by nobody and recorded nowhere until v0.8.
 - **A retry that does not genuinely re-sample is not a retry.** The transient-retry path moved the seed and
   lifted temperature to 0.1 — near-greedy — and reproduced the identical malformed reply three times. One
   live run contained both outcomes at once: an agent at 0.8 recovered on its third attempt while the

@@ -92,6 +92,15 @@ public sealed record TracedAgentProfile
 
     public long? Seed { get; init; }
 
+    /// <summary>
+    /// Penalties as configured. Recorded because when they are unset the MODEL's default applies, which is
+    /// not neutral and was invisible in the artefacts until v0.8 — two runs could differ on it and their
+    /// manifests would look identical.
+    /// </summary>
+    public float? PresencePenalty { get; init; }
+
+    public float? FrequencyPenalty { get; init; }
+
     public int? ContextWindow { get; init; }
 
     /// <summary>
@@ -124,6 +133,8 @@ public sealed record TracedAgentProfile
             TopP = profile.TopP,
             TopK = profile.TopK,
             MaxOutputTokens = profile.MaxOutputTokens,
+            PresencePenalty = profile.PresencePenalty,
+            FrequencyPenalty = profile.FrequencyPenalty,
             Seed = profile.Seed,
             ContextWindow = profile.ContextWindow,
             BindingContextWindow = profile.BindingContextWindow,

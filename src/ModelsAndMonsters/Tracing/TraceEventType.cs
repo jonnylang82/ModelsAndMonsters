@@ -257,6 +257,34 @@ public enum TraceEventType
     /// <summary>The team terminal condition was evaluated after an accepted action or a turn.</summary>
     TeamOutcomeEvaluated,
 
+    /// <summary>
+    /// An attempt to take or leave environmental cover, accepted or rejected (v0.9). Complements the generic
+    /// <see cref="EngineAction"/> row with the cover-specific id, the occupancy transition and capacity state.
+    /// </summary>
+    CoverInteraction,
+
+    /// <summary>
+    /// An attack whose target was sheltering behind environmental cover, whatever the result (v0.9).
+    /// Complements the attack's own <see cref="EngineAction"/> row with the pre-cover and covered effective
+    /// hit chances, the classification (direct hit, cover interception, or ordinary miss), and any durability
+    /// effect — so a covered attack is provably distinguishable from an ordinary one in the trace alone.
+    /// </summary>
+    AttackAgainstCover,
+
+    /// <summary>
+    /// An attempt to deliberately damage an environmental object, accepted or rejected (v0.9). Complements the
+    /// generic <see cref="EngineAction"/> row with the object-specific weapon/armour arithmetic and durability
+    /// transition.
+    /// </summary>
+    EnvironmentalObjectDamaged,
+
+    /// <summary>
+    /// An environmental object's durability reached zero, from a cover interception or deliberate damage
+    /// (v0.9). A focused, semantic companion to whichever row caused it — the same relationship
+    /// <see cref="CharacterSurrendered"/> and <see cref="CharacterEscaped"/> have to <see cref="DispositionChanged"/>.
+    /// </summary>
+    EnvironmentalObjectDestroyed,
+
     Narration,
     NarrationDelivered,
 

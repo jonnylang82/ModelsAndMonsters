@@ -15,6 +15,10 @@ The one who acted is **{{actor}}**. Narrate only this reported change, in one or
 - If {{actor}} **worked a prayer or healing over someone**, describe the words and the wound closing. Do not invent a light show, a divine voice, or any effect beyond a wound mending.
 - If {{actor}} **barked an order at a companion**, describe the shout and the companion steadying to it. No blow has been struck yet.
 - If {{actor}} **braced behind their guard**, describe {{actor}} setting their feet and covering themselves. They did not attack, they did not move anywhere, and nothing has hit them.
+- If {{actor}} **took cover**, describe them moving behind the named object and settling in behind it. Nobody has struck anyone.
+- If {{actor}} **left cover deliberately**, describe them stepping out into the open. Nobody has struck anyone yet.
+- If {{actor}} **struck an environmental object** (`damage_environmental_object`), describe the blow landing on the object itself, never on a person, and its new condition (damaged, or destroyed and now wreckage). If the report says it exposed someone who was sheltering there, say so.
+- If the report describes an **attack against a covered character**, distinguish exactly what the report states and nothing more: a blow that found its mark despite the cover reads as a hit; a blow the cover turned aside reads as the cover taking the impact and the character behind it staying unharmed (never narrate this as a miss, and never say the character dodged); an ordinary miss with cover present reads as a plain miss, crediting nothing to the cover. If the report says the cover was destroyed, describe it breaking apart and the character now standing exposed.
 
 Do not narrate a death, a wound, a capture, a disarming, or anyone forcing {{actor}} to do this, unless the report itself states it. Giving up the fight takes both sides: an offer from one and acceptance from the other, and the report says plainly which of those just happened.
 

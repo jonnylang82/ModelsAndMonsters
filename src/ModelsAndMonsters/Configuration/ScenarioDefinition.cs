@@ -37,6 +37,36 @@ public sealed class RoomDefinition
 
     /// <summary>Ways out of the encounter seeded into the room, such as the cellar stair door.</summary>
     public List<ExitDefinition> Exits { get; set; } = [];
+
+    /// <summary>Environmental cover seeded into the room, such as the overturned mill workbench (v0.9).</summary>
+    public List<CoverDefinition> Cover { get; set; } = [];
+}
+
+/// <summary>
+/// An environmental cover object seeded into a room (v0.9). Preserve the seeded mechanical values unless
+/// testing exposes a clear problem — they are what the v0.9 spec calibrated the vertical slice against.
+/// </summary>
+public sealed class CoverDefinition
+{
+    public string Id { get; set; } = "";
+
+    public string Name { get; set; } = "";
+
+    public string Description { get; set; } = "";
+
+    /// <summary>How many characters can shelter here at once. The v0.9 slice seeds exactly one.</summary>
+    public int Capacity { get; set; } = 1;
+
+    /// <summary>Added to an attacker's effective hit chance against a target sheltering here. Negative.</summary>
+    public int HitChanceModifier { get; set; } = -20;
+
+    public int MaximumDurability { get; set; } = 2;
+
+    /// <summary>Starting durability. Defaults to <see cref="MaximumDurability"/> — the object starts intact.</summary>
+    public int? CurrentDurability { get; set; }
+
+    /// <summary>Subtracted from a weapon's damage when this object is deliberately struck.</summary>
+    public int Armour { get; set; } = 2;
 }
 
 /// <summary>

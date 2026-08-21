@@ -99,6 +99,8 @@ public static class ChatTraceMapper
         TopP = options?.TopP,
         TopK = options?.TopK,
         MaxOutputTokens = options?.MaxOutputTokens,
+        PresencePenalty = options?.PresencePenalty,
+        FrequencyPenalty = options?.FrequencyPenalty,
         Seed = options?.Seed,
         // Provider-native options live in AdditionalProperties under provider-specific keys, so the
         // requested window, effort and thinking flag are taken from the profile rather than dug back out.

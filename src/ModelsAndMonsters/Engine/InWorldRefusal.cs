@@ -40,10 +40,26 @@ public static class InWorldRefusal
     /// The thing the refusal is about when the code needs one — a named target, item, container, object or
     /// exit — already resolved to how the character would refer to it. Null when the code needs none.
     /// </param>
-    public static string Render(EngineRejectionReason reason, string actorName, string? subjectName = null)
+    /// <param name="possessorName">
+    /// Who was supposed to be holding the item, when that is somebody other than the actor. Null means the
+    /// actor themselves, which is the ordinary case.
+    /// </param>
+    /// <remarks>
+    /// The possessor exists because most item refusals are about something the actor owns — using, dropping
+    /// or giving their own things — and are correctly written in the second person. A THEFT is not: it has
+    /// two people in it and the one who was meant to be carrying the item is the target. A live run showed
+    /// what that costs. Skrit tried three times to steal a purse from Rowan four rounds after Rowan gave it
+    /// away in the open, and each time the engine said, correctly, "Rowan is not carrying it" — while the
+    /// line that actually reached Skrit was "You are not carrying the Small Purse of Gold Coins (Rowan's)".
+    /// True, irrelevant, and about the wrong person: it told him nothing to correct, so he simply repeated
+    /// himself until his turn was gone.
+    /// </remarks>
+    public static string Render(
+        EngineRejectionReason reason, string actorName, string? subjectName = null, string? possessorName = null)
     {
         var subject = string.IsNullOrWhiteSpace(subjectName) ? null : subjectName.Trim();
         var it = subject is null ? "it" : $"the {subject}";
+        var possessor = string.IsNullOrWhiteSpace(possessorName) ? null : possessorName.Trim();
 
         return reason switch
         {
@@ -79,8 +95,13 @@ public static class InWorldRefusal
             EngineRejectionReason.ActorHasNoWeapon => "You have nothing in your hands to strike with.",
             EngineRejectionReason.WeaponNotPossessed =>
                 subject is null ? "That is not the weapon you are holding." : $"You are not holding {it}.",
-            EngineRejectionReason.ItemNotPossessed =>
-                subject is null ? "You are not carrying that." : $"You are not carrying {it}.",
+            // Second person when the actor is the one who was meant to have it; otherwise name them, because
+            // "you are not carrying it" is not an answer to "I reach for what he is carrying".
+            EngineRejectionReason.ItemNotPossessed => possessor is null
+                ? (subject is null ? "You are not carrying that." : $"You are not carrying {it}.")
+                : (subject is null
+                    ? $"Your hand finds nothing — {possessor} has no such thing on them."
+                    : $"Your hand finds nothing — {possessor} does not have {it}."),
             EngineRejectionReason.ItemHasNoSupportedEffect =>
                 subject is null ? "Nothing comes of using it." : $"Nothing comes of using {it} that way.",
             EngineRejectionReason.ItemTargetNotSupported =>
@@ -173,6 +194,32 @@ public static class InWorldRefusal
                     ? "Your words were meant for somebody else, and they landed elsewhere."
                     : $"Your words were meant for somebody else, not {subject}.",
 
+            // Environmental cover (v0.9).
+            EngineRejectionReason.UnknownCover =>
+                subject is null
+                    ? "There is nothing here to take shelter behind."
+                    : $"There is no {subject} here to take shelter behind.",
+            EngineRejectionReason.CoverReferenceAmbiguous =>
+                "There is more than one of those; you would have to be clearer about which.",
+            EngineRejectionReason.CoverCannotBeUsed =>
+                subject is null ? "It offers no shelter now." : $"{Capitalise(it)} offers no shelter now.",
+            EngineRejectionReason.AlreadyInThatCover =>
+                subject is null ? "You are already behind it." : $"You are already behind {it}.",
+            EngineRejectionReason.CoverFull =>
+                subject is null ? "There is no room left behind it." : $"There is no room left behind {it}.",
+            EngineRejectionReason.NotInCover =>
+                "You are not sheltering behind anything to step out of.",
+            EngineRejectionReason.ObjectCannotBeDamaged =>
+                subject is null
+                    ? "There is nothing about it your blow can do anything to."
+                    : $"There is nothing about {it} your blow can do anything to.",
+            EngineRejectionReason.ObjectAlreadyDestroyed =>
+                subject is null ? "It is already wreckage." : $"{Capitalise(it)} is already wreckage.",
+            EngineRejectionReason.CannotDamageOwnCover =>
+                subject is null
+                    ? "You will not tear apart the very thing shielding you."
+                    : $"You will not tear apart {it} while it is shielding you.",
+
             _ => Generic
         };
     }
@@ -199,13 +246,27 @@ public static class InWorldRefusal
 
             EngineRejectionReason.UnknownContainer or EngineRejectionReason.ContainerAlreadyOpen
                 or EngineRejectionReason.ContainerClosed or EngineRejectionReason.UnknownObject
-                or EngineRejectionReason.NothingToInspect => ObjectName(action),
+                or EngineRejectionReason.NothingToInspect or EngineRejectionReason.UnknownCover
+                or EngineRejectionReason.CoverReferenceAmbiguous or EngineRejectionReason.CoverCannotBeUsed
+                or EngineRejectionReason.AlreadyInThatCover or EngineRejectionReason.CoverFull
+                or EngineRejectionReason.ObjectCannotBeDamaged or EngineRejectionReason.ObjectAlreadyDestroyed
+                or EngineRejectionReason.CannotDamageOwnCover => ObjectName(action),
 
             EngineRejectionReason.UnknownExit or EngineRejectionReason.ExitAlreadyOpen
                 or EngineRejectionReason.ExitClosed => ExitName(action),
 
             _ => null
         };
+
+    /// <summary>
+    /// Who the refusal should say was holding the item, or null when that is the actor and the second person
+    /// is right. Only a theft names somebody else: using, dropping, giving and promising are all about the
+    /// actor's own belongings.
+    /// </summary>
+    public static string? PossessorFor(GameAction action, EngineRejectionReason reason, GameState state) =>
+        reason == EngineRejectionReason.ItemNotPossessed && action is StealItemAction steal
+            ? state.Resolve(steal.TargetRef)?.Name ?? steal.TargetRef
+            : null;
 
     private static string? CharacterName(GameAction action, GameState state)
     {
@@ -241,6 +302,8 @@ public static class InWorldRefusal
         OpenContainerAction open => open.ContainerRef,
         TakeItemAction take => take.ContainerRef,
         InspectObjectAction inspect => inspect.ObjectRef,
+        TakeCoverAction cover => cover.CoverRef,
+        DamageEnvironmentalObjectAction damage => damage.ObjectRef,
         _ => null
     };
 

@@ -85,6 +85,16 @@ But guarding is not a plan. Nothing is coming to end this fight for you, and nob
 
 Beyond that you have exactly what is listed under **what you can do beyond a plain swing** in your own state each turn, and nothing else. Some you can manage only once in a fight; your state tells you what is left. Use one as you would say it aloud ("I step in front of Elara and take whatever comes at her"), naming who it is for. Do not reach for something not on that list, and do not try one your state says is spent — you would throw the turn away.
 
+# Cover
+
+Your state tells you, every turn, whatever real cover stands in this room — something solid you can move behind and actually be harder to hit — and whether you are already behind it. If nothing is listed there, there is none here; do not invent any.
+
+Moving behind cover ("I duck behind the workbench") is its own whole turn and no dice are rolled. Once you are there, you genuinely are harder to hit, and a blow that would have landed on you may be turned aside by the cover instead — you never decide that; the world tells you plainly what happened.
+
+Staying behind it costs you nothing more, and you can still speak, brace, or use something on yourself without giving it up. But swinging at someone, reaching for an item or an object, or opening something all mean stepping out to do it — the world exposes you automatically as part of doing that, so you do not need to spend a separate turn leaving first. If you only want to step out and do nothing else this turn, that is its own deliberate act, not something to combine with an attack.
+
+You may also strike the cover itself, deliberately, rather than a person — battering it down rather than the one behind it, if you have reason to. It makes no roll: the object simply takes the damage.
+
 # What you know, and what you don't
 
 You do not automatically know everything another person knows. Being in the same room lets you see what they *do* — but not what only they can see.

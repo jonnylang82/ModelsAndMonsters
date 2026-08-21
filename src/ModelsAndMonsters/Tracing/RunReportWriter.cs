@@ -86,6 +86,7 @@ public static class RunReportWriter
         WriteTeams(report, manifest);
         WriteKnowledge(report, events, manifest, finalState);
         WriteExitState(report, manifest, finalState);
+        WriteEnvironmentalObjects(report, manifest, finalState, events);
         WriteTranscript(report, events);
         if (includeFullTrace)
         {
@@ -2173,6 +2174,230 @@ public static class RunReportWriter
         && array.ValueKind == JsonValueKind.Array
         && array.EnumerateArray().Any(x =>
             x.ValueKind == JsonValueKind.String && string.Equals(x.GetString(), id, StringComparison.OrdinalIgnoreCase));
+
+    // -------------------------------------------------------------------------------------------
+    // Environmental objects (v0.9)
+    // -------------------------------------------------------------------------------------------
+
+    /// <summary>Room objects with a "HitChanceModifier" field — the distinguishing shape of a cover object.</summary>
+    private static IEnumerable<JsonElement> Covers(JsonElement state) =>
+        state.TryGetProperty("Room", out var room)
+        && room.TryGetProperty("Objects", out var objects)
+        && objects.ValueKind == JsonValueKind.Array
+            ? objects.EnumerateArray().Where(o => o.ValueKind == JsonValueKind.Object && o.TryGetProperty("HitChanceModifier", out _))
+            : [];
+
+    private static string? NameOfCharacter(JsonElement state, string? id)
+    {
+        if (id is null)
+        {
+            return null;
+        }
+
+        foreach (var c in Characters(state))
+        {
+            if (string.Equals(Scalar(c, "Id"), id, StringComparison.OrdinalIgnoreCase))
+            {
+                return Scalar(c, "Name");
+            }
+        }
+
+        return id;
+    }
+
+    /// <summary>
+    /// Environmental objects (v0.9): each object's initial and final state; the full occupancy timeline; how
+    /// covered attacks actually went; and every deliberate strike on an object. Reconstructed from the initial
+    /// and final authoritative state plus the trace, so it is independent of any narration. Skipped when the
+    /// scenario seeded no cover object, so a pre-v0.9 run adds no empty section.
+    /// </summary>
+    private static void WriteEnvironmentalObjects(
+        StringBuilder report, JsonElement? manifest, JsonElement? finalState, IReadOnlyList<TraceRow> events)
+    {
+        var initial = new List<(string Id, string Name, int Capacity, int MaxDurability, int InitialDurability)>();
+        if (TryGet(manifest, out var initState, "InitialState"))
+        {
+            foreach (var o in Covers(initState))
+            {
+                initial.Add((
+                    Scalar(o, "Id"), Scalar(o, "Name"), (int)LongField(o, "Capacity"),
+                    (int)LongField(o, "MaximumDurability"), (int)LongField(o, "CurrentDurability")));
+            }
+        }
+
+        if (initial.Count == 0)
+        {
+            return;
+        }
+
+        var final = new Dictionary<string, (int Durability, string State, string? Occupant)>(StringComparer.OrdinalIgnoreCase);
+        if (TryGet(finalState, out var fs, "State"))
+        {
+            foreach (var o in Covers(fs))
+            {
+                var maxDurability = (int)LongField(o, "MaximumDurability");
+                var durability = (int)LongField(o, "CurrentDurability");
+                var state = durability <= 0 ? "Destroyed" : durability < maxDurability ? "Damaged" : "Intact";
+                final[Scalar(o, "Id")] = (durability, state, NameOfCharacter(fs, Text(o, "CurrentOccupantId")));
+            }
+        }
+
+        var destroyedBy = events
+            .Where(e => e.EventType == "EnvironmentalObjectDestroyed")
+            .GroupBy(e => Text(e.Data, "ObjectId") ?? "", StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.Last(), StringComparer.Ordinal);
+
+        report.AppendLine("## Environmental objects");
+        report.AppendLine();
+        report.AppendLine(
+            "Every environmental object the scenario seeded: its condition at the start and end of the run, " +
+            "and, when it was destroyed, who destroyed it.");
+        report.AppendLine();
+        report.AppendLine("| Object | Capacity | Max durability | Initial state | Final durability | Final state | Final occupant | Destroyed by |");
+        report.AppendLine("| --- | --- | --- | --- | --- | --- | --- | --- |");
+        foreach (var (id, name, capacity, maxDurability, initialDurability) in initial)
+        {
+            var initialState = initialDurability <= 0 ? "Destroyed" : initialDurability < maxDurability ? "Damaged" : "Intact";
+            var (finalDurability, finalObjectState, finalOccupant) = final.TryGetValue(id, out var f)
+                ? f : (initialDurability, initialState, null);
+            var destroyer = destroyedBy.TryGetValue(id, out var row)
+                ? Text(row.Data, "DestroyedByCharacterName") ?? "(unknown)"
+                : "—";
+            report.AppendLine(
+                $"| {name} | {capacity} | {maxDurability} | {initialState} | {finalDurability} | {finalObjectState} | " +
+                $"{finalOccupant ?? "(nobody)"} | {destroyer} |");
+        }
+
+        report.AppendLine();
+
+        WriteOccupancyTimeline(report, events);
+        WriteCoverEffectiveness(report, events);
+        WriteObjectDamage(report, events);
+    }
+
+    /// <summary>
+    /// Every entry into and exit from environmental cover, in order, with its cause. Reconstructed from the
+    /// <c>InCover</c> status transitions — every occupancy change is one of these, whether voluntary, forced
+    /// by an exposing action, caused by the cover's destruction, or a consequence of leaving active play.
+    /// </summary>
+    private static void WriteOccupancyTimeline(StringBuilder report, IReadOnlyList<TraceRow> events)
+    {
+        var transitions = events
+            .Where(e => e.EventType is "StatusApplied" or "StatusConsumed" or "StatusExpired" or "StatusRemoved"
+                        && string.Equals(Text(e.Data, "Kind"), "InCover", StringComparison.Ordinal))
+            .OrderBy(e => e.Sequence)
+            .ToList();
+
+        if (transitions.Count == 0)
+        {
+            return;
+        }
+
+        report.AppendLine("### Occupancy timeline");
+        report.AppendLine();
+        report.AppendLine(
+            "Every entry into and exit from cover. \"Entered\" is always voluntary (`take_cover`); every other " +
+            "transition ends the occupancy, whether by choice, by an exposing action, by the cover's " +
+            "destruction, or because the occupant left active play.");
+        report.AppendLine();
+        report.AppendLine("| Round.Turn | Character | Transition | Cause |");
+        report.AppendLine("| --- | --- | --- | --- |");
+        foreach (var row in transitions)
+        {
+            var transition = row.EventType == "StatusApplied" ? "Entered" : "Left";
+            report.AppendLine(
+                $"| {row.Round}.{row.Turn} | {Text(row.Data, "TargetCharacterName")} | {transition} | " +
+                $"{CellText(Text(row.Data, "Cause"))} |");
+        }
+
+        report.AppendLine();
+    }
+
+    /// <summary>
+    /// How attacks against covered characters actually went: direct hits despite cover, interceptions, and
+    /// ordinary misses, per cover object. Only the hit itself is reported as prevented on an interception —
+    /// never a damage figure, since an intercepted attack never reaches the quality draw that would have
+    /// decided one, so no such number can be calculated honestly.
+    /// </summary>
+    private static void WriteCoverEffectiveness(StringBuilder report, IReadOnlyList<TraceRow> events)
+    {
+        var attacks = events.Where(e => e.EventType == "AttackAgainstCover").OrderBy(e => e.Sequence).ToList();
+        if (attacks.Count == 0)
+        {
+            return;
+        }
+
+        report.AppendLine("### Cover effectiveness");
+        report.AppendLine();
+        report.AppendLine(
+            "Every attack whose target was sheltering behind cover, classified by what the single hit-check " +
+            "roll actually decided. A direct hit found its mark despite the cover; an interception is a hit the " +
+            "cover — not the roll alone — turned aside, costing the object one point of durability; an ordinary " +
+            "miss would have missed with or without the cover, which changed nothing.");
+        report.AppendLine();
+        report.AppendLine("| Cover | Attacks against it | Direct hits | Interceptions | Ordinary misses | Durability lost to interceptions | Destroyed by interception |");
+        report.AppendLine("| --- | --- | --- | --- | --- | --- | --- |");
+        foreach (var group in attacks.GroupBy(e => Text(e.Data, "CoverName") ?? "", StringComparer.Ordinal).OrderBy(g => g.Key, StringComparer.Ordinal))
+        {
+            var direct = group.Count(e => Text(e.Data, "Classification") == "DirectHit");
+            var intercepted = group.Count(e => Text(e.Data, "Classification") == "Intercepted");
+            var missed = group.Count(e => Text(e.Data, "Classification") == "OrdinaryMiss");
+            var durabilityLost = group.Where(e => Text(e.Data, "Classification") == "Intercepted")
+                .Sum(e => LongField(e.Data, "DurabilityBefore") - LongField(e.Data, "DurabilityAfter"));
+            var destroyedCount = group.Count(e => Text(e.Data, "Classification") == "Intercepted" && IsTrue(e.Data, "Destroyed"));
+            report.AppendLine(
+                $"| {group.Key} | {group.Count()} | {direct} | {intercepted} | {missed} | {durabilityLost} | {destroyedCount} |");
+        }
+
+        report.AppendLine();
+
+        report.AppendLine("| Round.Turn | Attacker | Target | Cover | Pre-cover chance | Covered chance | Roll | Result |");
+        report.AppendLine("| --- | --- | --- | --- | --- | --- | --- | --- |");
+        foreach (var row in attacks)
+        {
+            var classification = Text(row.Data, "Classification") switch
+            {
+                "DirectHit" => "direct hit despite cover",
+                "Intercepted" => "cover intercepted the blow",
+                _ => "ordinary miss"
+            };
+            report.AppendLine(
+                $"| {row.Round}.{row.Turn} | {Text(row.Data, "AttackerName")} | {Text(row.Data, "TargetName")} | " +
+                $"{Text(row.Data, "CoverName")} | {Text(row.Data, "PreCoverHitChance")} | {Text(row.Data, "CoveredHitChance")} | " +
+                $"{Text(row.Data, "RawRoll")} | {classification} |");
+        }
+
+        report.AppendLine();
+    }
+
+    /// <summary>Every deliberate strike on an environmental object, accepted or rejected.</summary>
+    private static void WriteObjectDamage(StringBuilder report, IReadOnlyList<TraceRow> events)
+    {
+        var attempts = events.Where(e => e.EventType == "EnvironmentalObjectDamaged").OrderBy(e => e.Sequence).ToList();
+        if (attempts.Count == 0)
+        {
+            return;
+        }
+
+        report.AppendLine("### Object damage");
+        report.AppendLine();
+        report.AppendLine("Every deliberate attempt to strike an environmental object rather than a character, accepted or rejected.");
+        report.AppendLine();
+        report.AppendLine("| Round.Turn | Actor | Weapon | Object | Damage | Durability before | Durability after | Destroyed | Result |");
+        report.AppendLine("| --- | --- | --- | --- | --- | --- | --- | --- | --- |");
+        foreach (var row in attempts)
+        {
+            var accepted = string.Equals(Text(row.Data, "ValidationResult"), "accepted", StringComparison.Ordinal);
+            var result = accepted ? "accepted" : $"rejected ({Text(row.Data, "RejectionReason")})";
+            report.AppendLine(
+                $"| {row.Round}.{row.Turn} | {Text(row.Data, "ActorName")} | {Text(row.Data, "WeaponName") ?? "—"} | " +
+                $"{Text(row.Data, "ObjectName") ?? "—"} | {Text(row.Data, "DamageApplied") ?? "—"} | " +
+                $"{Text(row.Data, "DurabilityBefore") ?? "—"} | {Text(row.Data, "DurabilityAfter") ?? "—"} | " +
+                $"{(IsTrue(row.Data, "Destroyed") ? "yes" : "no")} | {result} |");
+        }
+
+        report.AppendLine();
+    }
 
     private static void WriteScenario(StringBuilder report, JsonElement? manifest)
     {

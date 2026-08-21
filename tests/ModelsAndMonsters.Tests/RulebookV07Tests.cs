@@ -342,8 +342,11 @@ public sealed class RulebookV07Tests
         Assert.Contains(steal.Exclusions, e =>
             e.Contains("pending surrender offer", StringComparison.OrdinalIgnoreCase)
             && e.Contains("ACCEPTING", StringComparison.Ordinal));
+        // v0.8 narrowed "another character" to "a LIVING character" so the same exclusion could also send
+        // the dead the other way (see Looting_the_dead_is_claimed_by_the_take_card). What it must still do
+        // is point a grab from someone's hand at theft or at acceptance.
         Assert.Contains(take.Exclusions, e =>
-            e.Contains("out of another character's hand", StringComparison.OrdinalIgnoreCase)
+            e.Contains("character's hand", StringComparison.OrdinalIgnoreCase)
             && e.Contains("acceptance of that offer", StringComparison.OrdinalIgnoreCase));
         Assert.Contains("taking it IS the acceptance", accept.Description, StringComparison.Ordinal);
     }
@@ -358,8 +361,9 @@ public sealed class RulebookV07Tests
         Assert.Contains(attack.Exclusions, e => e.Contains("raising a guard, bracing", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(attack.Exclusions, e => e.Contains("defend rule", StringComparison.OrdinalIgnoreCase));
 
-        // And the defend card claims it in the same words a character would use.
-        Assert.Contains("Defensive posturing is THIS, never an attack", defend.Description, StringComparison.Ordinal);
+        // And the defend card claims it in the same words a character would use — but only when the
+        // character names no real object to get behind (v0.9: naming one is environment.take-cover instead).
+        Assert.Contains("Defensive posturing with no object named is THIS, never an attack", defend.Description, StringComparison.Ordinal);
     }
 
     [Fact]

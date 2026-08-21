@@ -314,6 +314,30 @@ public sealed record GameState
                 c.Fear > FearRules.Minimum);
     }
 
+    /// <summary>Returns a new state with <paramref name="updated"/> replacing the cover object of the same id in the room.</summary>
+    public GameState WithCover(CoverObject updated)
+    {
+        var objects = Room.Objects;
+        for (var index = 0; index < objects.Length; index++)
+        {
+            if (objects[index] is CoverObject existing &&
+                string.Equals(existing.Id, updated.Id, StringComparison.OrdinalIgnoreCase))
+            {
+                return this with { Room = Room with { Objects = objects.SetItem(index, updated) } };
+            }
+        }
+
+        throw new InvalidOperationException($"No cover object with id '{updated.Id}' exists in the current room.");
+    }
+
+    /// <summary>
+    /// The cover object a character currently occupies, or null when they occupy none. There is at most one,
+    /// since occupying cover is exclusive.
+    /// </summary>
+    public CoverObject? CoverOccupiedBy(string characterId) =>
+        Room.Objects.OfType<CoverObject>()
+            .FirstOrDefault(c => string.Equals(c.CurrentOccupantId, characterId, StringComparison.OrdinalIgnoreCase));
+
     /// <summary>Returns a new state with <paramref name="updated"/> replacing the exit of the same id in the room.</summary>
     public GameState WithExit(EncounterExit updated)
     {

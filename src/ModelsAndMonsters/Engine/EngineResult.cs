@@ -79,6 +79,17 @@ public enum EngineRejectionReason
     IntimidationRequiresSpeech,
     SpeechAddressedToSomebodyElse,
 
+    // Environmental cover (v0.9).
+    UnknownCover,
+    CoverReferenceAmbiguous,
+    CoverCannotBeUsed,
+    AlreadyInThatCover,
+    CoverFull,
+    NotInCover,
+    ObjectCannotBeDamaged,
+    ObjectAlreadyDestroyed,
+    CannotDamageOwnCover,
+
     UnsupportedAction
 }
 

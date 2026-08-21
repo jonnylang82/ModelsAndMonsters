@@ -38,7 +38,25 @@ public sealed class WebTraceSink : ITraceSink
                             _publish(UiEvent.Attack(new AttackDto(
                                 attack.AttackerName, attack.TargetName, attack.Hit, attack.Glancing,
                                 attack.DamageDealt, attack.TargetHealthAfter, attack.TargetMaxHealth, attack.TargetDied,
-                                attack.Quality.ToString(), attack.Critical)));
+                                attack.Quality.ToString(), attack.Critical,
+                                attack.CoverId, attack.CoverName, attack.InterceptedByCover)));
+                            break;
+                        case TakeCoverOutcome takeCover:
+                            _publish(UiEvent.CoverOccupancyChanged(takeCover.ActorName, takeCover.CoverName, "entered"));
+                            break;
+                        case LeaveCoverOutcome leaveCover:
+                            _publish(UiEvent.CoverOccupancyChanged(leaveCover.ActorName, leaveCover.CoverName, "left"));
+                            break;
+                        case DamageEnvironmentalObjectOutcome damageObject:
+                            _publish(UiEvent.EnvironmentalObjectDamaged(
+                                damageObject.ActorName, damageObject.ObjectName, damageObject.WeaponName,
+                                damageObject.DamageApplied, damageObject.DurabilityBefore, damageObject.DurabilityAfter,
+                                damageObject.Destroyed));
+                            if (damageObject.ExposedOccupantName is { } exposed)
+                            {
+                                _publish(UiEvent.CoverOccupancyChanged(exposed, damageObject.ObjectName, "exposed"));
+                            }
+
                             break;
                         case OpenExitOutcome openExit:
                             _publish(UiEvent.ExitOpened(openExit.ActorName, openExit.ExitName));
@@ -93,6 +111,21 @@ public sealed class WebTraceSink : ITraceSink
                         if (resolved.DefendReduction > 0)
                         {
                             _publish(UiEvent.DefendReduced(resolved.TargetName, resolved.DefendReduction));
+                        }
+
+                        // A cover interception is its own line — the target took no damage because the cover
+                        // did, which the attack line alone does not distinguish from an ordinary miss (v0.9).
+                        if (resolved.InterceptedByCover)
+                        {
+                            _publish(UiEvent.CoverDamaged(
+                                resolved.CoverName!, resolved.CoverDurabilityBefore ?? 0,
+                                resolved.CoverDurabilityAfter ?? 0, resolved.CoverDestroyed,
+                                $"a blow from {resolved.AttackerName} aimed at {resolved.TargetName}"));
+
+                            if (resolved.CoverDestroyed)
+                            {
+                                _publish(UiEvent.CoverOccupancyChanged(resolved.TargetName, resolved.CoverName!, "exposed"));
+                            }
                         }
                     }
 

@@ -32,3 +32,6 @@ What is affecting you right now:
 
 Terms of surrender on the table:
 {{offers}}
+
+Cover:
+{{cover}}

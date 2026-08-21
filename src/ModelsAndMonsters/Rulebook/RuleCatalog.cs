@@ -50,9 +50,9 @@ public sealed class RuleCatalog : IRuleRepository
         {
             RuleId = "combat.attack",
             Summary = "Striking another character with the weapon in hand — a blow that actually makes contact.",
-            RelatedRuleIds = ["combat.defend", "ability.dirty-strike", "combat.morale"],
+            RelatedRuleIds = ["combat.defend", "ability.dirty-strike", "combat.morale", "environment.cover"],
             ActionName = DungeonMasterTools.AttackCharacterName,
-            Description = "One character striking another with the weapon they are carrying — a direct melee blow that MAKES CONTACT. What makes it an attack is the BLOW, never the movement: a swing, slash, stab, cut, chop or thrust that lands. Rushing, lunging or stepping toward somebody counts only when a blow is what arrives; rushing to them to hand them something, to shield them or to speak to them is the rule for that deed, not this one. A character moving, readying, threatening or posturing with no blow described is NOT attacking.",
+            Description = "One character striking another with the weapon they are carrying — a direct melee blow that MAKES CONTACT. What makes it an attack is the BLOW, never the movement: a swing, slash, stab, cut, chop or thrust that lands. Rushing, lunging or stepping toward somebody counts only when a blow is what arrives; rushing to them to hand them something, to shield them or to speak to them is the rule for that deed, not this one. A character moving, readying, threatening or posturing with no blow described is NOT attacking. This is still the right action when the target is sheltering behind cover — cover changes what the one roll can mean, never which action to call.",
             RequiredBindings = ["the acting character (attacker)", "the target character", "the attacker's weapon"],
             Preconditions = ["attacker is active and armed", "a blow is actually described making contact with the target — not merely a threat, an advance, or a readied weapon", "target is another active character (not dead, surrendered or escaped, and not the attacker)"],
             TurnCost = "consumes the turn",
@@ -113,6 +113,8 @@ public sealed class RuleCatalog : IRuleRepository
         new RuleCard
         {
             RuleId = "inventory.steal",
+            // The dead are excluded here and claimed by container.take, because a live run had a goblin
+            // spend its whole turn on three rewordings of "loot the gold from dead Rowan".
             Summary = "Trying to snatch an ordinary item from another active character; always noticed, and may fail.",
             RelatedRuleIds = ["inventory.give", "container.take"],
             ActionName = DungeonMasterTools.StealItemName,
@@ -153,15 +155,15 @@ public sealed class RuleCatalog : IRuleRepository
             // this matches phrasings that name the container context ("from the open", "out of the case", "off
             // the floor"); for the many other ways a take is worded, the container family (see RuleRetriever)
             // co-retrieves this card whenever a container noun ("case", "chest", "the floor", …) appears at all.
-            Description = "A character taking one item out of an already-open container (including the floor) into their own inventory.",
-            RequiredBindings = ["the acting character", "the open container (or the floor)", "the item to take"],
-            Preconditions = ["actor is active", "the container is open", "the item is in the container and the actor has a legitimate basis to know it is there"],
+            Description = "A character taking one item into their own inventory from anywhere it lies loose and unheld: an already-open container, the floor, or A FALLEN CHARACTER'S BODY. All three are containers here. Picking up what someone dropped, gathering what spilled from a body, and lifting something out of an open case are the same action — the body of a dead character holds what they carried and is taken from exactly like a chest standing open.",
+            RequiredBindings = ["the acting character", "what it is taken from: the open container, the floor, or the fallen character's body", "the item to take"],
+            Preconditions = ["actor is active", "the container is open (the floor and a body always are)", "the item is in the container and the actor has a legitimate basis to know it is there"],
             TurnCost = "consumes the turn",
             RngRequirement = "none",
             Visibility = "public: the room sees the item carried out",
             SuccessBehaviour = "the item moves atomically from the container to the actor's inventory",
             FailureBehaviour = "refused if the container is closed or the item is not in it",
-            Exclusions = ["taking from a closed container without opening it first", "taking an item the character has no way of knowing is there", "taking an item out of another character's hand or off their belt — that is a theft, or, when the item is what a pending offer to this character promised, an acceptance of that offer"]
+            Exclusions = ["taking from a closed container without opening it first", "taking an item the character has no way of knowing is there", "taking an item out of a LIVING character's hand or off their belt — that is a theft, or, when the item is what a pending offer to this character promised, an acceptance of that offer. A DEAD character is not stolen from: their belongings lie with their body and are taken from it under this rule"]
         },
         new RuleCard
         {
@@ -260,10 +262,10 @@ public sealed class RuleCatalog : IRuleRepository
         new RuleCard
         {
             RuleId = "combat.defend",
-            Summary = "Spending the whole turn braced behind your guard instead of striking.",
-            RelatedRuleIds = ["combat.attack"],
+            Summary = "Spending the whole turn braced behind your guard instead of striking — NOT behind a named piece of cover.",
+            RelatedRuleIds = ["combat.attack", "environment.take-cover"],
             ActionName = DungeonMasterTools.DefendName,
-            Description = "The acting character spending the whole turn braced behind their guard instead of striking, so the next blow that lands on them is softened. Every active character can do this, as often as they like. Recognise it in words like bracing, standing one's ground, holding or keeping the guard up, readying to parry, turning aside a blow, covering oneself, or setting one's feet — any defensive posture with no blow described. Defensive posturing is THIS, never an attack.",
+            Description = "The acting character spending the whole turn braced behind their OWN guard instead of striking, so the next blow that lands on them is softened. Every active character can do this, as often as they like. Recognise it in words like bracing, standing one's ground, holding or keeping the guard up, readying to parry, turning aside a blow, covering oneself, or setting one's feet — any defensive posture with no blow described AND naming no real object in the room. Defensive posturing with no object named is THIS, never an attack.",
             RequiredBindings = ["the acting character"],
             Preconditions = ["actor is the current actor and active", "the actor is not already braced"],
             TurnCost = "consumes the turn",
@@ -271,7 +273,7 @@ public sealed class RuleCatalog : IRuleRepository
             Visibility = "public: everyone present sees them set themselves",
             SuccessBehaviour = "the actor becomes braced: the next blow that lands on them deals one less damage, applied after armour and after any glancing reduction and never below zero. A miss leaves the guard up; it falls away at the start of the actor's next turn",
             FailureBehaviour = "refused only if they already have their guard up",
-            Exclusions = ["striking as well as bracing", "protecting somebody else (that is the guard-ally technique)", "dodging out of the way — there is no distance or movement in this world", "blocking a doorway or holding anyone back"]
+            Exclusions = ["striking as well as bracing", "protecting somebody else (that is the guard-ally technique)", "dodging out of the way — there is no distance or movement in this world", "blocking a doorway or holding anyone back", "bracing, guarding, defending or covering oneself BEHIND a real environmental object named in the room (a workbench, a crate) — however the character phrases the defensive posture, naming a real object to get behind is environment.take-cover, not this card, because it is the object doing the protecting rather than the character's own stance"]
         },
         new RuleCard
         {
@@ -368,6 +370,70 @@ public sealed class RuleCatalog : IRuleRepository
             SuccessBehaviour = "ordinary weapon damage is applied, and on a hit the target is left off balance for their next attack. The use is spent whether the blow lands or misses",
             FailureBehaviour = "a miss deals nothing, applies nothing, and still spends the turn and the use. Refused, WITHOUT spending the use, if the ability is not held, has no uses left, the actor is unarmed, or the target is an ally, dead, surrendered or fled",
             Exclusions = ["knocking a target down, stunning or dazing them — the only effect is the off-balance penalty to their next attack", "disarming the target", "using it on an ally", "using it more than once in an encounter", "moving anyone: there is no distance in this world"]
+        },
+        new RuleCard
+        {
+            RuleId = "environment.take-cover",
+            Summary = "Moving behind a real, named object in the room and taking shelter there — even when described as bracing or defending.",
+            RelatedRuleIds = ["environment.cover", "environment.leave-cover", "combat.defend"],
+            ActionName = DungeonMasterTools.TakeCoverName,
+            Description = "The acting character moving behind one environmental object with the cover capability and taking shelter there — ducking behind something solid rather than standing exposed. Recognise it in words like ducking, getting behind, taking cover, sheltering behind, or putting something solid between themselves and the fight — AND EQUALLY when the character describes it as bracing, guarding, defending or covering themselves WHILE NAMING the real object they are behind (\"I brace behind the workbench\", \"I defend behind the crate\"). Naming a real object the character gets behind is what makes it this action rather than combat.defend, whatever defensive word accompanies it — the object is what is doing the protecting.",
+            RequiredBindings = ["the acting character", "the cover object"],
+            Preconditions = ["actor is active", "the object provides cover and is not destroyed", "the actor does not already occupy it", "it has spare capacity"],
+            TurnCost = "consumes the turn",
+            RngRequirement = "none",
+            Visibility = "public: everyone present sees them move behind it",
+            SuccessBehaviour = "an authoritative occupancy relationship is created and a public in-cover status applied; it persists until the character leaves, is exposed by another action, the cover is destroyed, or they leave active play",
+            FailureBehaviour = "refused if the character already occupies it, it is full, or it is destroyed",
+            Exclusions = ["taking cover behind room scenery not listed as a cover object", "two characters sharing cover beyond its stated capacity", "attacking while also taking cover in the same act", "bracing or defending with no real object named — that is combat.defend"]
+        },
+        new RuleCard
+        {
+            RuleId = "environment.leave-cover",
+            Summary = "Deliberately stepping out from cover, with nothing else attempted.",
+            RelatedRuleIds = ["environment.cover", "environment.take-cover"],
+            ActionName = DungeonMasterTools.LeaveCoverName,
+            Description = "The acting character deliberately stepping out from the cover they occupy, as the whole of their turn. Use only when leaving is the entire attempt — an accepted attack, reach or opening already exposes the character as a side effect of resolving it, with no separate leave needed.",
+            RequiredBindings = ["the acting character"],
+            Preconditions = ["actor is active", "the actor currently occupies cover"],
+            TurnCost = "consumes the turn",
+            RngRequirement = "none",
+            Visibility = "public: everyone present sees them step out",
+            SuccessBehaviour = "the occupancy relationship and the in-cover status both end",
+            FailureBehaviour = "refused if the character occupies no cover",
+            Exclusions = ["combining this with a blow, a reach, or opening something in the same act — an exposing action vacates cover on its own"]
+        },
+        new RuleCard
+        {
+            RuleId = "environment.damage-object",
+            Summary = "Deliberately striking an environmental object itself, with the weapon in hand, rather than a person.",
+            RelatedRuleIds = ["environment.cover", "combat.attack"],
+            ActionName = DungeonMasterTools.DamageEnvironmentalObjectName,
+            Description = "The acting character deliberately striking one present, non-destroyed environmental object with the weapon in hand — battering cover down rather than striking whoever, if anyone, shelters behind it. Not an ordinary attack against a covered character, which is combat.attack; cover there is applied automatically without this action.",
+            RequiredBindings = ["the acting character", "the weapon in hand", "the object struck"],
+            Preconditions = ["actor is active and armed", "the object is present and not already destroyed", "the object struck is not the cover the actor themself currently occupies"],
+            TurnCost = "consumes the turn",
+            RngRequirement = "none: a stationary object does not dodge, so damage is deterministic",
+            Visibility = "public: everyone present sees the blow land on the object",
+            SuccessBehaviour = "durability is reduced deterministically; reaching zero destroys the object and exposes anyone who was sheltering there. Breaks the actor's own cover first, if they occupy any",
+            FailureBehaviour = "refused if the object is already destroyed, unknown, has no cover capability, or is the actor's own occupied cover",
+            Exclusions = ["striking a covered character (that is combat.attack)", "striking room scenery with no cover capability"]
+        },
+        new RuleCard
+        {
+            RuleId = "environment.cover",
+            Summary = "How environmental cover works: capacity, what happens when an attack meets it, and how it interacts with Defend, critical hits, surrender, death and escape.",
+            RelatedRuleIds = ["environment.take-cover", "environment.leave-cover", "environment.damage-object", "combat.attack", "combat.defend"],
+            ActionName = RuleCard.ReferenceAction,
+            Description = "How cover works, as background to the three cover actions and to combat.attack against a covered character. Cover has capacity (the seeded object holds one character), durability, and a hit-chance modifier applied only while it is intact or damaged, never once destroyed.",
+            RequiredBindings = ["none: this is not an action and cannot be chosen"],
+            Preconditions = ["none"],
+            TurnCost = "none: cover's own state changes only as a consequence of the three cover actions or of an attack against a covered character",
+            RngRequirement = "none of its own; an attack against a covered character still makes only the ordinary single hit-check roll, which the engine alone interprets as a direct hit, a cover interception, or an ordinary miss",
+            Visibility = "fully public: the object, its condition, and its occupant are visible to everyone, unlike a container's contents",
+            SuccessBehaviour = "a cover interception costs the object exactly one point of durability and no character damage at all; reaching zero destroys it and exposes its occupant. Cover changes only the hit check — never armour, damage, the glancing/solid/critical bands, or fear directly. Defend still reduces damage after a hit that reaches a covered character; a critical hit can occur only after the attack actually lands; surrender, death and escape always release occupancy; accepting someone else's surrender does not, by itself, release the accepter's own cover",
+            FailureBehaviour = "n/a",
+            Exclusions = ["a hit-chance bonus or penalty from cover applying to anything but the one attacker being resolved against the one covered target", "cover reducing damage directly, as Defend does", "cover protecting against anything but a weapon attack", "a character remaining marked in-cover after death, surrender, escape, or the cover's own destruction"]
         },
         new RuleCard
         {

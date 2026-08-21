@@ -215,12 +215,12 @@ A blank recap leaves the history untouched: losing older turns for nothing is wo
 | Component | Role |
 | --- | --- |
 | `GameEngine` | The only writer of `GameState`. Validates every action, applies it atomically, draws all RNG, and returns an `EngineResult` (accepted with an outcome, or rejected with a reason code). |
-| `GameState` | Immutable snapshot: characters, room, objects, exits, statuses, offers, version. Every mutation is a new state with a bumped version. |
+| `GameState` | Immutable snapshot: characters, room, objects (`Container` and, since v0.9, `CoverObject` — two concrete `WorldObject` kinds sharing `Room.Objects`), exits, statuses (including v0.9's `InCover`), offers, version. Every mutation is a new state with a bumped version. |
 | `TurnCoordinator` | The application's decision-making core. Runs a turn, routes tool calls, enforces harness limits, applies the deterministic guards, delivers narration and knowledge. |
 | `KnowledgeLedger` | Who has observed what, separate from state. State is current mechanical truth; the ledger is the growing record of observation. Hearsay is never stored as knowledge. |
 | `NarrationLog` | Holds narration until its recipients' next turn, so a character reads what happened to it at the moment it acts. |
 | `RuleCatalog` | The rule cards, versioned by content hash, so a citation is checkable. |
-| `ExperimentTrace` | Every event, in order, to `trace.jsonl`. The run's evidence. |
+| `ExperimentTrace` | Every event, in order, to `trace.jsonl`. The run's evidence. v0.9 added four cover-specific event types — `CoverInteraction`, `AttackAgainstCover`, `EnvironmentalObjectDamaged`, `EnvironmentalObjectDestroyed` (`Tracing/TraceEventType.cs`, `Tracing/TracePayloads.cs`). |
 | `RunReportWriter` | Renders `run.json` + `trace.jsonl` + `final-state.json` into a readable report. Built purely from artefacts — it never re-runs anything. |
 | `IRng` | Single source of randomness, seeded from the master seed, recording sequence position on every draw. |
 
@@ -347,6 +347,18 @@ sequenceDiagram
 The DM is given **only the candidate tools the validated guidance allows**, so it cannot reach for an action
 the rulebook did not licence. `reject_action` is always available — refusing is a first-class outcome.
 
+**Cover adds no new pipeline, only a side effect on acceptance.** `take_cover`, `leave_cover` and
+`damage_environmental_object` (v0.9) are ordinary actions that pass through this same sequence — resolver,
+DM, engine — like any other. What is new: an accepted action that *exposes* its actor (`attack_character`,
+`steal_item`, `take_item`, `open_container`, `inspect_object`, `open_exit`, `give_item`,
+`damage_environmental_object`, and more) releases that actor's own cover immediately before the action's own
+effect resolves. Whether an action exposes is structured metadata, not inferred from the intent's wording:
+`GameAction.ExposesActor` is a virtual property every action states for itself (false for `defend`,
+self-targeted `use_item`, `offer_surrender`, `accept_surrender`, `intimidate_character`, `steady_ally`).
+`GameEngine.ExposeIfInCover`/`ApplyExposure` is the query/apply pair that does this without mutating the
+action's "before" snapshot — so an exposed actor is still shown behind cover in `EngineResult.StateBefore`
+and only exposed in `StateAfter`, which is what lets the trace prove the exposure was caused by this action.
+
 ### 4.4 The deterministic guards
 
 Three things are decided in code rather than by any model, because each depends on state the deciding
@@ -452,8 +464,10 @@ what the calls actually used, and it is what `run.json` records.
   characters by id over `Default` and does not read these)
 
 The **Intent Parser** and **History Summariser** are not configured separately: they derive from the DM's
-profile with fixed overrides (temperature 0 and 0.3 respectively, reasoning off, small output budgets, and
-their own derived seeds).
+profile with fixed overrides (temperature **0.3** each, reasoning off, small output budgets, and their own
+derived seeds). The parser's temperature is a named constant, `SimulationRunner.IntentParserTemperature`,
+because two things pin it: it must be **above zero** (see §6.2.1) and **below the first retry floor of 0.4**,
+so a transient retry genuinely raises the temperature instead of re-sending at the same one with a new seed.
 
 Every profile takes:
 
@@ -462,7 +476,8 @@ Every profile takes:
 | `Provider` | `Ollama` \| `OpenAI` \| `Anthropic` |
 | `ModelId` | |
 | `Temperature`, `TopP`, `TopK` | Dropped per provider where unsupported. Anthropic rejects temperature and top_p together — the harness keeps temperature. |
-| `MaxOutputTokens` | Note the DM's adjudication uses its own 400-token cap regardless. |
+| `PresencePenalty`, `FrequencyPenalty` | Ollama and OpenAI only; **dropped and reported on Anthropic**, which has no equivalent. Null does **not** mean "off" — see §6.2.1. |
+| `MaxOutputTokens` | Note the DM's adjudication uses its own 400-token cap on a shared window; see §2.2. |
 | `ContextWindow` | **Only Ollama receives this** (as `num_ctx`). See §6.3. |
 | `Effort` | `none` \| `low` \| `medium` \| `high` \| `max`. The cross-provider reasoning knob. **`none` is recommended here** — reasoning models otherwise burn the whole output budget thinking and narrate nothing. |
 | `Thinking` | Legacy on/off, Ollama only. Superseded by `Effort`. |
@@ -472,6 +487,42 @@ Every profile takes:
 
 **Seeds are not configured per agent.** Each is derived from `Harness:Seed`, so one master seed replays the
 whole run — dice and every agent's sampling.
+
+#### 6.2.1 Sampling: an unset parameter is not a neutral one
+
+The single most useful thing to know about this section. **A sampling parameter the harness does not set is
+not off — it takes the model's own default**, and for a chat-tuned model those defaults are tuned for
+conversation, not for structured output.
+
+This was invisible until v0.8. Every local call in a run carried `presence_penalty = 1.5` — Qwen's
+recommended chat default, applied 605 times out of 605 — set by nobody, recorded nowhere, and shaping every
+tool call in the run. A presence penalty exists to stop a model repeating itself; **tool calling depends on
+the model repeating itself exactly**: tool names, stable ids, item names copied verbatim out of the state
+block, structural punctuation. Qwen's own guidance puts it at `1.5` for general chat and `0.0` for precise
+coding — the one category where output has to be structurally exact, which is what every call here is.
+
+So the shipped `Agents:Default` sets it **explicitly to zero**, and both penalties are recorded in `run.json`
+and in each `ModelRequest`'s `RequestedOptions`. Null is still meaningful and still allowed — it records
+honestly that the harness made no choice — but it is a decision, not a default.
+
+**Greedy decoding is the other trap.** `Temperature: 0` looks like the safe choice for a parser or a
+classifier, and on qwen3.5 it is the opposite: a temperature-0 draw reproduces itself exactly, so a
+malformed reply is malformed identically on every retry. A live run died at round 5 that way — the
+intent parser 500'd three times on the same broken tool-call XML, while a character sampling at 0.8 shook
+the same fault off in the same trace. Qwen's published guidance never recommends below 0.6 for any task or
+mode. Reproducibility comes from the derived seed, not from greedy decoding.
+
+The shipped defaults, and why each is what it is:
+
+| | Value | Why |
+| --- | --- | --- |
+| `Temperature` (characters) | 0.8 | Between Qwen's "general" (0.7) and "reasoning" (1.0) rows; characters want variety |
+| `Temperature` (DM / resolver) | 0.2 / 0.1 | These are classifiers binding rules to state, not writers |
+| `Temperature` (parser / summariser) | 0.3 | Low but never greedy — see above |
+| `TopP` | 0.95 | |
+| `TopK` | 20 | The one value Qwen never varies across any mode or task |
+| `PresencePenalty` | **0.0** | Explicitly off; the model's own default is 1.5 |
+| `FrequencyPenalty` | null | No default worth overriding; carried so the whole penalty group is visible |
 
 ### 6.3 The context-window rule
 
@@ -559,9 +610,15 @@ With the defaults the bands are 1–25 glancing, 26–75 solid, 76–100 critica
 ### 6.6 `scenario.json`
 
 The encounter itself: room (description, features, containers with contents and optional exterior clues,
-exits), and characters — `Id`, `Name`, `Role`, `Team`, `MaxHealth`, `Health`, `Armour`, `HitChance`,
-`Fear`, `Weapon`, `Inventory`, `Injuries`, `Abilities`, `BackstoryKnowledge`, and a `Persona` block
-(`Backstory`, `Personality`, `Wants`, `Needs`, `Fears`, `Goal`).
+exits, and — since v0.9 — cover objects seeded via `RoomDefinition.Cover`), and characters — `Id`, `Name`,
+`Role`, `Team`, `MaxHealth`, `Health`, `Armour`, `HitChance`, `Fear`, `Weapon`, `Inventory`, `Injuries`,
+`Abilities`, `BackstoryKnowledge`, and a `Persona` block (`Backstory`, `Personality`, `Wants`, `Needs`,
+`Fears`, `Goal`).
+
+**v0.9 added no configuration lever.** A cover object's mechanical values — capacity, hit-chance modifier,
+durability, armour — are seeded directly in the scenario, one `CoverDefinition` per object
+(`Configuration/ScenarioDefinition.cs`), the same way a container or an exit is seeded, not through a new
+`appsettings.json` setting.
 
 **The persona block is a bigger lever than it looks.** `open_exit` and `escape_encounter` fired zero times
 in eight consecutive runs across every model — until one written condition was added to a goblin's
@@ -697,6 +754,10 @@ about the world.
 
 The reason is empirical, not aesthetic: every keyword approach tried in this project failed on the case it
 was not written for — an escape intent that never says "escape", a theft that reads as an acceptance.
+
+v0.9 posed the same question in a new shape — does this action break a character's cover — and answered it
+the same way. `GameAction.ExposesActor` is metadata every action declares about itself at its declaration
+site, not a check for phrases like "step out" or "lean around" in what a model wrote.
 
 ## 9. Project layout
 

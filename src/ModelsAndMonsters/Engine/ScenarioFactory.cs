@@ -57,13 +57,26 @@ public static class ScenarioFactory
                 $"Duplicate exit id '{duplicateExitId.Key}' in scenario '{scenario.Id}'.");
         }
 
+        // Cover shares Room.Objects with containers (v0.9), so an id must be unique across both, not just
+        // within its own list — the same discipline ValidateGlobalItemIdentity already applies to items.
+        var duplicateObjectId = scenario.Room.Containers.Select(c => c.Id)
+            .Concat(scenario.Room.Cover.Select(c => c.Id))
+            .GroupBy(id => id, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault(g => g.Count() > 1);
+        if (duplicateObjectId is not null)
+        {
+            throw new InvalidOperationException(
+                $"Duplicate room object id '{duplicateObjectId.Key}' in scenario '{scenario.Id}'.");
+        }
+
         var room = new Room(
             scenario.Room.Id,
             scenario.Room.Name,
             scenario.Room.Description,
             [.. scenario.Room.Features])
         {
-            Objects = [.. scenario.Room.Containers.Select(ToContainer)],
+            Objects = [.. scenario.Room.Containers.Select(ToContainer).Cast<WorldObject>()
+                .Concat(scenario.Room.Cover.Select(ToCover))],
             Exits = [.. scenario.Room.Exits.Select(ToExit)]
         };
 
@@ -236,6 +249,31 @@ public static class ScenarioFactory
             IsOpen = definition.IsOpen,
             Contents = [.. definition.Contents.Select(ToItem)],
             ExteriorClue = string.IsNullOrWhiteSpace(definition.ExteriorClue) ? null : definition.ExteriorClue.Trim()
+        };
+    }
+
+    private static CoverObject ToCover(CoverDefinition definition)
+    {
+        if (string.IsNullOrWhiteSpace(definition.Id))
+        {
+            throw new InvalidOperationException($"Cover object '{definition.Name}' is missing an id.");
+        }
+
+        if (definition.MaximumDurability <= 0)
+        {
+            throw new InvalidOperationException($"Cover object '{definition.Id}' must have a positive MaximumDurability.");
+        }
+
+        return new CoverObject
+        {
+            Id = definition.Id,
+            Name = definition.Name,
+            Description = definition.Description,
+            Capacity = definition.Capacity,
+            HitChanceModifier = definition.HitChanceModifier,
+            MaximumDurability = definition.MaximumDurability,
+            CurrentDurability = Math.Clamp(definition.CurrentDurability ?? definition.MaximumDurability, 0, definition.MaximumDurability),
+            Armour = Math.Max(0, definition.Armour)
         };
     }
 

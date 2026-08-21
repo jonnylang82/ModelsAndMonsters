@@ -15,6 +15,20 @@ public abstract record GameAction
 
     /// <summary>Short human-readable form used in traces and console diagnostics.</summary>
     public abstract string Describe();
+
+    /// <summary>
+    /// Whether an accepted use of this action physically exposes its actor, breaking their own environmental
+    /// cover before the action resolves (v0.9). Structured metadata, not something inferred from prose: every
+    /// action that can accept states its own answer here, and the engine reads it directly.
+    /// </summary>
+    /// <remarks>
+    /// Reaching for another character or object, striking, or crossing to a door all break cover; bracing,
+    /// self-targeted item use, structured speech and negotiated terms do not. Where the v0.9 spec left an
+    /// action unlisted (<c>give_item</c>, <c>drop_item</c>), the deciding question is the same one the spec
+    /// applies elsewhere: does the deed require reaching toward something outside the cover. Handing an item
+    /// to someone else does; dropping one at your own feet does not.
+    /// </remarks>
+    public virtual bool ExposesActor => false;
 }
 
 /// <summary>The single combat action supported by v0.1. An accepted attack always hits.</summary>
@@ -23,6 +37,8 @@ public sealed record AttackCharacterAction(string AttackerRef, string TargetRef,
     public override string ActionType => "attack_character";
 
     public override string Describe() => $"AttackCharacter(attacker={AttackerRef}, target={TargetRef}, weapon={WeaponRef})";
+
+    public override bool ExposesActor => true;
 }
 
 /// <summary>Consumes an inventory item. v0.1 only understands healing items used on oneself.</summary>
@@ -44,6 +60,8 @@ public sealed record OpenContainerAction(string ActorRef, string ContainerRef) :
     public override string ActionType => "open_container";
 
     public override string Describe() => $"OpenContainer(actor={ActorRef}, container={ContainerRef})";
+
+    public override bool ExposesActor => true;
 }
 
 /// <summary>
@@ -57,6 +75,8 @@ public sealed record InspectObjectAction(string ActorRef, string ObjectRef) : Ga
     public override string ActionType => "inspect_object";
 
     public override string Describe() => $"InspectObject(actor={ActorRef}, object={ObjectRef})";
+
+    public override bool ExposesActor => true;
 }
 
 /// <summary>
@@ -68,6 +88,8 @@ public sealed record TakeItemAction(string ActorRef, string ContainerRef, string
     public override string ActionType => "take_item";
 
     public override string Describe() => $"TakeItem(actor={ActorRef}, container={ContainerRef}, item={ItemRef})";
+
+    public override bool ExposesActor => true;
 }
 
 /// <summary>
@@ -79,6 +101,8 @@ public sealed record OpenExitAction(string ActorRef, string ExitRef) : GameActio
     public override string ActionType => "open_exit";
 
     public override string Describe() => $"OpenExit(actor={ActorRef}, exit={ExitRef})";
+
+    public override bool ExposesActor => true;
 }
 
 /// <summary>
@@ -90,6 +114,11 @@ public sealed record EscapeEncounterAction(string ActorRef, string ExitRef) : Ga
     public override string ActionType => "escape_encounter";
 
     public override string Describe() => $"EscapeEncounter(actor={ActorRef}, exit={ExitRef})";
+
+    // True for documentation and testing, matching the v0.9 spec's list — though in practice the engine
+    // releases cover here through the same disposition-driven sweep (PurgeForInactive) that clears every
+    // status a character leaving active play can no longer sustain, not through a direct ExposeIfInCover call.
+    public override bool ExposesActor => true;
 }
 
 /// <summary>
@@ -164,6 +193,10 @@ public sealed record GiveItemAction(string GiverRef, string RecipientRef, string
     public override string ActionType => "give_item";
 
     public override string Describe() => $"GiveItem(giver={GiverRef}, recipient={RecipientRef}, item={ItemRef})";
+
+    // Not named in the v0.9 spec's either list. Handing something to another character means reaching toward
+    // them, so it is treated like steal_item/take_item rather than like the self-targeted drop_item beside it.
+    public override bool ExposesActor => true;
 }
 
 /// <summary>
@@ -188,6 +221,8 @@ public sealed record StealItemAction(string ThiefRef, string TargetRef, string I
     public override string ActionType => "steal_item";
 
     public override string Describe() => $"StealItem(thief={ThiefRef}, target={TargetRef}, item={ItemRef})";
+
+    public override bool ExposesActor => true;
 }
 
 /// <summary>
@@ -230,4 +265,45 @@ public sealed record SteadyAllyAction(
     public override string ActionType => "steady_ally";
 
     public override string Describe() => $"SteadyAlly(actor={ActorRef}, target={TargetRef})";
+}
+
+/// <summary>
+/// The current actor taking shelter behind one environmental object with the cover capability (v0.9). Uses
+/// no randomness. It consumes the actor's action and creates an authoritative occupancy relationship —
+/// exclusive, capacity-limited — plus the public <c>InCover</c> status. Refused if the actor already occupies
+/// that cover, if it is full, or if it cannot currently provide cover (destroyed).
+/// </summary>
+public sealed record TakeCoverAction(string ActorRef, string CoverRef) : GameAction
+{
+    public override string ActionType => "take_cover";
+
+    public override string Describe() => $"TakeCover(actor={ActorRef}, cover={CoverRef})";
+}
+
+/// <summary>
+/// The current actor deliberately leaving the cover they occupy (v0.9). Uses no randomness. Releases the
+/// occupancy and removes the actor's <c>InCover</c> status. Refused if the actor occupies no cover. Distinct
+/// from an accepted exposing action vacating cover automatically as a side effect: this is the standalone act
+/// of stepping out with nothing else attempted.
+/// </summary>
+public sealed record LeaveCoverAction(string ActorRef) : GameAction
+{
+    public override string ActionType => "leave_cover";
+
+    public override string Describe() => $"LeaveCover(actor={ActorRef})";
+}
+
+/// <summary>
+/// The current actor deliberately striking one present, non-destroyed environmental object with the weapon in
+/// hand (v0.9), rather than a character. No hit or quality roll — a stationary object does not dodge — so
+/// damage is the deterministic <c>max(1, weapon damage - object armour)</c>. Breaks the actor's own cover
+/// (if they occupy any) before resolving, and is refused against the very cover the actor currently occupies.
+/// </summary>
+public sealed record DamageEnvironmentalObjectAction(string ActorRef, string ObjectRef) : GameAction
+{
+    public override string ActionType => "damage_environmental_object";
+
+    public override string Describe() => $"DamageEnvironmentalObject(actor={ActorRef}, object={ObjectRef})";
+
+    public override bool ExposesActor => true;
 }

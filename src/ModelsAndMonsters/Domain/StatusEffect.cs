@@ -27,7 +27,16 @@ public enum StatusEffectKind
     /// removes it as the number crosses the threshold, and nothing else may. It exists so that everyone
     /// present can observe that a character has lost their nerve without ever learning the number behind it.
     /// </summary>
-    Scared
+    Scared,
+
+    /// <summary>
+    /// Held by an occupant of environmental cover (v0.9). Carries no mechanical modifier of its own — the
+    /// engine reads the cover object's <c>HitChanceModifier</c> directly when resolving an attack against the
+    /// occupant — and never expires on a clock: it lasts exactly as long as the occupancy relationship it
+    /// shadows (<see cref="StatusExpiryRule.WhileConditionHolds"/>), ended only by an explicit leave, an
+    /// exposing action, the cover's destruction, or the occupant leaving active play.
+    /// </summary>
+    InCover
 }
 
 /// <summary>
@@ -113,6 +122,12 @@ public sealed record StatusEffectInstance
     public string? SourceAbilityId { get; init; }
 
     /// <summary>
+    /// The world object this status concerns, when it is about one rather than only about a character — the
+    /// cover object behind <see cref="StatusEffectKind.InCover"/> (v0.9). Null for every other status.
+    /// </summary>
+    public string? RelatedObjectId { get; init; }
+
+    /// <summary>
     /// A two- or three-word label for a console line or a UI badge — "off balance", not "OffBalance".
     /// The enum name is not a phrase, and printing it made a transcript read "no longer offbalance".
     /// </summary>
@@ -124,6 +139,7 @@ public sealed record StatusEffectInstance
         StatusEffectKind.OffBalance => "off balance",
         StatusEffectKind.Defending => "behind their guard",
         StatusEffectKind.Scared => "scared",
+        StatusEffectKind.InCover => "behind cover",
         _ => Kind.ToString()
     };
 
@@ -136,6 +152,7 @@ public sealed record StatusEffectInstance
         StatusEffectKind.OffBalance => $"off balance — next attack is {Modifier:+#;-#;0} to land",
         StatusEffectKind.Defending => $"defending — the next blow that lands deals {Math.Abs(Modifier)} less damage",
         StatusEffectKind.Scared => "scared — shaken, and increasingly concerned with staying alive. It changes no odds by itself",
+        StatusEffectKind.InCover => "behind cover — harder to hit while it stands, until it is left, broken by an exposing act, or destroyed",
         _ => Kind.ToString()
     };
 }

@@ -64,6 +64,14 @@ public sealed record TracedChatOptions
 
     public long? Seed { get; init; }
 
+    /// <summary>
+    /// Penalties as SENT. Null means none was sent and the model's own default applied — which is not the
+    /// same as zero, and is exactly the case that hid a 1.5 presence penalty on every local call.
+    /// </summary>
+    public float? PresencePenalty { get; init; }
+
+    public float? FrequencyPenalty { get; init; }
+
     /// <summary>Input context window requested for this call, when the provider accepts one.</summary>
     public int? ContextWindow { get; init; }
 
@@ -910,6 +918,161 @@ public sealed record ExitInteractionPayload
     public required int WorldVersionBefore { get; init; }
 
     public required int WorldVersionAfter { get; init; }
+}
+
+/// <summary>
+/// A take-cover or leave-cover attempt, accepted or rejected (v0.9). Carries the cover-specific id, the
+/// occupancy transition and capacity state the generic engine-action row does not surface.
+/// </summary>
+public sealed record CoverInteractionPayload
+{
+    public required string ActorId { get; init; }
+
+    public required string ActorName { get; init; }
+
+    public string? CoverId { get; init; }
+
+    public string? CoverName { get; init; }
+
+    /// <summary>"take_cover" or "leave_cover".</summary>
+    public required string ActionType { get; init; }
+
+    /// <summary>The occupant before this attempt, by id, or null when the cover was unoccupied.</summary>
+    public string? OccupantBefore { get; init; }
+
+    public string? OccupantAfter { get; init; }
+
+    /// <summary>"Intact", "Damaged" or "Destroyed" — the object's condition at the moment of this attempt.</summary>
+    public string? ObjectState { get; init; }
+
+    public int? Capacity { get; init; }
+
+    /// <summary>"accepted" when the engine applied it, "rejected" otherwise.</summary>
+    public required string ValidationResult { get; init; }
+
+    public string? RejectionReason { get; init; }
+
+    public required int WorldVersionBefore { get; init; }
+
+    public required int WorldVersionAfter { get; init; }
+
+    public IReadOnlyList<string> PublicRecipients { get; init; } = [];
+}
+
+/// <summary>
+/// An attack whose target was sheltering behind environmental cover, whatever the result (v0.9). Complements
+/// the attack's own <c>attack.hit-check</c> <see cref="RngDraw"/> and <c>EngineAction</c> row with the
+/// pre-cover and covered effective hit chances, the classification, and any durability effect — so a covered
+/// attack is provably distinguishable from an ordinary one from the trace alone.
+/// </summary>
+public sealed record AttackAgainstCoverPayload
+{
+    public required string AttackerId { get; init; }
+
+    public required string AttackerName { get; init; }
+
+    public required string TargetId { get; init; }
+
+    public required string TargetName { get; init; }
+
+    public required string CoverId { get; init; }
+
+    public required string CoverName { get; init; }
+
+    public required int PreCoverHitChance { get; init; }
+
+    public required int CoverHitChanceModifier { get; init; }
+
+    public required int CoveredHitChance { get; init; }
+
+    public required int RawRoll { get; init; }
+
+    /// <summary>"DirectHit", "Intercepted" or "OrdinaryMiss".</summary>
+    public required string Classification { get; init; }
+
+    /// <summary>True only for a direct hit — the one case where the ordinary quality draw followed.</summary>
+    public required bool QualityDrawFollowed { get; init; }
+
+    public required int DurabilityBefore { get; init; }
+
+    public required int DurabilityAfter { get; init; }
+
+    public required bool Destroyed { get; init; }
+}
+
+/// <summary>
+/// An attempt to deliberately damage an environmental object, accepted or rejected (v0.9). Carries the
+/// object-specific weapon/armour arithmetic and durability transition the generic engine-action row does not
+/// surface.
+/// </summary>
+public sealed record EnvironmentalObjectDamagedPayload
+{
+    public required string ActorId { get; init; }
+
+    public required string ActorName { get; init; }
+
+    public string? WeaponName { get; init; }
+
+    public int? WeaponDamage { get; init; }
+
+    public string? ObjectId { get; init; }
+
+    public string? ObjectName { get; init; }
+
+    public int? ObjectArmour { get; init; }
+
+    public int? DamageApplied { get; init; }
+
+    public int? DurabilityBefore { get; init; }
+
+    public int? DurabilityAfter { get; init; }
+
+    public bool Destroyed { get; init; }
+
+    public bool SelfCoverBroken { get; init; }
+
+    public string? ExposedOccupantName { get; init; }
+
+    /// <summary>"accepted" when the engine applied it, "rejected" otherwise.</summary>
+    public required string ValidationResult { get; init; }
+
+    public string? RejectionReason { get; init; }
+
+    public required int WorldVersionBefore { get; init; }
+
+    public required int WorldVersionAfter { get; init; }
+
+    public IReadOnlyList<string> PublicRecipients { get; init; } = [];
+}
+
+/// <summary>
+/// An environmental object's durability reached zero (v0.9) — a focused companion to whichever row caused it
+/// (an <see cref="AttackAgainstCoverPayload"/> interception, or an <see cref="EnvironmentalObjectDamagedPayload"/>
+/// deliberate blow), the same relationship <see cref="CharacterSurrenderedPayload"/> and
+/// <see cref="CharacterEscapedPayload"/> have to <see cref="DispositionChangedPayload"/>.
+/// </summary>
+public sealed record EnvironmentalObjectDestroyedPayload
+{
+    public required string ObjectId { get; init; }
+
+    public required string ObjectName { get; init; }
+
+    /// <summary>"cover-interception" or "deliberate-damage".</summary>
+    public required string Cause { get; init; }
+
+    public string? DestroyedByCharacterId { get; init; }
+
+    public string? DestroyedByCharacterName { get; init; }
+
+    public string? ExposedOccupantId { get; init; }
+
+    public string? ExposedOccupantName { get; init; }
+
+    public required int Round { get; init; }
+
+    public required int Turn { get; init; }
+
+    public IReadOnlyList<string> PublicRecipients { get; init; } = [];
 }
 
 /// <summary>

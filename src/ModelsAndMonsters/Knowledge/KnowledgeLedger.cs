@@ -501,6 +501,69 @@ public sealed class KnowledgeLedger
     }
 
     /// <summary>
+    /// A public cover-occupancy fact: a character entered or left environmental cover, in plain view (v0.9).
+    /// Keyed by the character, the cover and the world version, so every distinct transition yields its own
+    /// fact rather than one fact being silently reused for a later, different transition.
+    /// </summary>
+    public FactResult GetOrAddCoverOccupancyFact(
+        string characterId, string characterName, string coverId, string coverName, string transition, int worldVersion)
+    {
+        var id = $"{characterId}-{coverId}-{transition.ToLowerInvariant()}-wv{worldVersion}";
+        if (_facts.TryGetValue(id, out var existing))
+        {
+            return new FactResult(existing, WasCreated: false);
+        }
+
+        var description = transition switch
+        {
+            "entered" => $"{characterName} moved behind {coverName} and took shelter there.",
+            "left" => $"{characterName} deliberately stepped out from behind {coverName}, giving up its protection.",
+            _ => $"{characterName} was exposed from behind {coverName} — {transition}."
+        };
+
+        var fact = new KnowledgeFact
+        {
+            Id = id,
+            SubjectId = characterId,
+            FactType = FactType.CoverOccupancyChanged,
+            Description = description,
+            WorldVersion = worldVersion
+        };
+        _facts[id] = fact;
+        return new FactResult(fact, WasCreated: true);
+    }
+
+    /// <summary>
+    /// A public environmental-object-damaged fact: a cover interception or a deliberate blow changed an
+    /// object's condition, in plain view (v0.9). Keyed by the object and the world version, so each distinct
+    /// durability change yields its own fact.
+    /// </summary>
+    public FactResult GetOrAddEnvironmentalObjectDamagedFact(
+        string objectId, string objectName, string cause, bool destroyed, int worldVersion)
+    {
+        var id = $"{objectId}-damaged-wv{worldVersion}";
+        if (_facts.TryGetValue(id, out var existing))
+        {
+            return new FactResult(existing, WasCreated: false);
+        }
+
+        var description = destroyed
+            ? $"{objectName} was destroyed ({cause}) and is now wreckage, offering no shelter to anyone."
+            : $"{objectName} took damage ({cause}) and now stands weakened, though it still offers real shelter.";
+
+        var fact = new KnowledgeFact
+        {
+            Id = id,
+            SubjectId = objectId,
+            FactType = FactType.EnvironmentalObjectDamaged,
+            Description = description,
+            WorldVersion = worldVersion
+        };
+        _facts[id] = fact;
+        return new FactResult(fact, WasCreated: true);
+    }
+
+    /// <summary>
     /// Records that a character knows a fact. Returns the new record when this is genuinely new knowledge;
     /// null when the character already held it — in which case the caller should tell them they learned
     /// nothing new, and no duplicate record is created and the world version they first observed it at is

@@ -12,7 +12,9 @@ Updated authoritative world state:
 
 Narrate {{actor}}'s action as it happens:
 
-- If it MISSED, narrate the miss — the blow going wide or turned aside. No wound, no blood, no damage; the target is untouched. (Nobody dodges: there is nowhere to dodge to.)
+- If it MISSED, narrate the miss — the blow going wide or turned aside. No wound, no blood, no damage; the target is untouched. (Nobody dodges: there is nowhere to dodge to.) If the report also names cover the target was behind, this was still an ORDINARY miss — credit nothing to the cover, and do not describe the target ducking or using it; it simply was not needed this time.
+- If the report says the blow was **INTERCEPTED BY COVER**, this is neither a hit nor an ordinary miss: narrate the blow actually striking the cover object itself — splintering wood, a jarring impact — and the target behind it taking no harm at all. Name the cover's new condition (damaged, or destroyed and now wreckage) exactly as the report states, and if it says the target is now exposed, say so plainly.
+- If the report names cover the target was behind but the blow still landed (a **direct hit despite cover**), narrate the blow finding its mark anyway — a gap, a lucky angle — same as an uncovered hit below. Do not say the cover failed or broke; it simply did not save them this time.
 - If it was a GLANCING blow, show it only grazing or catching a lesser cut.
 - If it was a solid hit, show the blow landing hard and its effect.
 - For an item, show {{actor}} using it.

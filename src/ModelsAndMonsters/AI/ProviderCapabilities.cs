@@ -51,6 +51,13 @@ public sealed record ProviderCapabilities
     public required bool AllowsTemperatureAndTopPTogether { get; init; }
 
     /// <summary>
+    /// Whether the provider accepts <c>presence_penalty</c> and <c>frequency_penalty</c>. Ollama and OpenAI
+    /// do; Anthropic has no equivalent and rejects them, so they are dropped and reported there rather than
+    /// silently ignored.
+    /// </summary>
+    public required bool SupportsPenalties { get; init; }
+
+    /// <summary>
     /// Whether the provider silently drops the oldest messages when a request exceeds the context window.
     /// Ollama does (and reports only the post-truncation size), which is why the harness infers it from the
     /// sent-versus-reported gap. OpenAI does not: it rejects an over-long request with an error rather than
@@ -72,6 +79,7 @@ public sealed record ProviderCapabilities
             SupportsThinkingToggle = true,
             SupportsForcedToolChoice = false,
             AllowsTemperatureAndTopPTogether = true,
+            SupportsPenalties = true,
             SilentlyTruncatesHistory = true
         },
 
@@ -87,6 +95,7 @@ public sealed record ProviderCapabilities
             SupportsThinkingToggle = false,
             SupportsForcedToolChoice = true,
             AllowsTemperatureAndTopPTogether = true,
+            SupportsPenalties = true,
             SilentlyTruncatesHistory = false
         },
 
@@ -104,6 +113,7 @@ public sealed record ProviderCapabilities
             SupportsThinkingToggle = false,
             SupportsForcedToolChoice = true,
             AllowsTemperatureAndTopPTogether = false,
+            SupportsPenalties = false,
             SilentlyTruncatesHistory = false
         },
 

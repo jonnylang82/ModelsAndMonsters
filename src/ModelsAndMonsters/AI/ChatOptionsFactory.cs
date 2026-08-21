@@ -95,6 +95,32 @@ public static class ChatOptionsFactory
             }
         }
 
+        // The penalties are sampling parameters and follow the same rules: dropped where the provider has
+        // no equivalent (Anthropic), and dropped wholesale when the model forbids sampling.
+        if (profile.PresencePenalty is { } presencePenalty)
+        {
+            if (!omitSampling && capabilities.SupportsPenalties)
+            {
+                options.PresencePenalty = presencePenalty;
+            }
+            else
+            {
+                dropped.Add(nameof(AgentModelProfile.PresencePenalty));
+            }
+        }
+
+        if (profile.FrequencyPenalty is { } frequencyPenalty)
+        {
+            if (!omitSampling && capabilities.SupportsPenalties)
+            {
+                options.FrequencyPenalty = frequencyPenalty;
+            }
+            else
+            {
+                dropped.Add(nameof(AgentModelProfile.FrequencyPenalty));
+            }
+        }
+
         if (profile.MaxOutputTokens is { } maxOutputTokens)
         {
             if (capabilities.SupportsMaxOutputTokens)

@@ -64,7 +64,7 @@ public sealed class WorldStateFormatter
             foreach (var worldObject in state.Room.Objects)
             {
                 builder.AppendLine();
-                AppendObject(builder, worldObject);
+                AppendObject(builder, worldObject, state);
             }
         }
 
@@ -96,7 +96,7 @@ public sealed class WorldStateFormatter
         {
             builder.AppendLine("- A container's listed contents, and any exterior marking marked FOR YOU ONLY, are yours alone. Open or closed is public; what is inside is not, and opening does not make it so. You are told exactly what the character you are serving knows — never hand them contents or a marking they have not discovered.");
         }
-        builder.AppendLine("- ACTIONS THE WORLD CAN RESOLVE: attack_character, use_item, use_ability, defend, open_container, take_item, inspect_object, open_exit, escape_encounter, offer_surrender, accept_surrender, give_item, drop_item, steal_item, intimidate_character, steady_ally. Nothing else exists.");
+        builder.AppendLine("- ACTIONS THE WORLD CAN RESOLVE: attack_character, use_item, use_ability, defend, open_container, take_item, inspect_object, open_exit, escape_encounter, offer_surrender, accept_surrender, give_item, drop_item, steal_item, intimidate_character, steady_ally, take_cover, leave_cover, damage_environmental_object. Nothing else exists.");
         builder.AppendLine("- A Scared status is what a face shows, not a number. There is no morale figure here to reveal, and being Scared compels nobody: a frightened character still chooses, and yielding or leaving still take their own actions.");
 
         return builder.ToString().TrimEnd();
@@ -263,8 +263,14 @@ public sealed class WorldStateFormatter
     /// Writes one world object into the authoritative block. A closed container shows its contents as
     /// knowledge for the Dungeon Master only; an open one shows them as plainly visible to everyone.
     /// </summary>
-    private static void AppendObject(StringBuilder builder, WorldObject worldObject)
+    private static void AppendObject(StringBuilder builder, WorldObject worldObject, GameState state)
     {
+        if (worldObject is CoverObject cover)
+        {
+            AppendCover(builder, cover, state);
+            return;
+        }
+
         if (worldObject is not Container container)
         {
             builder.AppendLine($"{worldObject.Name} (id: {worldObject.Id}) - {worldObject.Description}");
@@ -317,6 +323,41 @@ public sealed class WorldStateFormatter
     }
 
     /// <summary>
+    /// Writes one environmental cover object into the authoritative block (v0.9). No hidden component at all —
+    /// everyone present can see the object, its condition, and who is behind it — so, unlike a container, there
+    /// is nothing here marked "for you only". The exact hit-chance modifier and durability numbers are
+    /// deliberately not rendered, the same discipline applied to a character's own armour and a weapon's
+    /// damage: only Condition and Intact/Damaged/Destroyed are ever stated as words, never as a number.
+    /// </summary>
+    private static void AppendCover(StringBuilder builder, CoverObject cover, GameState state)
+    {
+        var occupantName = cover.CurrentOccupantId is null
+            ? "nobody"
+            : state.FindById(cover.CurrentOccupantId)?.Name ?? cover.CurrentOccupantId;
+
+        var condition = cover.State switch
+        {
+            EnvironmentalObjectState.Destroyed => "DESTROYED — reduced to wreckage, and provides no protection to anyone",
+            EnvironmentalObjectState.Damaged => "DAMAGED — still usable, but will not withstand much more",
+            _ => "INTACT"
+        };
+
+        builder.AppendLine($"{cover.Name} (id: {cover.Id}) - environmental cover, {condition}. {cover.Description}");
+        builder.AppendLine(
+            $"  Currently sheltering here: {occupantName}. Capacity: {cover.Capacity} character" +
+            (cover.Capacity == 1 ? "" : "s") + $" at a time (public; take_cover is refused once full).");
+
+        if (cover.CanProvideCover)
+        {
+            builder.AppendLine(
+                "  While intact or damaged it gives real protection to whoever shelters here: harder for an " +
+                "attacker to hit them, and a blow that would otherwise have landed may be turned aside by it " +
+                "instead, at the cover's own cost rather than theirs. Leaving, being exposed by another action, " +
+                "or the cover's destruction all end that protection.");
+        }
+    }
+
+    /// <summary>
     /// The exact self-knowledge block a character receives at the start of its turn, including an explicit
     /// list of who is still alive on each side. Naming the current living allies and enemies every turn is
     /// deliberate: a character that loses track of its own side strikes a friend, and the Dungeon Master
@@ -357,8 +398,59 @@ public sealed class WorldStateFormatter
             ["abilities"] = FormatAbilitiesForSelf(character.Abilities),
             ["morale"] = FormatMoraleForSelf(character),
             ["statuses"] = FormatStatusesForSelf(character, state),
-            ["offers"] = FormatOffersForSelf(character, state)
+            ["offers"] = FormatOffersForSelf(character, state),
+            ["cover"] = FormatCoverForSelf(character, state)
         }).TrimEnd();
+    }
+
+    /// <summary>
+    /// The environmental cover this character could use, or is using, in their own terms (v0.9). Public
+    /// information — nothing here is hidden — so it is safe to hand the character directly every turn.
+    /// </summary>
+    private static string FormatCoverForSelf(Character character, GameState state)
+    {
+        var covers = state.Room.Objects.OfType<CoverObject>().ToList();
+        if (covers.Count == 0)
+        {
+            return "- Nothing in this room offers real cover.";
+        }
+
+        var lines = new List<string>();
+        var own = state.CoverOccupiedBy(character.Id);
+        if (own is not null)
+        {
+            lines.Add(
+                $"- You are behind {own.Name} right now, and it is giving you real protection. Attacking, " +
+                "reaching for an item or object, or opening something will expose you as part of doing it — you " +
+                "do not need a separate turn to step out first. Deliberately leaving, with nothing else attempted, " +
+                "is always available too.");
+        }
+
+        foreach (var cover in covers)
+        {
+            if (own is not null && string.Equals(cover.Id, own.Id, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (cover.State == EnvironmentalObjectState.Destroyed)
+            {
+                lines.Add($"- {cover.Name} is destroyed; it offers no shelter any more.");
+            }
+            else if (cover.CurrentOccupantId is { } occupantId)
+            {
+                var occupantName = state.FindById(occupantId)?.Name ?? occupantId;
+                lines.Add($"- {cover.Name} is already occupied by {occupantName}; there is no room for you there right now.");
+            }
+            else
+            {
+                lines.Add(
+                    $"- {cover.Name} stands free. Moving behind it costs your whole turn, makes no roll, and gives " +
+                    "you real protection while you stay there and attempt nothing that would expose you.");
+            }
+        }
+
+        return string.Join("\n", lines);
     }
 
     /// <summary>
