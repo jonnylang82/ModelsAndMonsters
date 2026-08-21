@@ -165,7 +165,7 @@ public static class DungeonMasterTools
 
     public static readonly AIFunctionDeclaration OfferSurrender = AIFunctionFactory.CreateDeclaration(
         OfferSurrenderName,
-        "Resolve the ACTING character offering to give up the fight to one named opponent on concrete terms. The terms MUST include at least one carried item, unless the offerer carries nothing at all — then the weapon in hand alone is enough. The rule is that nothing is held back. This only puts the offer on the table: nothing changes hands, nobody is disarmed, and the offerer stays an active, targetable combatant until that opponent accepts on their own turn. The offer MUST promise something enforceable; a bare plea to be spared is not an offer.",
+        "Resolve the ACTING character offering to give up the fight to one named opponent on concrete terms. The terms MUST promise something enforceable: one or more carried items, the weapon in THEIR OWN hand, or both — a weapon-only offer is valid on its own, whatever else the offerer carries. This only puts the offer on the table: nothing changes hands, nobody is disarmed, and the offerer stays an active, targetable combatant until that opponent accepts on their own turn. A bare plea to be spared, with nothing promised, is not an offer.",
         ToolSchema.Parse($$"""
         {
           "type": "object",
@@ -175,9 +175,9 @@ public static class DungeonMasterTools
             "{{OfferedItemsParameter}}": {
               "type": "array",
               "items": { "type": "string" },
-              "description": "Names of the ordinary inventory items the offerer promises to hand over, exactly as they appear in the offerer's inventory. REQUIRED whenever the offerer is carrying anything: an offer that holds possessions back is refused. Leave empty only for an offerer whose inventory is truly empty. Never list the equipped weapon here — use forfeit_weapon for that."
+              "description": "Names of the ordinary inventory items the offerer promises to hand over, exactly as they appear in the offerer's inventory. May be empty when forfeit_weapon is true — the weapon alone is then the whole concession. Never list the equipped weapon here — use forfeit_weapon for that."
             },
-            "{{ForfeitWeaponParameter}}": { "type": "boolean", "description": "True when the offerer promises to give up the weapon in THEIR OWN hand as part of the terms. False when the intent is about a weapon somebody ELSE holds — demanding that an opponent throw down their blade is not this action at all." }
+            "{{ForfeitWeaponParameter}}": { "type": "boolean", "description": "True when the offerer promises to give up the weapon in THEIR OWN hand as part of the terms — valid whether or not offered_items is also given. False when the intent is about a weapon somebody ELSE holds — demanding that an opponent throw down their blade is not this action at all." }
           },
           "required": ["{{OffererParameter}}", "{{RecipientParameter}}", "{{ForfeitWeaponParameter}}"]
         }

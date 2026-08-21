@@ -208,6 +208,55 @@ is only knowable once the context is in place (§4.1).
 
 A blank recap leaves the history untouched: losing older turns for nothing is worse than carrying them.
 
+### 2.6 The Encounter Summariser (`EncounterSummariser`) — v0.10, regrounded
+
+A stateless agent that runs exactly once, after the encounter is fully decided, and writes a short account of
+it — an Opening and The Encounter itself — printed to the console/UI and written to `story.md` alongside the
+rest of the run's artefacts (`Tracing/RunArtifacts.cs`). Its `Ending` is not the model's to write at all: the
+harness appends it deterministically (below).
+
+Its input is a compact, deterministic `EncounterStoryBrief` (`Orchestration/EncounterStoryBrief.cs`), never
+the raw public transcript. An earlier version fed the model `NarrationLog.Entries` directly and let it write
+a free continuation (backstory, setting, the fight, an invented epilogue); that let the model invent things
+the record never showed, and — combined with an over-aggressive sampling recipe (high temperature, a wide
+top-k, non-zero presence/frequency penalties, all pushing the model away from repetition at once) — is what
+produced runaway degenerate output on a live run (see `AgentModelProfile.RepeatLastN`'s remarks for the full
+account of three different fixes, each producing a different failure, that led here). `EncounterStoryBriefBuilder.Build`
+constructs the brief deterministically, no model involved:
+
+- the scenario's premise and room, and the team roster;
+- a chronological, one-line-each account of every **accepted** `EngineAction`, reusing each action's own
+  `ActionOutcome.Summary` — the same deterministic sentence the DM narrates from — so attacks, critical hits,
+  cover interactions, surrender offers and agreements, and item transfers are all covered by one mechanism;
+  a **rejected** attempt is never read, so nothing that did not happen can be narrated as if it did;
+- exactly who killed whom, read directly off each lethal attack's own `AttackerName`/`TargetName`/`TargetDied`
+  fields — never inferred from prose;
+- every character's final disposition and health, read from the authoritative final state, never the trace;
+- the exact terminal condition, and whether the harness stopped the encounter on a round or idle limit before
+  a decision was reached (`EncounterOutcome.HarnessLimit`) rather than at one.
+
+Terminal-state fidelity is guaranteed by construction: the model is told plainly whether the brief reached a
+decision, and is instructed never to invent a death, surrender, escape, item transfer, or resolution the
+brief does not show — but the `Ending` section is never asked of it at all. `EncounterStoryBrief.RenderEndingParagraph()`
+composes it entirely from the same final-state facts the brief was built from, and `SimulationRunner.GenerateAndDeliverStoryAsync`
+appends it to whatever the model wrote, so the finished story cannot disagree with the terminal state
+regardless of what the model produced above it — not a regex check or a second model call grading the first,
+both considered and rejected, but the model simply never being asked to state the outcome.
+
+The brief's chronological events are kept inside a character budget derived from the summariser's own context
+window (`HarnessOptions.EncounterStoryInputBudgetFraction`, half by default) so this agent stays inside an
+8k-class window the same as every other one in this harness. An oversized account keeps the most recent
+events and drops the oldest, the same discipline `RecentTurnsKeptFull` applies to a character's own history,
+and says so in the brief's own first line; kills, final dispositions and the terminal condition are never
+trimmed. It runs its own independently configurable profile (`Agents:EncounterSummariser`) — an operator can
+still point it at an entirely different provider or model — but the shipped sampling recipe now favours a
+faithful, well-formed account over maximal variety (lower temperature, a narrower top-k, presence/frequency
+penalties off) now that the model is grounded rather than free-inventing.
+
+It never reads or writes game state, and nothing it produces is read back by the game or by any other agent
+— a bad or missing story degrades to nothing shown, never a failed run (`SimulationRunner.GenerateAndDeliverStoryAsync`
+catches and reports rather than propagating).
+
 ---
 
 ## 3. Non-agent components
@@ -764,7 +813,7 @@ site, not a check for phrases like "step out" or "lean around" in what a model w
 ```text
 src/ModelsAndMonsters/
   AI/             provider abstraction, capabilities, context arithmetic
-  Agents/         the five model-driven roles, their tools and conversations
+  Agents/         the six model-driven roles, their tools and conversations
   Configuration/  SimulationOptions, ScenarioDefinition
   Domain/         Character, GameState, items, statuses — immutable records
   Engine/         GameEngine, CombatRules, actions, outcomes, rejection reasons

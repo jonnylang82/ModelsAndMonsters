@@ -53,6 +53,8 @@ internal sealed class RecordingConsole : IGameConsole
     public void Notice(string text) => Lines.Add($"notice:{text}");
 
     public void Ending(string text) => Lines.Add($"ending:{text}");
+
+    public void EncounterStory(string text) => Lines.Add($"story:{text}");
 }
 
 /// <summary>

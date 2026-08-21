@@ -15,6 +15,13 @@ namespace ModelsAndMonsters.Domain;
 /// — "Rowan's", "the captain's". Authored in the scenario, and deliberately fixed for the life of the item: a
 /// purse cut from Rowan's belt is still the one that was Rowan's whoever ends up holding it.
 /// </param>
+/// <param name="IsWeaponTrophy">
+/// True when this item is a weapon somebody forfeited in surrender, now carried loose rather than equipped —
+/// see <see cref="Weapon.AsForfeitedItem"/>. It is an ordinary inventory item in every way (carried, given,
+/// dropped, stolen); the flag exists only so state formatting can say plainly that it is a trophy, not the
+/// weapon in anyone's hand, rather than leaving a model to guess from its name alone whether picking up
+/// "Notched Sabre" means it can be fought with.
+/// </param>
 /// <remarks>
 /// The qualifier exists because a live run gave a character an inventory that read, in full, "Small Purse of
 /// Gold Coins, Small Purse of Gold Coins". Four characters start with identically named purses, and once two
@@ -27,7 +34,8 @@ public sealed record InventoryItem(
     string Name,
     string Description,
     int? HealingAmount = null,
-    string? Qualifier = null)
+    string? Qualifier = null,
+    bool IsWeaponTrophy = false)
 {
     public bool IsHealingItem => HealingAmount is > 0;
 

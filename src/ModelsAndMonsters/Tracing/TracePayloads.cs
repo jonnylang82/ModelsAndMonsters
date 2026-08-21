@@ -1990,3 +1990,19 @@ public sealed record AllySteadiedPayload
 
     public IReadOnlyList<string> PublicRecipients { get; init; } = [];
 }
+
+/// <summary>The Encounter Summariser's one call, and what it was built from.</summary>
+public sealed record EncounterStoryPayload
+{
+    public required string ModelId { get; init; }
+
+    public required string Provider { get; init; }
+
+    public required int BriefEventsTotal { get; init; }
+
+    public required int BriefEventsIncluded { get; init; }
+
+    public required bool BriefTrimmed { get; init; }
+
+    public required string Story { get; init; }
+}

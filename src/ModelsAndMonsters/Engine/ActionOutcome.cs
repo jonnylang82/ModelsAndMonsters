@@ -405,11 +405,24 @@ public sealed record AcceptSurrenderOutcome : ActionOutcome
     /// <summary>The names of the items that actually moved to the accepter.</summary>
     public required IReadOnlyList<string> TransferredItemNames { get; init; }
 
-    /// <summary>The name of the forfeited weapon, or null when none was promised.</summary>
+    /// <summary>
+    /// The name of the weapon the offerer was holding at the moment of acceptance, or null when they already
+    /// held none. This is about MANDATORY DISARMAMENT — yielding always empties a raised hand, whatever the
+    /// terms said — and is populated whether or not the weapon was part of the NEGOTIATED tribute; whether it
+    /// was actually promised is the separate question <see cref="Domain.SurrenderAgreement.ForfeitedWeaponId"/>
+    /// answers.
+    /// </summary>
     public string? ForfeitedWeaponName { get; init; }
 
-    /// <summary>Where a forfeited weapon now lies, when one was forfeited.</summary>
+    /// <summary>Where the weapon now lies, whenever <see cref="ForfeitedWeaponName"/> is not null.</summary>
     public string? GroundContainerName { get; init; }
+
+    /// <summary>
+    /// True when the weapon was actually one of the negotiated terms (<c>offer.ForfeitWeapon</c>), false when
+    /// it left the offerer's hand only because yielding disarms regardless of what was promised. Keeps the
+    /// narrated <see cref="Summary"/> from implying every disarmament was part of the bargain — v0.10.
+    /// </summary>
+    public bool WeaponWasPromised { get; init; }
 
     public int? AssociatedSpeechEventId { get; init; }
 
@@ -423,9 +436,13 @@ public sealed record AcceptSurrenderOutcome : ActionOutcome
                 ? ""
                 : $" {string.Join(", ", TransferredItemNames)} passed from {OffererName} to {AccepterName}, who now carries them.";
             var weapon = ForfeitedWeaponName is null
-                ? $" {OffererName} lowered their weapon."
-                : $" {OffererName} gave up their {ForfeitedWeaponName}, which now lies on {GroundContainerName} " +
-                  $"and can be picked up by anyone; {OffererName} is now DISARMED and holds no weapon.";
+                ? $" {OffererName} had no weapon to give up."
+                : WeaponWasPromised
+                    ? $" {OffererName} gave up their {ForfeitedWeaponName} as promised, which now lies on " +
+                      $"{GroundContainerName} and can be picked up by anyone; {OffererName} is now DISARMED and holds no weapon."
+                    : $" {OffererName}'s {ForfeitedWeaponName} was not part of the bargain, but yielding empties a " +
+                      $"raised hand regardless: it now lies on {GroundContainerName} and can be picked up by " +
+                      $"anyone; {OffererName} is now DISARMED and holds no weapon.";
             return $"{AccepterName} accepted {OffererName}'s surrender on the promised terms.{tribute}{weapon} " +
                    $"{OffererName} has SURRENDERED: alive and still present, but takes no further turns and can no " +
                    $"longer be attacked.";

@@ -381,11 +381,10 @@ public sealed class RulebookV07Tests
         var offer = Card("encounter.offer-surrender");
 
         Assert.Contains(offer.Exclusions, e => e.Contains("bare plea", StringComparison.OrdinalIgnoreCase));
-        // The test is whether anything is HELD BACK. A character carrying items who promises none of them is
-        // the misread-demand shape; a character carrying nothing who promises their sword is giving all they
-        // have, and must still be able to yield.
-        Assert.Contains(offer.Preconditions, p => p.Contains("holds nothing back", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(offer.Exclusions, e => e.Contains("still carries other things", StringComparison.OrdinalIgnoreCase));
+        // v0.10: either concession alone is a complete offer — a carried item, the weapon in hand, or both.
+        // A weapon-only offer no longer requires the offerer to carry nothing else (see
+        // SurrenderNegotiationEngineTests.Weapon_only_terms_are_accepted_even_while_carrying_other_things).
+        Assert.Contains(offer.Preconditions, p => p.Contains("at least one real concession", StringComparison.OrdinalIgnoreCase));
 
         // And demanding better terms is speech, not a counteroffer action: there are no counteroffers in v0.7.
         Assert.Contains(Card("encounter.accept-surrender").Exclusions,

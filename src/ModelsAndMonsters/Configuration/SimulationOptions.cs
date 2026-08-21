@@ -109,6 +109,15 @@ public sealed class AgentsOptions
     public AgentProfileOptions RulebookResolver { get; set; } = new();
 
     /// <summary>
+    /// The Encounter Summariser's independently configurable model profile. Overlaid on <see cref="Default"/>
+    /// like any agent, so it inherits the run's provider/model unless overridden — but it is exactly the
+    /// agent an operator would want to point at a different model or different sampling: it writes a short
+    /// dramatic story from the encounter's public transcript at the very end of a run, once, statelessly, and
+    /// nothing it produces is read by the game or by any other agent. See <see cref="Agents.EncounterSummariser"/>.
+    /// </summary>
+    public AgentProfileOptions EncounterSummariser { get; set; } = new();
+
+    /// <summary>
     /// Per-character overrides, keyed by character id. Any character absent here runs on
     /// <see cref="Default"/> alone. Orchestration never assumes a shared hero or monster profile — each
     /// character resolves its own profile from Default plus its own entry.
@@ -154,6 +163,20 @@ public sealed class AgentProfileOptions
     /// Anthropic, which has no equivalent.
     /// </summary>
     public float? FrequencyPenalty { get; set; }
+
+    /// <summary>
+    /// The classic llama.cpp/Ollama <c>repeat_penalty</c> — a different knob from
+    /// <see cref="PresencePenalty"/>/<see cref="FrequencyPenalty"/>. Only Ollama has this raw option; dropped
+    /// elsewhere. See <see cref="AI.AgentModelProfile.RepeatPenalty"/>.
+    /// </summary>
+    public float? RepeatPenalty { get; set; }
+
+    /// <summary>
+    /// How many recent tokens <see cref="RepeatPenalty"/> looks back over before it stops discouraging a
+    /// repeat. Only Ollama has this raw option; dropped elsewhere. See
+    /// <see cref="AI.AgentModelProfile.RepeatLastN"/>.
+    /// </summary>
+    public int? RepeatLastN { get; set; }
 
     // The model sampling seed is not configured per agent. It is derived from the run's master seed
     // (Harness.Seed) so a whole run — game rolls and all three agents — replays from one number.
@@ -218,6 +241,8 @@ public sealed class AgentProfileOptions
             MaxOutputTokens = MaxOutputTokens ?? baseOptions.MaxOutputTokens,
             PresencePenalty = PresencePenalty ?? baseOptions.PresencePenalty,
             FrequencyPenalty = FrequencyPenalty ?? baseOptions.FrequencyPenalty,
+            RepeatPenalty = RepeatPenalty ?? baseOptions.RepeatPenalty,
+            RepeatLastN = RepeatLastN ?? baseOptions.RepeatLastN,
             ContextWindow = ContextWindow ?? baseOptions.ContextWindow,
             Effort = string.IsNullOrWhiteSpace(Effort) ? baseOptions.Effort : Effort,
             Thinking = Thinking ?? baseOptions.Thinking,
@@ -433,4 +458,47 @@ public sealed class HarnessOptions
     public bool RulebookSelectionCacheEnabled { get; set; } = true;
 
     public string RunOutputDirectory { get; set; } = "runs";
+
+    /// <summary>
+    /// When true, a short dramatic story of the encounter is generated once at the end of a completed run,
+    /// from the public transcript alone (narration and speech — never private answers, refused attempts, or
+    /// harness/compaction notices), printed to the console/UI and written to <c>story.md</c> alongside the
+    /// rest of the run's artefacts. Off does not change anything else about the run; the game and every other
+    /// agent never read the story.
+    /// </summary>
+    public bool GenerateEncounterStory { get; set; } = true;
+
+    /// <summary>
+    /// The output-token budget for the encounter story. One figure for every provider — deliberately not
+    /// tuned separately for a local, window-shared model the way <see cref="RulebookOutputTokens"/> or the
+    /// DM's adjudication cap are, because this call has neither of the reasons that tightness exists for
+    /// elsewhere: it runs once per whole run rather than once per turn, and it is not fighting a shared
+    /// window with a large input the way a per-turn call is. 3000 is chosen to sit safely under an 8192
+    /// Ollama window even in the worst case (the ~4096-token transcript budget plus the summariser's own
+    /// system prompt and task framing, with margin to spare) while comfortably outlasting what any genuine
+    /// four-section short story needs, on any provider.
+    /// </summary>
+    /// <remarks>
+    /// A local-model-only cap here was tried first (900) and was the wrong instinct — the same mistake the
+    /// README's "A local-model accommodation must not become a global rule" section already describes three
+    /// times, applied a fourth: a live Claude Sonnet run hit exactly 900/900 output tokens
+    /// (<c>FinishReason: length</c>) with only 2,367 of a vastly larger input window used — no window
+    /// pressure at all, only a local-only tuning cutting the reply short for nothing. Null is not a way to
+    /// opt out of a cap entirely: Anthropic's API requires <c>max_tokens</c> on every request (see the
+    /// README's Anthropic section), so some explicit figure always has to be sent regardless of provider;
+    /// this is deliberately generous enough that it is that figure everywhere, rather than a real limit
+    /// anything is expected to hit.
+    /// </remarks>
+    public int EncounterStoryOutputTokens { get; set; } = 3000;
+
+    /// <summary>
+    /// The largest share of the summariser's own context window the public transcript may occupy. The
+    /// remainder is headroom for the system prompt, the scenario framing, and the model's own reply — this
+    /// agent is expected to stay comfortably inside an 8k-class local window the same as every other agent in
+    /// this harness, never a reason to raise one. When the transcript would exceed the derived character
+    /// budget, the OLDEST public entries are dropped first (the same discipline <see cref="RecentTurnsKeptFull"/>
+    /// applies to a character's own history) and the story is told a note that some of the earliest events
+    /// were omitted.
+    /// </summary>
+    public double EncounterStoryInputBudgetFraction { get; set; } = 0.5;
 }

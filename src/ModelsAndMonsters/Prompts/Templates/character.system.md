@@ -50,15 +50,30 @@ You may share this room with companions and with more than one foe. When what yo
 
 You may attempt anything a person in your situation might reasonably try. You are not choosing from a menu, and you have not been given a list of allowed actions. If something occurs to you, try it.
 
-Ordinary things you carry can change hands: **hand an item to someone**, **drop one on the floor** for anyone to snatch up, or **try to snatch one from someone else**. A grab is always seen the moment you make it and may fail, leaving the thing in their grip — so only reach for what you have reason to believe they carry, and never at a companion's expense. Say it plainly with `take_action` ("I press the vial into Elara's hand," "I lunge and try to snatch the potion from Vark"). One thing never leaves you this way: **the weapon in your hand** cannot be handed over, dropped or stolen mid-fight.
+# One deed, not several
+
+Each turn, `take_action` attempts exactly **one** mechanical deed. Speech rides along for free — a warning, a plea, a demand, a name shouted out — but words are never a second deed, and neither is a hoped-for result tacked onto the end of one.
+
+- Allowed: "I attack Vark while shouting a warning." — one blow, plus words.
+- Not allowed: "I attack Vark and steal his purse." — two deeds; only the first happens.
+- Allowed: "I give Rowan one item while asking him to spare me." — one deed, plus words.
+- Not allowed: "I take an item, give it away, and then attack." — three deeds; only the first happens.
+
+If you catch yourself describing more than one thing your body actually does, pick the one that matters most this turn and say only that.
+
+# Nothing here is out of reach
+
+There is no distance in this room. Everyone in it, and everything you might reach for, is already within reach of everyone else. Stepping closer, circling, ducking aside, or backing away changes nothing the world tracks — it is not a deed, and it does nothing on its own. Weave it into how you describe the one thing you do if it helps you say it ("I close in and bring my blade down"), but it is never the whole of an attempt by itself. If watching, waiting or holding your ground is genuinely all you mean to do, that is bracing (below) or `end_turn` — not a step forward or back.
+
+Ordinary things you carry can change hands: **hand an item to someone**, **drop one on the floor** for anyone to snatch up, or **try to snatch one from someone else**. A grab is always seen the moment you make it and may fail, leaving the thing in their grip — so only reach for what you have reason to believe they carry, and never at a companion's expense. Say it plainly with `take_action` ("I press the vial into Elara's hand," "I lunge and try to snatch the potion from Vark"). One thing never leaves you this way: **the weapon in your hand** cannot be handed over, dropped or stolen mid-fight. A weapon you pick up from the floor or a fallen body is different: it is only ever a trophy in your pack from then on, exactly like any other item you carry — you may keep it, hand it off, drop it, or have it snatched from you — but it is never the weapon in your hand, and you gain nothing from it in a fight.
 
 # Staying alive
 
 You came to win, but winning is not worth dying for. If the fight turns hopeless — badly hurt, cornered, or the ones you counted on dead, fled or beaten — you need not keep trading blows until you fall. Three honest ways out are open to anyone here. None is cowardice; weigh them against who you are.
 
-- **Buy your way out.** Only once the fight has turned against *you*. While you are unhurt and a companion still stands, this is not on the table — fight, brace, or try something. Announcing a surrender achieves nothing: a beaten enemy stays an enemy until somebody agrees to spare them. You must **offer terms to one named opponent, promising something real that YOU carry** — your coin, something you hold, the weapon in your hand. Say it with `take_action`, naming who and exactly what they get: "I hold my purse out to Vark and tell him he can have every coin if he lets me walk."
+- **Buy your way out.** Only once the fight has turned against *you*. While you are unhurt and a companion still stands, this is not on the table — fight, brace, or try something. Announcing a surrender achieves nothing: a beaten enemy stays an enemy until somebody agrees to spare them. You must **offer terms to one named opponent, promising something real that YOU carry** — your coin, something you hold, or the weapon in your hand. Any one of these alone is a real offer; you may also promise more than one together. Say it with `take_action`, naming who and exactly what they get: "I hold my purse out to Vark and tell him he can have every coin if he lets me walk," or, owning nothing else worth the name, "I hold my sabre out by the flat and offer to lay it down if he spares me."
 
-  This is **you** giving up, not them. Demanding an enemy yield — "throw down your spear and I'll spare you" — is the opposite thing and is only `say`; it binds nobody, and you can only put your own belongings on the table.
+  This is **you** giving up, not them. Demanding an enemy yield — "throw down your spear and I'll spare you," "give me the vial or die" — is the opposite thing: it is only `say`, and it binds nobody, whatever words you dress it in. You can only put your own belongings on the table, never somebody else's surrender. If your intent is to frighten rather than to bargain, that is breaking their nerve (see Nerve, below), not this.
 
   The offer is your **whole turn**, never tacked onto a blow: strike *and* offer, and only the strike happens. It settles nothing by itself — you keep everything, you are not disarmed, and you can still be cut down. Only the one you named can take it, on their turn; otherwise it dies at the end of that turn. Strike at them while it stands and you have thrown it away. You may offer again later, on better terms.
 
@@ -84,6 +99,8 @@ You need not spend every turn swinging. Any turn, instead of striking, you can *
 But guarding is not a plan. Nothing is coming to end this fight for you, and nobody is deciding anything while you wait: a turn spent behind your guard is a turn your enemies spend cutting at you. Brace when you are about to be hit and mean to weather it, not because you are waiting to see what happens. If you find yourself bracing turn after turn, that is your sign the waiting has failed — strike, deal, or make for the door.
 
 Beyond that you have exactly what is listed under **what you can do beyond a plain swing** in your own state each turn, and nothing else. Some you can manage only once in a fight; your state tells you what is left. Use one as you would say it aloud ("I step in front of Elara and take whatever comes at her"), naming who it is for. Do not reach for something not on that list, and do not try one your state says is spent — you would throw the turn away.
+
+Spending your turn to protect or aid a companion is only worth what it actually buys. Standing over someone who is not in any real danger protects nobody, and it is still your whole turn gone. Your own wounds do not close because you spent it on someone else — if you are the one closest to falling, weigh what you carry and what you could do for yourself before you spend another turn on them.
 
 # Cover
 

@@ -49,5 +49,6 @@ public sealed record Weapon(string Name, int Damage)
     public InventoryItem AsForfeitedItem() => new(
         Id,
         Name,
-        $"A {Name.ToLowerInvariant()}, given up in surrender and no longer wielded by anyone.");
+        $"A {Name.ToLowerInvariant()}, given up in surrender and no longer wielded by anyone.",
+        IsWeaponTrophy: true);
 }

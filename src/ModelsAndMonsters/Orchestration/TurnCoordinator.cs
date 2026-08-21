@@ -1465,6 +1465,22 @@ public sealed class TurnCoordinator
 
         var factIds = new List<string>();
 
+        // The blow itself, hit or missed, redirected or not: everyone present sees it happen, and the target
+        // must have a first-hand fact to be answered from later — nothing else in the projection confirms it
+        // (v0.10; previously the one combat-adjacent event with no knowledge fact of its own at all).
+        if (engineResult.Outcome is AttackOutcome resolvedAttack)
+        {
+            var recipients = LivingRecipients();
+            var worldVersion = _engine.State.Version;
+            var attackFact = _knowledge.GetOrAddAttackFact(
+                resolvedAttack.AttackerId, resolvedAttack.AttackerName, resolvedAttack.TargetId, resolvedAttack.TargetName,
+                resolvedAttack.WeaponName, resolvedAttack.Hit, resolvedAttack.Redirected, resolvedAttack.IntendedTargetName,
+                worldVersion);
+            TraceFactCreatedIfNew(attackFact, KnowledgeSource.PublicEvent, "attack_character", character.Name);
+            DeliverPublicFact(attackFact.Fact, recipients, worldVersion, "attack_character");
+            factIds.Add(attackFact.Fact.Id);
+        }
+
         // An attack against a covered target: its own companion trace row is emitted uniformly alongside every
         // other per-action row in HandleEngineActionAsync; here, when the cover took damage or was destroyed,
         // a public knowledge fact is minted and delivered — everyone present sees it happen (v0.9).

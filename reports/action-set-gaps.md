@@ -15,6 +15,65 @@ and would be forbidden for deciding game meaning — the counts below are indica
 
 ---
 
+## v0.10 closure batch — disposition of every item below
+
+The whole survey below is kept as it was written (v0.8/v0.9 runs, v0.9-era refusals). This section says what
+actually happened to each item in the v0.10 closure batch, so the survey does not have to be re-read to find
+out. See `docs/prompts/build_v0_10.md` for the batch's own scope statement and exclusions list.
+
+**Closed:**
+
+- **A1, weapon half only — bilateral weapon-only surrender.** Not the unilateral `yield` A1 originally asked
+  for (deliberately excluded — see below); instead the existing `offer_surrender`/`accept_surrender`
+  handshake now accepts a weapon-only concession unconditionally, not only from a character carrying nothing
+  else. "I hold my sabre out by the flat and offer to lay it down if you spare me" now creates a real
+  pending offer.
+- **A2, taking a weapon off the floor.** Already implemented in the engine before this batch
+  (`Weapon.AsForfeitedItem` places a forfeited weapon on the ground as an ordinary, takeable item); v0.10
+  closed the remaining truthfulness and discoverability gaps — `InventoryItem.IsWeaponTrophy` so state
+  formatting never lets a looted weapon read as equipped, direct engine tests for giving/dropping/stealing a
+  trophy and for the attack rejection, and README documentation. The item as A2 originally described it
+  ("Rowan's longsword" specifically) was never reachable because a character's weapon on death is scenery,
+  not a forfeiture — only a *surrendered* weapon becomes a trophy. Death-loot of an equipped weapon remains
+  future work (see below).
+- **A3, environmental destruction half only.** `damage_environmental_object` (built in v0.9) is now proven
+  reachable through the *real* rulebook-resolver → Dungeon Master → engine pipeline, not only unit-tested at
+  the engine level (`CoverOrchestrationTests`), and a character facing cover an enemy occupies is now told
+  directly that striking the object is an option. Container-forcing (the other half of A3) remains a
+  deliberate exclusion — see below.
+- **B1, compound intents.** The resolver's "primary act" rule already existed; v0.10 adds the actual
+  character-facing contract ("One deed, not several", with allowed/not-allowed examples) so the rule is
+  stated to the party burning the attempts, not only followed silently by the components downstream of them.
+- **B3, demands.** Not built as a new action (deliberately excluded — see below). `combat.attack`'s adjacent
+  intimidation card, the surrender cards, and the character prompt now state explicitly that a demand from
+  anyone other than the one giving up their own fight is ordinary, non-binding speech — closing the
+  ambiguity that made characters try to express one *through* an action.
+- **B4, movement framing.** The character prompt now states directly that everything in the room is already
+  within reach and that repositioning is not a deed, instead of only being enforced by silent refusal
+  downstream.
+
+**Deliberately excluded (unchanged from the original survey's read, reaffirmed by `docs/prompts/build_v0_10.md`):**
+
+- **A1, the unilateral half.** No `yield` action was added. Giving up the fight still requires a concrete
+  offer and an opponent's acceptance — see [README § Negotiated surrender](../README.md#negotiated-surrender-terms-not-declarations).
+- **A3, container forcing.** An unlocked container still opens for free via `open_container`; there is still
+  no way to "pry" or "smash" one open, and the engine still refuses a container as a `damage_environmental_object`
+  target (`ObjectCannotBeDamaged`).
+- **A4, throwing; A5, disarming.** Neither was touched. Both remain genuinely new mechanics, deferred as the
+  original table suggested.
+- **Demand *contracts*.** A demand still cannot carry enforceable terms of its own; the only binding,
+  negotiated outcome in the game remains surrender.
+
+**Future possibilities, not started:**
+
+- Looting an equipped weapon directly off a **dead** (not surrendered) character's body — the surrender
+  path now handles the surrendered case; death does not currently turn an equipped weapon into ground loot.
+- A demand that carries structured terms of its own (a negotiation-contract action), rather than always
+  resolving to plain, non-binding speech.
+- Throwing, disarming, and any positional system — all remain out of scope for this project's stated design.
+
+---
+
 ## A. Genuine gaps — a player would expect these to work
 
 ### A1. Yielding as a gesture, not a transaction (5+ occurrences)

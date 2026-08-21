@@ -44,4 +44,6 @@ public sealed class WebGameConsole : IGameConsole
     public void Notice(string text) => _publish(UiEvent.Notice(text));
 
     public void Ending(string text) => _publish(UiEvent.Ending(text));
+
+    public void EncounterStory(string text) => _publish(UiEvent.Story(text));
 }

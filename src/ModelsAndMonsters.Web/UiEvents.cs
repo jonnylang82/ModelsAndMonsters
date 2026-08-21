@@ -23,6 +23,9 @@ public sealed record UiEvent(string Type, object? Payload)
     public static UiEvent Notice(string text) => new("notice", new { text });
     public static UiEvent Ending(string text) => new("ending", new { text });
 
+    /// <summary>The short dramatic story generated from the encounter's public transcript, once, at the end.</summary>
+    public static UiEvent Story(string text) => new("story", new { text });
+
     // Structured events (from the trace) that drive the cards and combat view.
     public static UiEvent State(StateDto state) => new("state", state);
     public static UiEvent TurnStarted(string character) => new("turnStarted", new { character });

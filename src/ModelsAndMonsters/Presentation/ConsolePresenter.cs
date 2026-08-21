@@ -63,6 +63,19 @@ public sealed class ConsolePresenter : IGameConsole
         Console.WriteLine();
     }
 
+    public void EncounterStory(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return;
+        }
+
+        Write(ConsoleColor.Magenta, "── The tale of it ──");
+        Console.WriteLine();
+        Write(ConsoleColor.White, Wrap(text));
+        Console.WriteLine();
+    }
+
     private static string Quote(string text) =>
         text.StartsWith('"') ? text : $"\"{text}\"";
 

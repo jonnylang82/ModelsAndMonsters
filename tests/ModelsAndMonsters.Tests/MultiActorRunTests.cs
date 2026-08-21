@@ -144,6 +144,9 @@ public sealed class MultiActorRunTests : IDisposable
                 // Likewise the rulebook resolver: this scripted run exercises the deterministic core, not the
                 // v0.6 rulebook stage, so switch it off rather than script a resolver client for every attempt.
                 EnableRulebookResolver = false,
+                // The end-of-run storyteller is exercised by its own tests; switch it off here rather than
+                // script an EncounterSummariser client this run has no use for.
+                GenerateEncounterStory = false,
                 RunOutputDirectory = _directory
             },
             // Deterministic damage: both bands of the quality draw are silenced, so every landed blow is a

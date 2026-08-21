@@ -1295,40 +1295,26 @@ public sealed class GameEngine : IGameEngine
                 $"{offerer.Name} holds no weapon to give up.");
         }
 
-        // Terms must promise at least one carried ITEM. A weapon alone is not enough, and that is a
-        // deliberate narrowing rather than an oversight.
+        // Terms must promise SOMETHING concrete: one or more carried items, the weapon in hand, or both.
+        // Either concession alone is enough — v0.7 additionally required a weapon-only offer to come from a
+        // character carrying nothing else at all, to close a parsing artefact where a demand for somebody
+        // ELSE's surrender (which has no representable form in this action) collapsed into "no items,
+        // forfeit_weapon true" and got recorded as the speaker's own surrender. A live run made four such
+        // offers, one of them a WINNING character saying "I offer him his life if he throws down his sabre".
         //
-        // A demand for somebody else's surrender has no representable form in this action — the offerer is
-        // always the acting character — so a misread demand collapses into exactly one shape: no items, and
-        // forfeit_weapon set true because a weapon was mentioned somewhere in the intent. A live run made
-        // four offers, every one of them with forfeit_weapon true and two with nothing else, and one was a
-        // WINNING character saying "I offer him his life if he throws down his sabre" — recorded as that
-        // character surrendering and giving up their own sword. Requiring a real possession closes the shape
-        // the misreading falls into, and costs the fiction little: a character who means to yield can always
-        // promise the coin at their belt, and may still throw in the weapon alongside it.
-        // The test is whether anything was HELD BACK, not whether a weapon was named. A character carrying
-        // items who promises none of them is the misread-demand shape; a character carrying nothing who
-        // promises the sword in their hand is giving everything they have, which is the most anyone can ask.
-        //
-        // The distinction matters because the first version of this rule trapped a character who had spent
-        // the fight trying to buy his way out. Vark stole a flask, gave his own purse away "as part of the
-        // deal", handed the flask back for his enemy's wounds, had his salve stolen — and when he finally
-        // put real terms on the table he owned nothing but his sabre, was refused, and died on the next
-        // turn. A rule meant to close a parsing artefact must not also close the mechanic at the exact
-        // moment it matters most.
-        if (offeredItems.Count == 0 && offerer.Inventory.Length > 0)
-        {
-            return EngineResult.Reject(action, state, EngineRejectionReason.OfferHasNoConcession,
-                $"{offerer.Name} promised no possession while still carrying something. Terms of surrender " +
-                "must put a carried item on the table — the weapon in hand counts only for someone who has " +
-                "nothing else left.");
-        }
-
+        // v0.10 lifts that extra narrowing: a genuine weapon-only surrender ("I hold my sabre out by the
+        // flat and offer to lay it down if you spare me") must work whatever else the offerer carries, and
+        // the misread-demand shape it was guarding against is now closed at the guidance layer instead — the
+        // rulebook card and character prompt teach that a demand for someone ELSE's surrender is only speech,
+        // and the one-mechanical-deed-per-turn contract stops a struck-out demand from being read as this
+        // action at all. Requiring an unrelated engine gate for a language-understanding problem was also
+        // the wrong layer for it, and it re-created the very trap the v0.7 comment above once described:
+        // a character down to their weapon alone still has exactly one thing left to give.
         if (offeredItems.Count == 0 && !action.ForfeitWeapon)
         {
             return EngineResult.Reject(action, state, EngineRejectionReason.OfferHasNoConcession,
                 $"{offerer.Name} offered nothing concrete. A plea to be spared is only words: terms of " +
-                "surrender must promise something enforceable.");
+                "surrender must promise something enforceable — a carried item, the weapon in hand, or both.");
         }
 
         var offer = new SurrenderOffer
@@ -1498,6 +1484,7 @@ public sealed class GameEngine : IGameEngine
             TransferredItemNames = [.. promised.Select(i => i.DisplayName)],
             ForfeitedWeaponName = forfeitedWeapon?.Name,
             GroundContainerName = ground?.Name,
+            WeaponWasPromised = offer.ForfeitWeapon,
             AssociatedSpeechEventId = offer.AssociatedSpeechEventId
         };
 

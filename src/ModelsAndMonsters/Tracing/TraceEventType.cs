@@ -288,6 +288,13 @@ public enum TraceEventType
     Narration,
     NarrationDelivered,
 
+    /// <summary>
+    /// A short dramatic story of the finished encounter was generated from its public transcript alone.
+    /// Recorded with the transcript's size, how many public entries were included versus omitted for length,
+    /// and the story text itself, so the retelling is auditable against the record it was built from.
+    /// </summary>
+    EncounterStoryGenerated,
+
     /// <summary>A harness protection limit stopped a loop.</summary>
     HarnessLimitReached,
 

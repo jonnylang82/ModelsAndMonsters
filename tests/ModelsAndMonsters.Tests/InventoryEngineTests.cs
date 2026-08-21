@@ -341,4 +341,71 @@ public sealed class InventoryEngineTests
         Assert.Single(engine.State.RequireById(TestWorld.RowanId).Inventory);
         Assert.Empty(engine.State.RequireById(TestWorld.ElaraId).Inventory);
     }
+
+    // ------------------------------------------------------------------------------------------
+    // Loose weapons carried as trophies (v0.10) — an ordinary item in every way but one: it is never
+    // the weapon in anyone's hand, and cannot be fought with.
+    // ------------------------------------------------------------------------------------------
+
+    // A distinct weapon name of its own, so stealing or giving it is never mistaken for the giver's or
+    // target's own EQUIPPED weapon (Rowan's Longsword, Vark's Notched Sabre) in these fixtures.
+    private static InventoryItem TrophyDagger() => new Weapon("Rusty Dagger", 2).AsForfeitedItem();
+
+    [Fact]
+    public void A_carried_weapon_trophy_can_be_given_like_any_ordinary_item()
+    {
+        var engine = EngineWith(TestWorld.State(Giver(TrophyDagger()), Receiver()));
+
+        var result = engine.Execute(new GiveItemAction(TestWorld.RowanId, TestWorld.ElaraId, "Rusty Dagger"));
+
+        Assert.True(result.Accepted);
+        Assert.DoesNotContain(engine.State.RequireById(TestWorld.RowanId).Inventory, i => i.Name == "Rusty Dagger");
+        var received = Assert.Single(engine.State.RequireById(TestWorld.ElaraId).Inventory);
+        Assert.True(received.IsWeaponTrophy);
+        // Elara's own equipped weapon is unaffected — the trophy is a carried item, never a swap.
+        Assert.Equal("Iron Mace", engine.State.RequireById(TestWorld.ElaraId).Weapon!.Name);
+    }
+
+    [Fact]
+    public void A_carried_weapon_trophy_can_be_dropped_like_any_ordinary_item()
+    {
+        var engine = EngineWith(TestWorld.State(Giver(TrophyDagger())));
+
+        var result = engine.Execute(new DropItemAction(TestWorld.RowanId, "Rusty Dagger"));
+
+        Assert.True(result.Accepted);
+        Assert.Empty(engine.State.RequireById(TestWorld.RowanId).Inventory);
+        var ground = Assert.Single(engine.State.Room.Objects.OfType<Container>(), c => c.IsGround);
+        var dropped = Assert.Single(ground.Contents);
+        Assert.True(dropped.IsWeaponTrophy);
+        Assert.Equal("Rusty Dagger", dropped.Name);
+    }
+
+    [Fact]
+    public void A_carried_weapon_trophy_can_be_stolen_like_any_ordinary_item()
+    {
+        var engine = EngineWith(TestWorld.State(TestWorld.Rowan(), Enemy(TrophyDagger())), new ScriptedRng(1));
+
+        var result = engine.Execute(new StealItemAction(TestWorld.RowanId, TestWorld.VarkId, "Rusty Dagger"));
+
+        Assert.True(result.Accepted);
+        Assert.DoesNotContain(engine.State.RequireById(TestWorld.VarkId).Inventory, i => i.Name == "Rusty Dagger");
+        Assert.Contains(engine.State.RequireById(TestWorld.RowanId).Inventory, i => i.IsWeaponTrophy && i.Name == "Rusty Dagger");
+        // Vark keeps the Notched Sabre in his hand throughout: only the loose trophy in his pack moved.
+        Assert.Equal("Notched Sabre", engine.State.RequireById(TestWorld.VarkId).Weapon!.Name);
+    }
+
+    [Fact]
+    public void Attacking_with_a_carried_weapon_trophy_is_rejected()
+    {
+        // The trophy sits in Rowan's inventory, but his equipped weapon is still the Longsword: naming the
+        // trophy as the attack's weapon must be refused exactly as naming any weapon he does not hold would be.
+        var engine = EngineWith(TestWorld.State(Giver(TrophyDagger()), Enemy()));
+
+        var result = engine.Execute(new AttackCharacterAction(TestWorld.RowanId, TestWorld.VarkId, "Rusty Dagger"));
+
+        Assert.False(result.Accepted);
+        Assert.Equal(EngineRejectionReason.WeaponNotPossessed, result.RejectionReason);
+        Assert.Equal("Longsword", engine.State.RequireById(TestWorld.RowanId).Weapon!.Name);
+    }
 }

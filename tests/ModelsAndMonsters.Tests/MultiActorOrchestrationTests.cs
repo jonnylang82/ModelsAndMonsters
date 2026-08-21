@@ -1,6 +1,7 @@
 using Microsoft.Extensions.AI;
 using ModelsAndMonsters.Agents;
 using ModelsAndMonsters.Engine;
+using ModelsAndMonsters.Knowledge;
 using ModelsAndMonsters.Orchestration;
 using ModelsAndMonsters.Randomness;
 using ModelsAndMonsters.Tracing;
@@ -74,6 +75,38 @@ public sealed class MultiActorOrchestrationTests
         var engineAction = Assert.Single(harness.Sink.Payloads<EngineActionPayload>(TraceEventType.EngineAction));
         Assert.Equal(TestWorld.SkritId, ((AttackOutcome)engineAction.Outcome!).TargetId);
         Assert.Equal(12, harness.Engine.State.RequireById(TestWorld.VarkId).Health);
+    }
+
+    /// <summary>
+    /// v0.10: a resolved attack — hit or miss — is now itself a public knowledge fact, delivered to every
+    /// present character, not only the two directly involved. Before this, a plain attack was the one
+    /// combat-adjacent event nobody could later be told about directly (unlike a theft, a threat or a
+    /// surrender), which let a bystander's <c>ask_dm</c> question about it be answered wrong.
+    /// </summary>
+    [Fact]
+    public async Task A_resolved_attack_becomes_a_public_fact_every_living_character_learns()
+    {
+        var harness = new MultiActorHarness(
+            new ScriptedChatClient(
+                ScriptedChatClient.Call("dm-1", DungeonMasterTools.AttackCharacterName,
+                    ("attacker", "Rowan"), ("target", "Skrit"), ("weapon", "Longsword")),
+                ScriptedChatClient.Text("Rowan's longsword bites into the smaller goblin.")),
+            MultiActorHarness.Clients(
+                ("Rowan", new ScriptedChatClient(ScriptedChatClient.Call("r-1", CharacterTools.TakeActionName,
+                    ("intent", "I bring my longsword down on Skrit."))))));
+
+        await harness.RunTurn("Rowan");
+
+        var attackFact = Assert.Single(
+            harness.Sink.Payloads<PublicFactDeliveredPayload>(TraceEventType.PublicFactDelivered),
+            p => p.SourceEvent == "attack_character");
+        Assert.Contains("landed", attackFact.Fact, StringComparison.Ordinal);
+        Assert.Equal(4, attackFact.Recipients.Count); // everyone present, including bystanders, saw it happen
+
+        // Elara took no part in this attack, yet it is now a fact she holds — exactly what lets her (or
+        // anyone else) be answered correctly later about whether it landed, rather than left to guess.
+        Assert.Contains(harness.Ledger.RecordsFor(TestWorld.ElaraId),
+            r => harness.Ledger.FindFact(r.FactId) is { FactType: FactType.AttackResolved });
     }
 
     [Fact]

@@ -116,22 +116,65 @@ public sealed class SurrenderNegotiationEngineTests
     }
 
     [Fact]
-    public void Terms_promising_only_the_weapon_while_still_carrying_things_are_refused()
+    public void Weapon_only_terms_are_accepted_even_while_carrying_other_things()
     {
-        // A demand for somebody ELSE's surrender has no representable form in this action — the offerer is
-        // always the acting character — so a misread demand collapses into exactly one shape: no items, with
-        // forfeit_weapon true because a weapon was mentioned somewhere in the intent. A live run made four
-        // offers, all with forfeit_weapon true and two with nothing else, one of them a WINNING character
-        // saying "I offer him his life if he throws down his sabre" — recorded as that character surrendering
-        // and giving up their own sword. Requiring a carried item closes the shape.
+        // v0.7 refused this shape, to close a parsing artefact where a demand for somebody ELSE's surrender
+        // (which has no representable form in this action) collapsed into "no items, forfeit_weapon true" and
+        // got recorded as the speaker's own surrender. v0.10 lifts that extra narrowing: a genuine weapon-only
+        // surrender ("I hold my sabre out by the flat and offer to lay it down if you spare me") must work
+        // whatever else the offerer carries — the misread-demand shape is now closed at the guidance layer
+        // (non-binding demands, one-mechanical-deed-per-turn), not by an engine gate that also blocked a
+        // character who genuinely meant to give up everything but their coin purse.
         var engine = Engine();
+        Assert.NotEmpty(TestWorld.VarkV07().Inventory);
 
         var result = engine.Execute(new OfferSurrenderAction("Vark", "Rowan", [], ForfeitWeapon: true));
 
-        Assert.False(result.Accepted);
-        Assert.Equal(EngineRejectionReason.OfferHasNoConcession, result.RejectionReason);
-        Assert.Empty(engine.State.SurrenderOffers);
+        Assert.True(result.Accepted);
         Assert.Empty(result.RngDraws);
+        var offer = Assert.Single(engine.State.SurrenderOffers);
+        Assert.Empty(offer.OfferedItemIds);
+        Assert.True(offer.ForfeitWeapon);
+    }
+
+    [Fact]
+    public void A_weapon_only_offer_leaves_the_weapon_equipped_and_the_offerer_untouched_before_acceptance()
+    {
+        var engine = Engine();
+        var varkBefore = engine.State.RequireById(TestWorld.VarkId);
+
+        var result = engine.Execute(new OfferSurrenderAction("Vark", "Rowan", [], ForfeitWeapon: true));
+
+        Assert.True(result.Accepted);
+        var vark = engine.State.RequireById(TestWorld.VarkId);
+        Assert.NotNull(vark.Weapon);
+        Assert.False(vark.IsDisarmed);
+        Assert.Equal(varkBefore.Weapon!.Id, vark.Weapon!.Id);
+        Assert.Equal(varkBefore.Inventory.Select(i => i.Id), vark.Inventory.Select(i => i.Id));
+        Assert.Equal(CharacterDisposition.Active, vark.Disposition);
+        Assert.True(vark.IsCombatTarget);
+        Assert.DoesNotContain(engine.State.Room.Objects.OfType<Container>(), c => c.IsGround);
+    }
+
+    [Fact]
+    public void A_weapon_only_offer_moves_the_weapon_only_once_accepted()
+    {
+        var engine = Engine();
+        var offer = engine.Execute(new OfferSurrenderAction("Vark", "Rowan", [], ForfeitWeapon: true));
+
+        var accepted = engine.Execute(new AcceptSurrenderAction("Rowan", OfferId(offer)));
+
+        Assert.True(accepted.Accepted);
+        var vark = engine.State.RequireById(TestWorld.VarkId);
+        Assert.True(vark.IsDisarmed);
+        Assert.Equal(CharacterDisposition.Surrendered, vark.Disposition);
+
+        // Vark's own inventory items were never promised, so they never moved.
+        Assert.Equal(TestWorld.VarkV07().Inventory.Select(i => i.Id), vark.Inventory.Select(i => i.Id));
+
+        var ground = Assert.Single(engine.State.Room.Objects.OfType<Container>(), c => c.IsGround);
+        var forfeited = Assert.Single(ground.Contents);
+        Assert.Equal(TestWorld.VarkV07().Weapon!.Id, forfeited.Id);
     }
 
     [Fact]
@@ -328,6 +371,39 @@ public sealed class SurrenderNegotiationEngineTests
         // but it was not a promised term, so the agreement records no forfeiture.
         Assert.True(engine.State.RequireById(TestWorld.VarkId).IsDisarmed);
         Assert.Null(Assert.Single(engine.State.SurrenderAgreements).ForfeitedWeaponId);
+    }
+
+    [Fact]
+    public void The_narrated_outcome_never_claims_an_unpromised_weapon_was_part_of_the_bargain()
+    {
+        // v0.10: mandatory disarmament and negotiated tribute are two different facts, and the narration
+        // must not blur them — a weapon that fell away only because yielding disarms regardless must not
+        // read as though the offerer had struck that bargain.
+        var engine = Engine();
+        var offer = engine.Execute(new OfferSurrenderAction("Vark", "Rowan", ["purse-vark"], ForfeitWeapon: false));
+
+        var accepted = engine.Execute(new AcceptSurrenderAction("Rowan", OfferId(offer)));
+
+        var outcome = (AcceptSurrenderOutcome)accepted.Outcome!;
+        Assert.False(outcome.WeaponWasPromised);
+        Assert.Equal("Notched Sabre", outcome.ForfeitedWeaponName);
+        Assert.DoesNotContain("as promised", outcome.Summary, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("not part of the bargain", outcome.Summary, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("DISARMED", outcome.Summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_narrated_outcome_credits_a_genuinely_promised_weapon_as_promised()
+    {
+        var engine = Engine();
+        var offer = engine.Execute(new OfferSurrenderAction("Vark", "Rowan", ["purse-vark"], ForfeitWeapon: true));
+
+        var accepted = engine.Execute(new AcceptSurrenderAction("Rowan", OfferId(offer)));
+
+        var outcome = (AcceptSurrenderOutcome)accepted.Outcome!;
+        Assert.True(outcome.WeaponWasPromised);
+        Assert.Contains("as promised", outcome.Summary, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("not part of the bargain", outcome.Summary, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

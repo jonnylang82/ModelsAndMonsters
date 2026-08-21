@@ -14,6 +14,8 @@ public sealed record RunPaths(string RunId, string Directory)
 
     public string FinalStateJson => Path.Combine(Directory, "final-state.json");
 
+    public string StoryMd => Path.Combine(Directory, "story.md");
+
     /// <summary>Creates <c>&lt;root&gt;/&lt;yyyyMMdd-HHmmssZ&gt;_&lt;short-id&gt;/</c> and returns it.</summary>
     public static RunPaths Create(string rootDirectory, DateTimeOffset startedAt)
     {
@@ -101,6 +103,10 @@ public sealed record TracedAgentProfile
 
     public float? FrequencyPenalty { get; init; }
 
+    public float? RepeatPenalty { get; init; }
+
+    public int? RepeatLastN { get; init; }
+
     public int? ContextWindow { get; init; }
 
     /// <summary>
@@ -135,6 +141,8 @@ public sealed record TracedAgentProfile
             MaxOutputTokens = profile.MaxOutputTokens,
             PresencePenalty = profile.PresencePenalty,
             FrequencyPenalty = profile.FrequencyPenalty,
+            RepeatPenalty = profile.RepeatPenalty,
+            RepeatLastN = profile.RepeatLastN,
             Seed = profile.Seed,
             ContextWindow = profile.ContextWindow,
             BindingContextWindow = profile.BindingContextWindow,
@@ -171,4 +179,7 @@ public static class RunArtifactWriter
 
     public static void WriteFinalState(RunPaths paths, FinalStateDocument document) =>
         File.WriteAllText(paths.FinalStateJson, JsonSerializer.Serialize(document, TraceJson.Indented));
+
+    public static void WriteStory(RunPaths paths, string markdown) =>
+        File.WriteAllText(paths.StoryMd, markdown);
 }

@@ -276,7 +276,22 @@ public sealed class AnswerFactsProjector : IAnswerFactsProjector
                     }
 
                     var source = state.FindById(status.SourceCharacterId)?.Name ?? status.SourceCharacterId;
-                    lines.Add($"{other.Name} is {status.Describe()} (put there by {source}).");
+
+                    // Guarding/Guarded name the actual paired character rather than "an ally" or "this
+                    // character": an unscoped pronoun here is exactly what let a guard relationship between
+                    // two OTHER characters be misread as covering whoever the asker happened to be asking
+                    // about (v0.10).
+                    lines.Add(status.Kind switch
+                    {
+                        StatusEffectKind.Guarding =>
+                            $"{other.Name} is standing guard over {PartnerName(state, status) ?? "an ally"} — the " +
+                            $"next enemy blow aimed at {PartnerName(state, status) ?? "them"} lands on {other.Name} " +
+                            "instead.",
+                        StatusEffectKind.Guarded =>
+                            $"{other.Name} is guarded by {source} — the next enemy blow aimed at {other.Name} is " +
+                            $"taken by {source} instead.",
+                        _ => $"{other.Name} is {status.Describe()} (put there by {source})."
+                    });
                 }
             }
         }
@@ -695,6 +710,19 @@ public sealed class AnswerFactsProjector : IAnswerFactsProjector
         lines.Add("There is nothing else. No other kind of action exists in this world.");
 
         return lines;
+    }
+
+    /// <summary>The other half of a linked status relationship, by name — who is being guarded, or by whom.</summary>
+    private static string? PartnerName(GameState state, StatusEffectInstance status)
+    {
+        if (status.RelationshipId is null)
+        {
+            return null;
+        }
+
+        var other = state.Statuses.FirstOrDefault(s =>
+            string.Equals(s.RelationshipId, status.RelationshipId, StringComparison.OrdinalIgnoreCase) && s.Id != status.Id);
+        return other is null ? null : state.FindById(other.TargetCharacterId)?.Name ?? other.TargetCharacterId;
     }
 
     /// <summary>The exact terms of an offer, as the state records them.</summary>

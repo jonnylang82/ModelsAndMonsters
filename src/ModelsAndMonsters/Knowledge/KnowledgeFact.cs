@@ -83,7 +83,16 @@ public enum FactType
     /// An environmental object's durability changed — a cover interception, or deliberate damage — including
     /// its destruction (v0.9). Public: everyone present sees the object take the blow and its condition change.
     /// </summary>
-    EnvironmentalObjectDamaged
+    EnvironmentalObjectDamaged,
+
+    /// <summary>
+    /// One character struck at another and it was seen whether the blow landed — public, because combat has
+    /// no stealth and everyone present watches it happen. Deliberately separate from every other combat-
+    /// adjacent fact (morale, intimidation, cover, environmental damage): a plain attack landing or missing
+    /// was the one event in the room nobody could ever be told about directly, which is what let a character
+    /// be answered wrong about a blow the engine itself had already resolved (v0.10).
+    /// </summary>
+    AttackResolved
 }
 
 /// <summary>

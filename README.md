@@ -1,4 +1,4 @@
-# Models & Monsters — v0.9
+# Models & Monsters — v0.10
 
 A small experimental harness for autonomous LLM characters interacting inside a deterministic fantasy
 world through an LLM Dungeon Master.
@@ -62,6 +62,15 @@ The project has grown release by release from a single 1v1 duel (v0.1) into the 
   of the person behind it. Reducing durability to zero destroys the object — which stays in the room as
   wreckage rather than disappearing — and exposes whoever was sheltering there. See
   [Environmental cover](#environmental-cover).
+- **v0.10** — **the action-set closure batch**: not a new feature phase, but the smallest set of fixes that
+  closed the most misleading gaps `reports/action-set-gaps.md` found, without opening any of the mechanics
+  the project deliberately excludes. Weapon-only surrender no longer needs an empty inventory to be valid;
+  a forfeited weapon's status as a genuine, takeable-but-unfightable trophy is now stated plainly wherever
+  state is rendered; one-mechanical-deed-per-turn and the non-binding nature of a demand are now explicit in
+  the character's own contract, not just implicit in the resolver's "primary act" rule; and the no-distance
+  room model is stated to the character directly instead of only enforced silently by refusal. See
+  [What the action set supports](#what-the-action-set-supports) and
+  [Negotiated surrender](#negotiated-surrender-terms-not-declarations).
 
 **New in v0.8: [`docs/architecture.md`](docs/architecture.md)** — the structural companion to this file.
 It maps the components and the five model-driven agents, walks a character's turn end to end through every
@@ -86,6 +95,46 @@ Text matching is permitted only for:
 - high-confidence defensive lint and telemetry.
 
 It must never determine game semantics or mutate authoritative state. Any unavoidable legacy fallback must be isolated, traced, non-authoritative, and documented for removal.
+
+## What the action set supports
+
+The project froze its action set at the end of v0.10, a closure batch aimed at the most misleading gaps in
+[`reports/action-set-gaps.md`](reports/action-set-gaps.md) without turning the demo into a general RPG
+system. This is the boundary a character's turn is played against:
+
+**Supported:**
+
+- **One mechanical deed per turn.** A character's `take_action` resolves exactly one primary deed; public
+  speech (`say`, or `utterances` on any call) may always ride alongside it for free, but words are never a
+  second deed and a hoped-for second effect tacked onto an intent simply does not happen.
+- **Demands are non-binding speech.** "Drop your weapon or die" binds nobody and blocks nothing — it is
+  ordinary structured speech, whoever says it and however it is worded. The only things that ever move state
+  around an opponent's will are `intimidate_character` (a fear check, once per enemy, never disarms or
+  yields anyone) and negotiated surrender, below.
+- **Surrender requires a pending offer and acceptance**, never a unilateral declaration. `offer_surrender`
+  needs at least one real concession — one or more carried items, the weapon in hand, or both; either alone
+  is enough. It transfers nothing and grants no protection by itself. Only the one named opponent may
+  `accept_surrender`, on their own turn, and only acceptance moves anything.
+- **Weapon forfeiture is a valid, self-sufficient surrender concession**, whatever else the offerer carries.
+  A forfeited weapon becomes a genuine, takeable trophy on the floor (`take_item`), carried, given, dropped
+  or stolen exactly like any ordinary item — but it can never be equipped or fought with.
+- **Movement inside the room is purely descriptive.** There is no distance, no positions and no adjacency.
+  Everyone and every interactable object is already within reach; describing a step, a circle or a retreat
+  is flavour on the one deed actually attempted, never a deed of its own.
+- **Environmental objects can be damaged only when they expose that capability** — the seeded cover object,
+  struck deliberately with `damage_environmental_object` rather than a person, no roll, deterministic
+  damage. An ordinary container is never a damage target; opening one is `open_container`, never a forced
+  entry.
+
+**Deliberately unsupported** (asked for repeatedly across live runs, and not planned):
+
+- throwing objects, at a person or to one;
+- disarming attacks;
+- weapon swapping and equipping — a carried trophy weapon never becomes the one in a character's hand;
+- damaging ordinary containers (forcing, prying or smashing one open);
+- positional movement, distance, adjacency or opportunity attacks;
+- readied reactions;
+- improvised physics of any other kind.
 
 ## Running it
 
@@ -464,7 +513,7 @@ something went wrong; a character running out of breath is the fiction working. 
 made a good run read as a troubled one — three of one run's four "harness limits" were this rule behaving
 exactly as designed.
 
-### Sampling parameters you do not set are not off (v0.8)
+### Sampling parameters you do not set are not off (v0.9)
 
 **A sampling parameter the harness leaves unset takes the model's own default, and a chat-tuned model's
 defaults are tuned for conversation — not for producing exact structured output.** That is not a
@@ -693,6 +742,7 @@ The console shows only the readable game. Everything else goes to `runs/<run-id>
 | `final-state.json` | Authoritative world state when the run stopped — including live statuses, the whole surrender-offer ledger and every agreement |
 | `report.md` | Full readable rendering: run details, model profiles, per-agent activity totals, outcome, surrender negotiation, persuasion and intimidation, ability activity, the status timeline, state-grounding health, inventory and item provenance, rulebook consultations, context health, teams, knowledge, a plain transcript, **every trace row**, and the final state |
 | `report-summary.md` | The same report **without** the event-by-event trace dump — the story, profiles, per-agent totals, the analysis sections and transcript only. Small and skimmable; points to `report.md`/`trace.jsonl` for the raw events |
+| `story.md` | A short, grounded account of the encounter — an opening and the fight itself, written once by the Encounter Summariser from a deterministic brief, followed by an ending the harness appends itself — after the run completes. See [Encounter Summariser: a grounded account, once, at the end](#encounter-summariser-a-grounded-account-once-at-the-end) |
 
 Both reports are written automatically at the end of every run, including a failed one. They are
 generated purely from the other three files, so any past run can be re-rendered (this rewrites both
@@ -708,6 +758,161 @@ the move it led to — in both reports. The text was always in `trace.jsonl` (ev
 reasoning lands there as a `"reasoning"`-typed content block via Microsoft.Extensions.AI); rendering
 it just makes it visible without reading raw JSON. Because it comes from the trace, re-running
 `--report` on an old run surfaces it retroactively.
+
+**A room's objects table used to mislabel cover as a container.** A room's `Objects` array (v0.9) holds
+both real containers and environmental cover side by side, and the final-state container table (in the
+`Final state` section) once iterated that whole array unfiltered — so the seeded cover object (the
+Overturned Mill Workbench) showed up in a table headed "Container," reported as permanently `closed` with
+no contents, because cover has neither. Cover has its own condition entirely — `Intact`, `Damaged` or
+`Destroyed`, derived from durability — and belongs only under its own `## Environmental objects` section,
+which already rendered it correctly; the container table just needed the same "has an `IsOpen` field"
+filter the `Objective container state` (Knowledge) section already used, so the two can never disagree.
+The filter does not require a cover object, or even a type discriminator, to be present, so a room with only
+plain containers — the shape every run had before v0.9 — still renders exactly as it always did.
+
+## Encounter Summariser: a grounded account, once, at the end
+
+After a run finishes, one more agent runs exactly once: the **Encounter Summariser** writes a short
+account of the encounter — an Opening and The Encounter itself — printed after the encounter's own
+outcome summary and written to `story.md` alongside the rest of the run's artefacts. Set
+`Harness:GenerateEncounterStory` to `false` to turn it off.
+
+**Its input is a compact, deterministic `EncounterStoryBrief`, never the raw public transcript.** An
+earlier version fed the model the encounter's public narration and speech directly and let it write a
+free continuation (backstory, setting, the fight, an invented epilogue). That let the model invent things
+the record never showed — and, combined with an over-aggressive sampling recipe, is what produced the
+runaway degenerate output documented on `RepeatLastN`'s own remarks below. `EncounterStoryBriefBuilder`
+(`Orchestration/EncounterStoryBrief.cs`) now builds the brief itself, deterministically, from the run's own
+trace and final state — no model involved in building it:
+
+- the scenario's premise and room, and the team roster;
+- a chronological, one-line-each account of every **accepted** action the engine actually applied — reusing
+  each outcome's own `Summary` (the same deterministic sentence the DM narrates from), so attacks, critical
+  hits, cover interactions, surrender offers and agreements, and item transfers are all covered by one
+  mechanism rather than a category-by-category reconstruction;
+- exactly **who killed whom**, read directly off each lethal attack's own `AttackerName`/`TargetName`/
+  `TargetDied` fields — never inferred from prose, and correct even when a Guard Ally redirect moved the
+  blow onto someone other than who was aimed at;
+- every character's final disposition and health, read from the authoritative final state, never the trace;
+- the exact terminal condition, and whether the harness stopped the encounter on a round or idle limit
+  before a decision was reached (`EncounterOutcome.HarnessLimit`) rather than at one.
+
+A **rejected** attempt never appears at all — only accepted `EngineAction` rows are read, so an attack that
+missed the die roll for the resolver, a refused surrender, or a discarded second deed can never be narrated
+as something that happened. The brief is still bounded to at most `Harness:EncounterStoryInputBudgetFraction`
+of the summariser's own context window, keeping only the most recent events on a very long encounter (the
+same discipline the old transcript trimming applied), because it is fed to a model and the harness's 8k-class
+local models still share that window between input and output.
+
+**Terminal-state fidelity is guaranteed by construction, not by checking the model's output afterward.** The
+model is asked for exactly two sections — Opening and The Encounter — and is told plainly, in the brief
+itself, whether the fight above it reached a decision or whether observation stopped without one; either way
+it is instructed never to invent a death, surrender, escape, item transfer or resolution the brief does not
+show, and never to resolve a fight the brief leaves open. The **Ending is never the model's to write at all**:
+`EncounterStoryBrief.RenderEndingParagraph()` composes it entirely from the same final-state facts the brief
+was built from and the harness appends it to whatever the model wrote, so the finished `story.md` cannot
+disagree with the terminal state regardless of what the model produced above it. This is deliberately not a
+regex check or a second model call grading the first (both considered and rejected) — the guarantee comes
+from the model never being asked to state the outcome in the first place.
+
+**Creativity was dialled back to match.** A free-inventing storyteller wanted maximal variety; a grounded one
+telling only what the brief already gives it does not, and the earlier recipe (`Temperature: 1.0`, `TopK: 80`,
+`PresencePenalty: 0.4`, `FrequencyPenalty: 0.3`) is exactly the combination that produced the degenerate
+output documented below. `Agents:EncounterSummariser` remains independently configurable — its own provider
+and model if you want one — but the shipped recipe now favours a faithful, well-formed two-section account:
+
+```json
+"EncounterSummariser": {
+  "Effort": "none",
+  "Temperature": 0.4,
+  "TopP": 0.95,
+  "TopK": 20,
+  "PresencePenalty": 0.0,
+  "FrequencyPenalty": 0.0,
+  "RepeatPenalty": 1.15,
+  "RepeatLastN": null,
+  "MaxOutputTokens": null
+}
+```
+
+`PresencePenalty`/`FrequencyPenalty` are `0.0`, not left unset — see [Sampling parameters you do not set are
+not off](#sampling-parameters-you-do-not-set-are-not-off-v09): null means "whatever the model's own default
+is," not "off."
+
+`RepeatPenalty` is new: Ollama's own classic llama.cpp repetition penalty, a different knob from
+`PresencePenalty`/`FrequencyPenalty` (which are OpenAI's shape and which Ollama also honours). There is no
+cross-provider abstraction for it, so it travels as a raw Ollama request option and is dropped-and-reported
+on OpenAI and Anthropic like any other option a provider cannot take.
+
+**`RepeatLastN` (how far back `RepeatPenalty` looks) was tried, at two different sizes, and abandoned both
+times — the shipped configuration leaves it unset.** Ollama's default lookback (64 tokens) is tuned for
+ordinary chat, where a repeat within a few words is the failure being guarded against. A live run showed the
+failure mode this misses: the model opened a single run-on sentence roughly a thousand tokens long, then —
+once the sentence had scrolled outside that 64-token window — regenerated it verbatim, over and over, until it
+hit the output cap. `repeat_penalty` was in force the whole time; it simply could not see far enough back to
+notice.
+
+The first fix went too far in the other direction. llama.cpp's own sentinel for "span the whole context" is
+`-1` — rejected outright by a live Ollama server with an HTTP 400 (`Field 'repeat_last_n': Value must be
+between 0 <= value <= 2147483647, but got -1`), so `int.MaxValue` stood in for it. That shipped, then broke
+the very next run: the lookback counts back through the **whole token stream, prompt included**, not just
+what the model itself has written, so against this call's own ~4000-token public-transcript input it
+penalised reusing anything already in the prompt — periods, common words, character names. A live run spent
+its entire output budget on one unpunctuated cascade of ever-more-exotic vocabulary that never once closed a
+sentence. A second attempt at a moderate `2000` — comfortably more than the repeat it was meant to catch,
+well short of the input transcript — still broke, differently: the model exhausted safe English vocabulary
+within its own widened window and drifted into Chinese mid-sentence, then into symbols and abbreviations,
+before oddly recovering to write a perfectly ordinary Setting paragraph straight after.
+
+Three sizes, three distinct failures. That pattern points at the combination itself, not at this one field:
+`RepeatPenalty`, `PresencePenalty` (0.4) and `FrequencyPenalty` (0.3) are three separate mechanisms already
+pushing the model away from repetition, at `Temperature: 1.0` on a heavily quantized 9B model, for a
+3000-token generation — plenty of pressure for the "safe" vocabulary to run out before the reply does, without
+`RepeatLastN` widening how much of it counts. Left unset, Ollama's own 64-token default applies — a setting
+only ever shown to be insufficient for the original loop, never shown to make anything worse, unlike either
+enlarged value. If the original verbatim-loop failure resurfaces, the next lever to try is dialing back the
+other three penalties together, not reaching for `RepeatLastN` a third time.
+
+The prompt was tightened alongside the first `RepeatLastN` attempt, and tightened again when the story was
+regrounded to the brief: each of the two remaining sections carries an explicit length budget (one short
+paragraph for Opening, two or three for The Encounter) instead of a vaguer "keep it tight," and the old
+`Backstory`/`Setting`/`After` sections are gone outright — `Setting` folded into `Opening`, and `After` (a
+free-invented epilogue) is not something a grounded storyteller should be writing at all, since it invited
+exactly the "invent a resolution the record does not show" failure the brief now exists to prevent.
+
+**Still 8k-context aware, on purpose.** This agent is not exempt from the project's local-model discipline
+just because it writes prose instead of calling tools: the brief's chronological events are trimmed to at
+most `Harness:EncounterStoryInputBudgetFraction` (0.5 by default) of the summariser's own context window
+before they are ever sent, leaving headroom for the system prompt and the reply. On the rare very long
+encounter whose full account would not fit, the **oldest** events are dropped first — the same discipline
+`RecentTurnsKeptFull` applies to a character's own history, and the old transcript trimming applied before
+it — and the brief says so, in its own first line, with a count of how many earlier events were left out.
+The kills, the final dispositions and the terminal condition are never trimmed regardless: they are small,
+and losing one would be exactly the kind of gap the brief exists to prevent. A run short enough for this
+project's own `MaxRounds` defaults essentially never trims.
+
+Nothing the summariser produces is read back by the game or by any other agent, and a failure here — a
+bad reply, a provider error, a model that produced nothing usable — never turns a completed run into a
+failed one: it is reported to the console and the run's other artefacts are unaffected, exactly like a
+report-writing failure.
+
+**The output budget is one figure, `Harness:EncounterStoryOutputTokens` (3000), for every provider —
+deliberately not tuned down for a local model the way the DM's adjudication cap or the resolver's output
+budget are.** Those exist because a *per-turn* call fights a shared window with a large, turn-varying
+input; this call runs once per whole run, on an input already bounded by `EncounterStoryInputBudgetFraction`,
+so neither reason for tightness applies. An initial local-only figure (900) was tried first and was the wrong
+instinct — a live Claude Sonnet run measured `FinishReason: length` at exactly 900/900 output tokens against
+only 2,367 of a vastly larger input window: no window pressure at all, only a local-only tuning cutting the
+reply short for nothing. See [A local-model accommodation must not become a global
+rule](#a-local-model-accommodation-must-not-become-a-global-rule-v08) — this is the same mistake a fourth
+time, and here the fix is to stop distinguishing providers rather than to distinguish them more precisely.
+3000 is sized to sit safely under an 8192 Ollama window even in the worst case (the transcript budget plus
+the summariser's own prompt overhead, with margin to spare) while comfortably outlasting what any genuine
+four-section story needs. **This cannot be turned off entirely, on any provider**: Anthropic's API requires
+`max_tokens` on every request (see [Anthropic](#anthropic) above), so leaving it unset would not mean
+unbounded there — it would mean a request the API rejects. Set `Agents:EncounterSummariser:MaxOutputTokens`
+explicitly only if you want a different figure than the shared default; leaving it null (the shipped
+default) just inherits `Harness:EncounterStoryOutputTokens`.
 
 ## Characters, teams and turns
 
@@ -775,15 +980,25 @@ active combat.
 v0.5's `surrender` was unilateral — a character declared it and became untouchable, keeping everything.
 v0.7 removes that action entirely. **Giving up now takes both sides, and costs something.**
 
-**Terms must hold nothing back.** An offer promises at least one carried item; the weapon in hand may be
-added alongside it, and stands alone only for a character carrying nothing at all. That rule is not
-bookkeeping — it closes a parsing artefact. `offer_surrender` binds the offerer to the *acting* character,
+**Terms must promise something real: one or more carried items, the weapon in hand, or both.** Either
+concession alone is a complete offer (v0.10) — a character can yield on nothing but the sword in their
+hand, whatever else they are still carrying. `offer_surrender` binds the offerer to the *acting* character,
 so a demand for somebody else's surrender has no representable form and collapses into exactly one shape:
 no items, `forfeit_weapon` true because a weapon was mentioned somewhere in the intent. A live run produced
 four offers, all with `forfeit_weapon` true and two with nothing else, one of them a character who was plainly
-winning — recorded as *that character* surrendering and giving up their own sword. The
-"carrying nothing" exemption matters just as much: the first version of the rule refused a goblin who had
-spent the fight giving his possessions away trying to negotiate, and he died the next turn.
+winning — recorded as *that character* surrendering and giving up their own sword.
+
+v0.7 closed that parsing artefact with an engine gate: a weapon-only offer was refused unless the offerer
+carried nothing else at all. That gate also refused the genuine case — "I hold my sabre out by the flat and
+offer to lay it down if you spare me" — whenever the offerer still had so much as a coin purse on them, and
+it traps exactly the character the mechanic exists for: someone who has spent the fight giving things away
+and has only their weapon left to offer (the first draft of the rule refused a goblin in precisely that
+position, and he died the next turn). **v0.10 removes the engine-side gate and answers the misread-demand
+problem at the guidance layer instead** — the rule card and the character prompt now teach that a demand
+for somebody *else's* surrender is only speech, and the one-mechanical-deed-per-turn contract (see
+[What the action set supports](#what-the-action-set-supports)) stops a struck-out demand from being read as
+this action at all. The only remaining engine-side requirement is that *something* is promised:
+`items = []` and `forfeit_weapon = false` together is still refused (`OfferHasNoConcession`) as a bare plea.
 
 ```text
 Active
@@ -807,9 +1022,21 @@ asset left the offerer's hands). Only `Accepted` moves anything.
 
 Acceptance is **all or nothing**: every promised item moves in one atomic state change, the offerer is
 disarmed, a promised weapon lands on the room's floor as an inert trophy keeping its own stable id (there
-is no equipping in v0.7, so a looted weapon is an inventory trophy, not a usable one), a durable
+is no equipping, so a looted weapon is an inventory trophy, not a usable one), a durable
 `SurrenderAgreement` is recorded, the offerer becomes `Surrendered`, and their combat statuses are swept
 away. If any promised asset is missing when acceptance is attempted, nothing moves at all.
+
+**A forfeited weapon is a genuinely takeable trophy, not scenery** (v0.10). It lands in the room's ordinary
+ground-loot container as a plain `InventoryItem` — the same one `take_item` already understands from a
+chest, the floor or a body — so `Weapon.AsForfeitedItem()` is the only place a weapon crosses from equipped
+state into an item anyone can pick up, carry, hand off, drop or have stolen exactly like any other
+belonging. `InventoryItem.IsWeaponTrophy` marks it so state formatting can say so plainly (`WorldStateFormatter`
+renders it as "*taken as a trophy — carried, not equipped; cannot be fought with*" in both the Dungeon
+Master's and the holder's own state block, and the report annotates it the same way), rather than leaving a
+model to guess from the name "Notched Sabre" sitting in someone's pack whether it can be fought with. It
+cannot: `attack_character` only ever resolves against a character's single equipped `Weapon` field, so
+naming a carried trophy as the attack's weapon is refused (`WeaponNotPossessed`) exactly as naming any
+weapon the attacker does not hold would be. There is still no equipping and no weapon-swapping of any kind.
 
 **This is the persuasion and intimidation slice**, and it is deliberately not a mechanic. There is no
 `persuade` action, no social statistic and no social roll. What a character says with `say` — a plea, an
@@ -1057,6 +1284,26 @@ already has), `AttackAgainstCover` (the covered-attack companion, always emitted
 sheltering, whatever the result), and the focused `EnvironmentalObjectDestroyed` — the same relationship
 `CharacterSurrendered`/`CharacterEscaped` have to `DispositionChanged`.
 
+### What live testing found
+
+**"Brace behind the workbench" is cover, not a guard, however it's phrased.** `combat.defend` and
+`environment.take-cover` describe the same surface shape — a defensive posture, no blow struck — and
+`combat.defend`'s vocabulary (bracing, standing one's ground, covering oneself) is generic enough to also match
+a sentence that happens to name a real object. Live probing found exactly that: "I brace behind the workbench"
+resolved as the character's own guard. Fixed by card authoring, not keywords — `combat.defend`'s exclusions
+now name the cover case explicitly and say which card wins, and `environment.take-cover`'s description states
+the same rule from the other side. Probe any new defensive phrasing against both cards after touching either.
+
+**A mechanically real object still needs to be introduced.** The cover object was always visible to a
+character who asked about it, but the opening-scene prompt gave it no more weight than any other piece of
+scenery, competing against four characters, two containers and a door in one paragraph — and a live run ended
+in stalemate with nobody ever taking cover, because the workbench was never mentioned in the scene that opened
+the encounter. Folding a mention into the existing "establish the room" instruction measured 0/1 live and was
+rejected; a dedicated, bolded bullet giving the cover object the same standing as a door — "name it by name in
+the opening scene, every time... it is easy to leave out by never once being asked about" — measured 2/3. A
+real, worthwhile improvement, not a guarantee: a mechanic being correctly implemented does not mean a player
+will ever be told it exists.
+
 ## Grounded answers: `AnswerFacts`
 
 Weak-model runs exposed a class of failure the DM prompt could not fix: asked a question, the Dungeon
@@ -1088,6 +1335,22 @@ withholds is recorded separately on `AnswerFactsProjected` — never sent to any
 shows the boundary held rather than asserting it. Engine-side validation is unchanged and independent: a
 mistaken DM answer still cannot bypass the informational-basis gates on `take_item` and `steal_item`, and
 an offer can only promise, and an acceptance only transfer, assets the offerer actually owns.
+
+**A resolved attack was the one event nobody could be told about (v0.10).** A live smoke run had Elara
+land a confirmed critical hit on Vark while Rowan stood guard over Elara — a guard relationship that can
+never redirect a blow aimed at an opponent, only one aimed at the guarded ally. Asked afterwards whether
+the blow had landed, the Dungeon Master said Rowan's guard had blocked it: flatly contradicting its own
+narration one turn earlier. The projection hadn't lied to the model; it had nothing at all to answer from.
+Every other combat-adjacent public event — a theft, a threat, a morale swing, cover changing hands — was
+already a knowledge fact any present character could be answered from; a plain attack landing or missing
+was not, so the very target of the attack in question held no first-hand fact confirming it had happened.
+Compounding it, the Guarding/Guarded status lines named no one — *"the next enemy blow aimed at them lands
+on this character instead"* — leaving "them" for the model to resolve against whichever character it
+happened to be thinking about. Fixed on both fronts: `FactType.AttackResolved` is now minted and delivered
+to everyone present for every resolved attack, hit or miss, redirected or not — naming who it was aimed at
+and who actually took it when a guard intervenes — and the Guarding/Guarded lines in `AnswerFacts` now name
+the actual guardian and the actual guarded ally, matching the naming `WorldStateFormatter` already used for
+a character's own status view.
 
 ## Post-resolution output is discarded
 
@@ -1269,6 +1532,24 @@ those bindings, resolving ids to the names a character would use. It cannot leak
 an event, and costs no model call at all. A test walks every value of the enum and fails the build if a new
 rejection code has no in-world wording of its own.
 
+### A refusal about someone else's belongings has to name them (v0.9)
+
+`ItemNotPossessed` reads naturally in the second person — "you are not carrying the Rope" — for the actions it
+was written around: using, dropping or giving your *own* belongings. Theft is the same rejection reason
+pointed the other way, and the second person is wrong for it. A live run showed the cost: Rowan gave his purse
+to Elara in round 3, in full view, and everyone present learned it; in round 7 Skrit tried three times to steal
+that purse *from Rowan*, and the engine refused correctly each time, but the line delivered to Skrit was "You
+are not carrying the Small Purse of Gold Coins (Rowan's)" — true, and about the wrong person. Nothing in it
+contradicted what Skrit actually believed (that Rowan still had it), so he repeated the identical attempt until
+the attempt limit ended his turn.
+
+`InWorldRefusal.PossessorFor(action, reason, state)` decides, per action type and rejection reason, whether a
+refusal should name a third party. A theft names the true holder; use/drop/give — all about the actor's own
+belongings — keep the second person, since naming anyone there would be wrong. The binding is scoped tightly
+on purpose: it only ever applies to the rejection reason it belongs to, never to an unrelated refusal on the
+same action (a fled target, an equipped weapon that cannot be transferred) where no possessor is relevant at
+all.
+
 ### What is left of the detector
 
 `MachineryLanguage` is now a final defensive lint over the one path still made of model prose — the Dungeon
@@ -1325,6 +1606,30 @@ containers: id first (never ambiguous), then the **qualified** display name — 
 identical purses referenceable at all — then the plain name, which is where ambiguity is reported. The
 refusal **lists the qualified alternatives**, because a bare "that is ambiguous" hands a model back the same
 words it just used.
+
+**A corpse's card had to say so, and the two grab cards had to agree who owns it (v0.9).** `container.take`'s
+one-line summary always mentioned taking something "off the floor or a body," but its **description** — the
+field the resolver actually reads to classify an intent — only ever described containers and the floor. An
+intent like "I pick up the flask that spilled from Rowan's body" matched nothing and came back unsupported;
+across two live runs that cost eight refused attempts, five of them inside a single round. Naming the body
+explicitly then created a second problem: `steal_item` can also plausibly claim "take something that isn't
+yours," and a live run had a goblin burn a whole turn on three rewordings of "loot the gold from dead Rowan,"
+every one routed to theft, which the engine correctly refuses because a dead character cannot be stolen from.
+`container.take`'s exclusions now explicitly claim anything taken from someone **DEAD**; `steal_item` is
+narrowed in the same breath to the **LIVING**, so the two cards can never both claim the same corpse.
+
+**Acceptance is withdrawn when nothing was actually offered (v0.9).** The rulebook resolver reads words, not
+state: "I accept his offer and take the purse" is correctly classified as `accept_surrender` whether or not
+real terms are on the table, because an offerer can hand goods over while merely *talking* about terms — which
+resolves as an ordinary give, leaving no offer recorded. Left as the resolver's only answer, the Dungeon Master
+then has to invent an offer id to fill the binding. A live run did exactly that — inventing `offer-1` four
+times in one turn, refused each time with `UnknownOffer` — and the encounter hit its round limit unresolved
+with the character's last turn spent entirely on it. `TurnCoordinator.WidenCandidateToolsForState` — the
+existing mechanism for *adding* state-dependent tools the stateless resolver can't see — now also *removes*
+`accept_surrender` when the target has no real pending offer in state, appending a note so the Dungeon
+Master's refusal is honest rather than a guess: *"STATE THE RULEBOOK COULD NOT SEE: nobody has offered..."*.
+The tool stays offered, with a real id, whenever terms genuinely stand — this narrows the resolver's answer
+against state, it does not replace it.
 
 **Informational-basis gates (both `steal_item` and `take_item`).** A character can only reach for an item
 it has a legitimate reason to know is there — having seen it carried/taken/given/dropped, opened or
@@ -1495,6 +1800,12 @@ v0.8 also added two more kinds of document:
   stage: it says which strategy is worth implementing next and, more usefully, which one looks attractive
   and quietly drops the card a decision turns on.
 
+v0.9 added a third: [`reports/action-set-gaps.md`](reports/action-set-gaps.md) — a keyword-bucketed survey of
+every intent the action set refused across a full session's live runs, split into genuine gaps a player would
+expect to work, deliberate exclusions that only cost turns, and refusals that need no change at all. It is
+forward-looking (nothing in it is fixed), so it deliberately has no corresponding `_issues.md` entries — read
+it before picking the next feature to build, not while debugging the current one.
+
 After each release, two write-ups were kept in `reports/`:
 
 - `v0_<n>_notes.md` — real dialog and emergent behaviour pulled from actual run traces (what the
@@ -1515,7 +1826,7 @@ A few things worth knowing that aren't obvious from reading any single file:
 - **Check the provider's sampler log before blaming the model.** A parameter the harness does not set takes
   the model's default, which for a chat-tuned model is tuned for conversation. Every local call in this
   project carried an inherited `presence_penalty = 1.5` — a knob that discourages exactly the exact-string
-  repetition tool calling depends on — set by nobody and recorded nowhere until v0.8.
+  repetition tool calling depends on — set by nobody and recorded nowhere until v0.9.
 - **A retry that does not genuinely re-sample is not a retry.** The transient-retry path moved the seed and
   lifted temperature to 0.1 — near-greedy — and reproduced the identical malformed reply three times. One
   live run contained both outcomes at once: an agent at 0.8 recovered on its third attempt while the
@@ -1801,3 +2112,41 @@ A few things worth knowing that aren't obvious from reading any single file:
   backspace byte three separate times in one working session. Each time the file built, the pattern parsed,
   and that alternative silently matched nothing — inside a guard whose entire job was to catch things. There
   is now a test that walks every source file and fails on any control character other than tab and newline.
+- **Team was mechanically authoritative but never once rendered — so the Dungeon Master guessed, and guessed
+  wrong.** A live run had Vark's `steady_ally` on his own teammate Skrit rejected with a fabricated "Skrit is
+  an enemy" reason; `Character.Team` never appeared anywhere in the state text the DM reads, so ally/enemy
+  status had to be *inferred* from role or species. `WorldStateFormatter` now states each character's team on
+  its own line plus a `TEAMS (same team = allies...)` roster summary (v0.10, `WorldStateFormatterV10Tests.cs`).
+  General form of the lesson: if a fact decides behaviour, say it — never assume a model will infer the same
+  thing a person would from adjacent facts.
+- **When output must not contradict ground truth, ground the input in facts and never ask the model for the
+  risky part at all — do not validate its prose after the fact.** The Encounter Summariser (v0.10 rebuild,
+  `Orchestration/EncounterStoryBrief.cs`) used to free-invent a whole tale from the raw public transcript,
+  including its own ending; regrounding it to a deterministic brief of what actually happened, and having the
+  harness append the `Ending` itself rather than asking the model to state the outcome, is what makes the
+  finished story unable to disagree with the terminal state — not a second model call grading the first, and
+  not a regex over the output (both considered, both rejected as ways to catch a wrong answer after it is
+  already written instead of preventing it).
+- **Stacking several repetition-avoidance sampling penalties at once and then widening one of them is a bad
+  combination on a heavily quantized small model.** `RepeatPenalty` + `PresencePenalty` + `FrequencyPenalty`
+  together, at `Temperature: 1.0`, on a 9B model, for a long generation, produced three *different* degenerate
+  failures (a verbatim repeat loop, an unpunctuated word-salad cascade, a mid-sentence drift into Chinese then
+  symbols) across three different `RepeatLastN` sizes — full account in `reports/v0_10_issues.md` #3. The
+  actual fix was lowering temperature and turning presence/frequency penalties off once the call no longer
+  needed to free-invent (see the point above), not finding the "correct" window size. If a model degenerates
+  under several stacked anti-repetition settings, try removing pressure before adding more of it.
+- **A known small-model quirk is not automatically a bug to fix.** Vark (goblin captain, `qwen3.5:9b`) offered
+  to buy his way out of a fight he was visibly winning, unhurt, directly contradicting his own character
+  prompt's explicit "never while the fight looks winnable" rule — diagnosed as the model reaching for a
+  simple, always-available narrative beat over a conditional trait buried in one paragraph of a long prompt,
+  not a defect in any mechanism (`reports/v0_10_notes.md`). Left unfixed on request. Read `v0_<n>_notes.md`
+  before spending time re-diagnosing a colourful but harmless model choice as a regression.
+- **`EncounterTranscript.cs` no longer exists** — replaced outright by `Orchestration/EncounterStoryBrief.cs`
+  (v0.10) when the summariser's input moved from the raw public transcript to a deterministic brief. If a
+  search turns up a stale reference to it (a comment, an old note), the replacement is the brief builder, not
+  a narrowly-updated transcript.
+- **Reading a trace file the run's own sink still has open needs an explicit `FileShare.ReadWrite`.**
+  `JsonlTraceSink` writes with `FileShare.Read` and is not disposed until the whole run finishes; a
+  same-process read of `trace.jsonl` *before* that (the story brief does this, right after the encounter ends)
+  using `File.ReadLines`'s default share mode throws a sharing-violation `IOException`. Open the read handle
+  explicitly with `FileShare.ReadWrite` for anything that reads a run's own trace file before the run is over.

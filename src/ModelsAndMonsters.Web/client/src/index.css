@@ -96,6 +96,37 @@ button.ghost { background: transparent; color: var(--muted); border: 1px solid v
 .line.divider.end { color: var(--accent); }
 .line.outcome { color: var(--accent); font-size: 13px; }
 
+/* The encounter's story: a popover, not a log line — see StoryPopover in App.jsx. */
+.story-backdrop {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 50; padding: 24px;
+}
+.story-card {
+  position: relative; max-width: 640px; max-height: 80vh; overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 28px 32px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+.story-close {
+  position: absolute; top: 12px; right: 12px; background: none; border: none;
+  color: var(--muted); font-size: 16px; cursor: pointer; line-height: 1; padding: 4px 8px;
+}
+.story-close:hover { color: var(--ink); }
+.story-heading {
+  color: var(--accent); letter-spacing: 1px; text-transform: uppercase; font-size: 12px;
+  margin-bottom: 14px;
+}
+.story-body { color: var(--ink); line-height: 1.6; font-size: 14px; }
+.story-section-heading {
+  color: var(--accent); font-size: 13px; letter-spacing: 0.5px; text-transform: uppercase;
+  margin: 20px 0 8px; font-weight: 600;
+}
+.story-section-heading:first-child { margin-top: 0; }
+.story-paragraph { margin: 0 0 12px; }
+.story-paragraph:last-child { margin-bottom: 0; }
+.story-body strong { color: var(--ink); font-weight: 700; }
+.story-body em { font-style: italic; }
+
 /* v0.5 — non-combat dispositions. Surrendered and escaped characters are subdued but never shown as
    fallen: lighter than the dead treatment, with a clear label, and no grayscale death wash. */
 .card.surrendered { opacity: 0.72; border-top-color: var(--muted); }

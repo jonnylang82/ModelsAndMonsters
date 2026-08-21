@@ -180,6 +180,45 @@ public sealed class SimulationRunner
             Seed = RunSeeds.Derive(masterSeed, "agent:rulebook-resolver")
         };
 
+        // The Encounter Summariser, independently configurable like the resolver above. Earlier this agent was
+        // tuned for maximum creativity (high temperature, wide top-k, presence/frequency penalties pushing
+        // away from repetition) on the theory that this is the one call where a model taking liberties with
+        // phrasing is wanted rather than exactly what breaks tool calling. That combination is what produced
+        // the runaway degenerate output documented on RepeatLastN's own remarks — three different repeat-window
+        // sizes, three different flavours of breakage, all stemming from the same over-eager novelty pressure.
+        // Now that the model is grounded to a compact deterministic brief rather than free-inventing a whole
+        // tale, the settings point the other way: closer to the harness's ordinary defaults, favouring a
+        // faithful, well-formed two-section account over maximal variety. Presence/frequency penalties are
+        // removed outright (0.0, not null — see PresencePenalty's own remarks on why null is not "off").
+        var summariserConfig = _options.Agents.EncounterSummariser;
+        var summariserBase = AgentModelProfile.FromOptions(
+            EncounterSummariser.AgentIdentifier, summariserConfig.Overlay(defaults), enforceWindow);
+        var encounterSummariserProfile = summariserBase with
+        {
+            Temperature = summariserConfig.Temperature ?? 0.4f,
+            TopP = summariserConfig.TopP ?? 0.95f,
+            TopK = summariserConfig.TopK ?? 20,
+            PresencePenalty = summariserConfig.PresencePenalty ?? 0.0f,
+            FrequencyPenalty = summariserConfig.FrequencyPenalty ?? 0.0f,
+            RepeatPenalty = summariserConfig.RepeatPenalty ?? 1.15f,
+            // RepeatLastN was tried at two enlarged sizes (int.MaxValue, then 2000) to reach a ~1000-1500
+            // token verbatim repeat-loop that the default 64-token lookback missed. Both made things worse:
+            // stacked alongside RepeatPenalty, PresencePenalty and FrequencyPenalty already all pushing away
+            // from repetition, widening the window just gave the combination more vocabulary to exhaust before
+            // it ran out of "safe" tokens — one live run cascaded into unpunctuated word salad, another
+            // (at 2000) still did that in its Backstory section, then drifted into Chinese, then symbols,
+            // before recovering for Setting. Three different values produced three different flavours of
+            // breakage, which points at the stack of penalties itself rather than at repeat_last_n's size.
+            // Left unset, so Ollama's own default (64, tuned for ordinary chat) is what applies — no longer
+            // overridden here.
+            Effort = summariserConfig.Effort is null ? ReasoningEffort.None : summariserBase.Effort,
+            Thinking = summariserConfig.Effort is null && summariserConfig.Thinking is null ? false : summariserBase.Thinking,
+            // One figure for every provider — see the field's own remarks for why this call has neither of
+            // the reasons a tight, provider-specific budget exists elsewhere in this harness.
+            MaxOutputTokens = summariserConfig.MaxOutputTokens ?? harness.EncounterStoryOutputTokens,
+            Seed = RunSeeds.Derive(masterSeed, "agent:encounter-summariser")
+        };
+
         var agentSeeds = new Dictionary<string, long>
         {
             [DungeonMasterAgent.AgentIdentifier] = dungeonMasterProfile.Seed!.Value
@@ -250,6 +289,13 @@ public sealed class SimulationRunner
                     selector);
             }
 
+            // The storyteller (its own stateless client), when enabled; runs exactly once, at the very end of
+            // a completed run, on the public transcript alone. Null when disabled.
+            var encounterSummariser = harness.GenerateEncounterStory
+                ? new EncounterSummariser(
+                    encounterSummariserProfile, CreateTracingClient(encounterSummariserProfile, trace, clients), _prompts)
+                : null;
+
             var characterPrompts = new CharacterPromptFactory(_prompts);
 
             // Fixed turn order: the scenario's character order, repeated every round.
@@ -289,6 +335,12 @@ public sealed class SimulationRunner
             {
                 profilesForManifest[HistorySummariser.AgentIdentifier] =
                     TracedAgentProfile.From(historySummariserProfile);
+            }
+
+            if (harness.GenerateEncounterStory)
+            {
+                profilesForManifest[EncounterSummariser.AgentIdentifier] =
+                    TracedAgentProfile.From(encounterSummariserProfile);
             }
 
             WriteManifest(paths, startedAt, initialState, profilesForManifest, seeds);
@@ -351,7 +403,8 @@ public sealed class SimulationRunner
                 engine, dungeonMaster, _prompts, formatter, narrationLog, knowledge, trace, _console, harness,
                 intentParser, historySummariser, rulebook);
 
-            return await RunLoopAsync(coordinator, engine, trace, paths, turnOrder, cancellationToken)
+            return await RunLoopAsync(
+                    coordinator, engine, trace, paths, turnOrder, encounterSummariser, cancellationToken)
                 .ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -426,6 +479,77 @@ public sealed class SimulationRunner
             "to hold these agents to the configured window instead.");
     }
 
+    /// <summary>
+    /// Writes the short, grounded account of the encounter — once, from a deterministic brief built off the
+    /// engine's own trace and final state — to the console/UI and to <c>story.md</c>. A convenience over a
+    /// run that has already fully and successfully completed: nothing here can turn a good run into a failed
+    /// one, so any failure is reported and swallowed exactly like a report-writing failure is.
+    /// </summary>
+    private async Task GenerateAndDeliverStoryAsync(
+        EncounterSummariser? summariser,
+        RunPaths paths,
+        string terminalCondition,
+        EncounterOutcome outcome,
+        int roundsPlayed,
+        GameState finalState,
+        ExperimentTrace trace,
+        CancellationToken cancellationToken)
+    {
+        if (summariser is null)
+        {
+            return;
+        }
+
+        try
+        {
+            // "8k context aware" even when this agent's own provider never reports a window (a hosted model):
+            // the brief's budget still assumes the smallest window this harness is built around, rather than
+            // growing without bound just because nothing here would stop it.
+            var assumedWindow = summariser.Profile.BindingContextWindow ?? 8192;
+            var premise = $"{_scenario.Summary}\n\n{_scenario.Room.Name} — {_scenario.Room.Description}".Trim();
+            var events = EncounterStoryBriefBuilder.ReadEvents(paths.TraceJsonl);
+            var brief = EncounterStoryBriefBuilder.Build(
+                events, premise, DescribeTeams(finalState), finalState, terminalCondition, outcome, roundsPlayed,
+                assumedWindow, _options.Harness.EncounterStoryInputBudgetFraction);
+
+            // This is the one call in the harness with no small structured output and a sampling profile
+            // tuned for a good read rather than a fast one — on a local model it can visibly take longer
+            // than anything else in the run. Without a line here, a run that has already printed "the
+            // encounter ends" and then goes quiet for a while reads as hung rather than as still working.
+            _console.Notice("Generating the encounter's story...");
+
+            var written = await summariser.SummariseAsync(_scenario.Name, brief, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (string.IsNullOrWhiteSpace(written))
+            {
+                return;
+            }
+
+            // The ending is never the model's to write: appended here, deterministically, from the same facts
+            // the brief was built from, so the story can never disagree with the terminal state regardless of
+            // what the model produced above it.
+            var story = $"{written.Trim()}\n\n## Ending\n\n{brief.RenderEndingParagraph()}";
+
+            trace.Emit(TraceEventType.EncounterStoryGenerated, new EncounterStoryPayload
+            {
+                ModelId = summariser.Profile.ModelId,
+                Provider = summariser.Profile.Provider.ToString(),
+                BriefEventsTotal = brief.EventsTotal,
+                BriefEventsIncluded = brief.ChronologicalEvents.Count,
+                BriefTrimmed = brief.EventsTrimmed,
+                Story = story
+            }, "harness");
+
+            _console.EncounterStory(story);
+            RunArtifactWriter.WriteStory(paths, $"# {_scenario.Name}\n\n*Run {paths.RunId}*\n\n{story}\n");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _console.Notice($"Could not generate the encounter story: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
     private void WriteReport(RunPaths paths)
     {
         try
@@ -447,6 +571,7 @@ public sealed class SimulationRunner
         ExperimentTrace trace,
         RunPaths paths,
         IReadOnlyList<CharacterAgent> turnOrder,
+        EncounterSummariser? encounterSummariser,
         CancellationToken cancellationToken)
     {
         var harness = _options.Harness;
@@ -572,6 +697,10 @@ public sealed class SimulationRunner
             TraceEventCount = trace.EventCount,
             State = finalState
         });
+
+        await GenerateAndDeliverStoryAsync(
+            encounterSummariser, paths, terminalCondition, finalOutcome, roundsPlayed, finalState, trace, cancellationToken)
+            .ConfigureAwait(false);
 
         WarnAboutContextSaturation(trace);
         WarnAboutReasoningStarvation(trace);

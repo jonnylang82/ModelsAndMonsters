@@ -88,6 +88,52 @@ public sealed record AgentModelProfile
     public float? FrequencyPenalty { get; init; }
 
     /// <summary>
+    /// The classic llama.cpp/Ollama repetition penalty (<c>repeat_penalty</c>) — a different knob from
+    /// <see cref="PresencePenalty"/>/<see cref="FrequencyPenalty"/>, which are OpenAI's shape and Ollama also
+    /// honours. There is no cross-provider abstraction for it in <c>ChatOptions</c>, so it is applied only on
+    /// Ollama (via a raw provider option) and dropped-and-reported elsewhere, the same discipline as every
+    /// other sampling knob in this profile. Null leaves the model's own default (Ollama's is 1.1) in force.
+    /// </summary>
+    public float? RepeatPenalty { get; init; }
+
+    /// <summary>
+    /// The llama.cpp/Ollama <c>repeat_last_n</c> — how many recent tokens <see cref="RepeatPenalty"/> looks
+    /// back over before a repeated token stops being penalised. Same reach as <see cref="RepeatPenalty"/>:
+    /// Ollama only, dropped elsewhere. Null leaves Ollama's own default (64 tokens) in force.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 64 tokens is tuned for ordinary chat, where a repeat within a few sentences is the failure being
+    /// guarded against. It is far too short a memory for a call that writes a multi-paragraph story: a live
+    /// run had the model open a single run-on sentence roughly a thousand tokens long, then — once outside
+    /// that 64-token window — regenerate the same sentence verbatim, over and over, until it hit its output
+    /// cap. <c>repeat_penalty</c> was set (1.15) the whole time; it simply could not see far enough back to
+    /// notice.
+    /// </para>
+    /// <para>
+    /// Enlarging it was tried twice for the Encounter Summariser and abandoned both times — this field stays
+    /// for any future case where a moderate, deliberately-chosen value genuinely helps, but nothing in this
+    /// harness currently sets one. The lookback counts back through the whole token stream — prompt and
+    /// completion together — not just what the model itself has generated, so widening it also widens how
+    /// much of the input transcript gets policed against reuse. A first attempt spanned the whole context on
+    /// purpose (llama.cpp's own convention is <c>-1</c> for exactly that) and hit two problems: the sentinel
+    /// itself is rejected outright by a live Ollama server — <c>{"error":{"code":400,"message":"Field
+    /// 'repeat_last_n': Value must be between 0 &lt;= value &lt;= 2147483647, but got -1", ...}}</c> — and
+    /// standing in with <see cref="int.MaxValue"/> surfaced the deeper issue: against a ~4000-token public
+    /// transcript, it penalised reusing anything already in the prompt, and a live run spent its entire output
+    /// budget on one unpunctuated cascade of ever-more-exotic vocabulary. A second attempt at a moderate 2000
+    /// still broke, differently: the model exhausted safe English vocabulary within its own widened window,
+    /// drifted into Chinese, then into symbols and abbreviations, before recovering for one later section.
+    /// Three sizes, three distinct failures — evidence the instability sits in the combination of
+    /// <see cref="RepeatPenalty"/>, <see cref="AgentModelProfile.PresencePenalty"/> and
+    /// <see cref="AgentModelProfile.FrequencyPenalty"/> already stacked together at fairly aggressive values,
+    /// not in this field's exact size. Left null, so Ollama's own 64-token default — proven merely
+    /// insufficient, never harmful — is what applies.
+    /// </para>
+    /// </remarks>
+    public int? RepeatLastN { get; init; }
+
+    /// <summary>
     /// Input context window in tokens.
     /// </summary>
     /// <remarks>
@@ -192,6 +238,8 @@ public sealed record AgentModelProfile
             MaxOutputTokens = options.MaxOutputTokens,
             PresencePenalty = options.PresencePenalty,
             FrequencyPenalty = options.FrequencyPenalty,
+            RepeatPenalty = options.RepeatPenalty,
+            RepeatLastN = options.RepeatLastN,
             // Seed is not read from config here; the runner derives it from the master seed.
             ContextWindow = options.ContextWindow,
             EnforceContextWindowOnHostedModels = enforceContextWindowOnHostedModels,

@@ -58,6 +58,13 @@ public sealed record ProviderCapabilities
     public required bool SupportsPenalties { get; init; }
 
     /// <summary>
+    /// Whether the provider takes the classic llama.cpp/Ollama <c>repeat_penalty</c> — a raw provider option,
+    /// not part of the OpenAI-shaped <c>presence_penalty</c>/<c>frequency_penalty</c> pair. Only Ollama has
+    /// this knob; OpenAI and Anthropic have no equivalent request field, so it is dropped and reported there.
+    /// </summary>
+    public required bool SupportsRepeatPenalty { get; init; }
+
+    /// <summary>
     /// Whether the provider silently drops the oldest messages when a request exceeds the context window.
     /// Ollama does (and reports only the post-truncation size), which is why the harness infers it from the
     /// sent-versus-reported gap. OpenAI does not: it rejects an over-long request with an error rather than
@@ -80,6 +87,7 @@ public sealed record ProviderCapabilities
             SupportsForcedToolChoice = false,
             AllowsTemperatureAndTopPTogether = true,
             SupportsPenalties = true,
+            SupportsRepeatPenalty = true,
             SilentlyTruncatesHistory = true
         },
 
@@ -96,6 +104,7 @@ public sealed record ProviderCapabilities
             SupportsForcedToolChoice = true,
             AllowsTemperatureAndTopPTogether = true,
             SupportsPenalties = true,
+            SupportsRepeatPenalty = false,
             SilentlyTruncatesHistory = false
         },
 
@@ -114,6 +123,7 @@ public sealed record ProviderCapabilities
             SupportsForcedToolChoice = true,
             AllowsTemperatureAndTopPTogether = false,
             SupportsPenalties = false,
+            SupportsRepeatPenalty = false,
             SilentlyTruncatesHistory = false
         },
 

@@ -121,6 +121,30 @@ public static class ChatOptionsFactory
             }
         }
 
+        if (profile.RepeatPenalty is { } repeatPenalty)
+        {
+            if (!omitSampling && capabilities.SupportsRepeatPenalty)
+            {
+                options.AddOllamaOption(OllamaSharp.Models.OllamaOption.RepeatPenalty, repeatPenalty);
+            }
+            else
+            {
+                dropped.Add(nameof(AgentModelProfile.RepeatPenalty));
+            }
+        }
+
+        if (profile.RepeatLastN is { } repeatLastN)
+        {
+            if (!omitSampling && capabilities.SupportsRepeatPenalty)
+            {
+                options.AddOllamaOption(OllamaSharp.Models.OllamaOption.RepeatLastN, repeatLastN);
+            }
+            else
+            {
+                dropped.Add(nameof(AgentModelProfile.RepeatLastN));
+            }
+        }
+
         if (profile.MaxOutputTokens is { } maxOutputTokens)
         {
             if (capabilities.SupportsMaxOutputTokens)

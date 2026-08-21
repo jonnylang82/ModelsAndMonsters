@@ -1950,7 +1950,7 @@ public static class RunReportWriter
         {
             foreach (var c in Containers(initState))
             {
-                initial.Add((Scalar(c, "Id"), Scalar(c, "Name"), NamesOf(c, "Contents"), IsOpenContainer(c)));
+                initial.Add((Scalar(c, "Id"), Scalar(c, "Name"), InventoryNamesOf(c, "Contents"), IsOpenContainer(c)));
             }
         }
 
@@ -1964,7 +1964,7 @@ public static class RunReportWriter
         {
             foreach (var c in Containers(fs))
             {
-                final[Scalar(c, "Id")] = (NamesOf(c, "Contents"), IsOpenContainer(c));
+                final[Scalar(c, "Id")] = (InventoryNamesOf(c, "Contents"), IsOpenContainer(c));
             }
         }
 
@@ -2435,7 +2435,7 @@ public static class RunReportWriter
                 {
                     var open = container.TryGetProperty("IsOpen", out var o) && o.ValueKind == JsonValueKind.True;
                     report.AppendLine(
-                        $"| {Scalar(container, "Name")} | {(open ? "open" : "closed")} | {NamesOf(container, "Contents")} |");
+                        $"| {Scalar(container, "Name")} | {(open ? "open" : "closed")} | {InventoryNamesOf(container, "Contents")} |");
                 }
 
                 report.AppendLine();
@@ -3255,7 +3255,7 @@ public static class RunReportWriter
             builder.AppendLine(
                 $"| {name} | {Scalar(character, "Health")}/{Scalar(character, "MaxHealth")} " +
                 $"| {Scalar(updated, "Health")}/{Scalar(updated, "MaxHealth")} " +
-                $"| {DescriptionsOf(updated, "Injuries")} | {NamesOf(updated, "Inventory")} |");
+                $"| {DescriptionsOf(updated, "Injuries")} | {InventoryNamesOf(updated, "Inventory")} |");
         }
 
         return builder.ToString();
@@ -3266,24 +3266,29 @@ public static class RunReportWriter
             ? characters.EnumerateArray()
             : [];
 
-    /// <summary>Final container open-state and contents, from the recorded final room objects.</summary>
+    /// <summary>
+    /// Final container open-state and contents, from the recorded final room objects — containers, corpses
+    /// and the floor's ground loot only. Room objects also include cover (v0.9), which has no open state or
+    /// contents at all; it is reported separately under Environmental objects
+    /// (<see cref="WriteEnvironmentalObjects"/>), and must never appear here mislabelled as a closed, empty
+    /// container. <see cref="Containers"/> is the same "has an IsOpen field" filter that already keeps cover
+    /// out of the objective-container-state section above, reused here so the two never disagree.
+    /// </summary>
     private static void WriteFinalContainers(StringBuilder report, JsonElement state)
     {
-        if (!state.TryGetProperty("Room", out var room)
-            || !room.TryGetProperty("Objects", out var objects)
-            || objects.ValueKind != JsonValueKind.Array
-            || objects.GetArrayLength() == 0)
+        var containers = Containers(state).ToList();
+        if (containers.Count == 0)
         {
             return;
         }
 
         report.AppendLine("| Container | State | Contents |");
         report.AppendLine("| --- | --- | --- |");
-        foreach (var container in objects.EnumerateArray())
+        foreach (var container in containers)
         {
             var open = container.TryGetProperty("IsOpen", out var o) && o.ValueKind == JsonValueKind.True;
             report.AppendLine(
-                $"| {Scalar(container, "Name")} | {(open ? "open" : "closed")} | {NamesOf(container, "Contents")} |");
+                $"| {Scalar(container, "Name")} | {(open ? "open" : "closed")} | {InventoryNamesOf(container, "Contents")} |");
         }
 
         report.AppendLine();
@@ -3334,7 +3339,7 @@ public static class RunReportWriter
 
                 report.AppendLine(
                     $"| {Scalar(character, "Name")} | {Scalar(character, "Team")} | {health}/{Scalar(character, "MaxHealth")} " +
-                    $"| {disposition} | {location} | {weapon} | {NamesOf(character, "Inventory")} " +
+                    $"| {disposition} | {location} | {weapon} | {InventoryNamesOf(character, "Inventory")} " +
                     $"| {DescriptionsOf(character, "Injuries")} |");
             }
 
@@ -3530,6 +3535,35 @@ public static class RunReportWriter
             : "";
 
     private static string NamesOf(JsonElement? source, string property) => ListOf(source, property, "Name");
+
+    /// <summary>
+    /// Names of an item list, same as <see cref="NamesOf"/>, but marking any looted weapon carried as a
+    /// trophy (<see cref="Domain.InventoryItem.IsWeaponTrophy"/>) so the report never reads as though it were
+    /// still equipped and usable — the same truth <see cref="Prompts.WorldStateFormatter"/> tells a model.
+    /// </summary>
+    private static string InventoryNamesOf(JsonElement? source, string property)
+    {
+        if (!TryGet(source, out var array, property) || array.ValueKind != JsonValueKind.Array)
+        {
+            return "";
+        }
+
+        var names = array.EnumerateArray()
+            .Select(item =>
+            {
+                var name = Scalar(item, "Name");
+                if (name.Length == 0)
+                {
+                    return name;
+                }
+
+                return IsTrue(item, "IsWeaponTrophy") ? $"{name} (trophy — not equipped)" : name;
+            })
+            .Where(n => !string.IsNullOrEmpty(n))
+            .ToList();
+
+        return names.Count == 0 ? "none" : string.Join(", ", names);
+    }
 
     private static string DescriptionsOf(JsonElement source, string property) =>
         ListOf(source, property, "Description");

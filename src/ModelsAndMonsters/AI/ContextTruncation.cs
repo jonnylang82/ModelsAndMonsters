@@ -192,6 +192,10 @@ public static class ContextTruncation
     public static int EstimateTokensForCharacters(int characters) =>
         characters <= 0 ? 0 : (int)Math.Ceiling(characters / CharactersPerToken);
 
+    /// <summary>The inverse of <see cref="EstimateTokensForCharacters"/>: how many characters a token budget affords.</summary>
+    public static int EstimateCharactersForTokens(int tokens) =>
+        tokens <= 0 ? 0 : (int)(tokens * CharactersPerToken);
+
     private static int EstimateMessageTokens(ChatMessage message)
     {
         var characters = 0;

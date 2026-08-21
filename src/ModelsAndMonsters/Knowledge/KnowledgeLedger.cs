@@ -564,6 +564,46 @@ public sealed class KnowledgeLedger
     }
 
     /// <summary>
+    /// A public attack fact: one character struck at another, and everyone present saw whether it landed.
+    /// Keyed by the attacker, the actual target and the world version, so one resolved blow yields one fact.
+    /// When a guard relationship redirected the blow, the description names both who it was aimed at and who
+    /// actually took it — the exact ambiguity a vaguely-worded guard status line could otherwise invite
+    /// (v0.10): the target of the redirected blow is <paramref name="targetName"/>, never
+    /// <paramref name="intendedTargetName"/>.
+    /// </summary>
+    public FactResult GetOrAddAttackFact(
+        string attackerId, string attackerName, string targetId, string targetName, string weaponName,
+        bool hit, bool redirected, string? intendedTargetName, int worldVersion)
+    {
+        var id = $"{attackerId}-attacks-{targetId}-wv{worldVersion}";
+        if (_facts.TryGetValue(id, out var existing))
+        {
+            return new FactResult(existing, WasCreated: false);
+        }
+
+        var description = redirected
+            ? hit
+                ? $"{attackerName} attacked {intendedTargetName}, but {targetName} was standing guard and took the " +
+                  $"blow instead: it landed on {targetName}, not {intendedTargetName}."
+                : $"{attackerName} attacked {intendedTargetName}, but {targetName} was standing guard and would have " +
+                  "taken the blow instead — it missed."
+            : hit
+                ? $"{attackerName} struck {targetName} with the {weaponName}, and the blow landed."
+                : $"{attackerName} attacked {targetName} with the {weaponName}, but the blow missed.";
+
+        var fact = new KnowledgeFact
+        {
+            Id = id,
+            SubjectId = targetId,
+            FactType = FactType.AttackResolved,
+            Description = description,
+            WorldVersion = worldVersion
+        };
+        _facts[id] = fact;
+        return new FactResult(fact, WasCreated: true);
+    }
+
+    /// <summary>
     /// Records that a character knows a fact. Returns the new record when this is genuinely new knowledge;
     /// null when the character already held it — in which case the caller should tell them they learned
     /// nothing new, and no duplicate record is created and the world version they first observed it at is

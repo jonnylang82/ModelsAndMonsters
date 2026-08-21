@@ -102,6 +102,9 @@ public sealed class DispositionRunTests : IDisposable
                 // The v0.6 rulebook stage is exercised by its own tests; this scripted run tests the
                 // deterministic core, so switch it off rather than script a resolver client per attempt.
                 EnableRulebookResolver = false,
+                // The end-of-run storyteller is exercised by its own tests; switch it off here rather than
+                // script an EncounterSummariser client this run has no use for.
+                GenerateEncounterStory = false,
                 RunOutputDirectory = _directory
             },
             Combat = new CombatOptions { GlancingBlowChance = 0 }

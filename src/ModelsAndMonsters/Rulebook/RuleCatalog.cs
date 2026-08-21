@@ -82,9 +82,9 @@ public sealed class RuleCatalog : IRuleRepository
         {
             RuleId = "inventory.give",
             Summary = "Handing one of your own ordinary items to another character present in the room.",
-            RelatedRuleIds = ["inventory.drop", "inventory.steal"],
+            RelatedRuleIds = ["inventory.drop", "inventory.steal", "encounter.offer-surrender"],
             ActionName = DungeonMasterTools.GiveItemName,
-            Description = "The acting character handing one of their own ordinary inventory items to another character present in the room, however urgently — rushing or lunging to them to press it into their hand is this rule, not an attack. The recipient may be an ally or an enemy; consent is not modelled.",
+            Description = "The acting character handing one of their own ordinary inventory items to another character present in the room, however urgently — rushing or lunging to them to press it into their hand is this rule, not an attack. The recipient may be an ally or an enemy; consent is not modelled. This is an ORDINARY handover with nothing asked in return for it — not an item held out to buy the giver's own life or safety, which is encounter.offer-surrender instead, however alike the physical gesture reads.",
             RequiredBindings = ["the acting character (giver)", "the recipient character", "the item from the giver's inventory"],
             Preconditions = ["giver is the current actor, active and present", "recipient is alive and present in the room", "the item is an ordinary inventory item the giver owns, not an equipped weapon"],
             TurnCost = "consumes the turn",
@@ -92,7 +92,7 @@ public sealed class RuleCatalog : IRuleRepository
             Visibility = "public: everyone present sees the item change hands and learns the recipient now carries it",
             SuccessBehaviour = "the item moves atomically from giver to recipient",
             FailureBehaviour = "refused if the giver does not own the item, it is an equipped weapon, or the recipient is not present",
-            Exclusions = ["giving an equipped weapon", "forcing the recipient to accept or use it"]
+            Exclusions = ["giving an equipped weapon", "forcing the recipient to accept or use it", "an item offered specifically in exchange for the giver's own life, freedom, or being spared — that is a surrender term (encounter.offer-surrender), not an ordinary gift"]
         },
         new RuleCard
         {
@@ -226,17 +226,17 @@ public sealed class RuleCatalog : IRuleRepository
         {
             RuleId = "encounter.offer-surrender",
             Summary = "Offering to give up YOUR OWN fight to one named opponent, on concrete terms you promise to hand over.",
-            RelatedRuleIds = ["encounter.accept-surrender", "combat.morale"],
+            RelatedRuleIds = ["encounter.accept-surrender", "combat.morale", "inventory.give"],
             ActionName = DungeonMasterTools.OfferSurrenderName,
-            Description = "THE ACTOR GIVING UP THEIR OWN FIGHT, to ONE named opponent, on concrete terms they promise to hand over: at least one item they carry, optionally the weapon in their hand alongside it — or, for a character stripped of everything, the weapon alone. Yielding is never unilateral and never free. Recognise it in yielding, surrendering, giving in, begging to be spared, buying their life, offering payment or a weapon for mercy — PROVIDED something concrete is promised. The plea itself is ordinary speech; this action is only the enforceable terms. WHOSE fight is decisive: ‘take my purse and let me live’ is this rule, while ‘hand over your purse and I will spare you’ is a DEMAND, binds nobody, and is speech alone — recording it here would make the speaker the one who gave up.",
+            Description = "THE ACTOR GIVING UP THEIR OWN FIGHT, to ONE named opponent, on concrete terms they promise to hand over: one or more items they carry, the weapon in their hand, or both — either concession alone is enough, whatever else the offerer does or does not carry. Yielding is never unilateral and never free. Recognise it in yielding, surrendering, giving in, begging to be spared, buying their life, offering payment or a weapon for mercy — PROVIDED something concrete is promised. A weapon held out by the flat, laid down, or offered to buy mercy (\"I hold my sabre out by the flat and offer to lay it down if you spare me\") is this rule with forfeit_weapon alone, not a give_item and not a bare plea. So is an item offered specifically to buy one's own life (\"I offer Rowan the goblin salve in exchange for my life\") — an item traded for being spared is a surrender term, never an ordinary gift. The plea itself is ordinary speech; this action is only the enforceable terms. WHOSE fight is decisive: 'take my purse and let me live' is this rule, while 'hand over your purse and I will spare you' is a DEMAND, binds nobody, and is speech alone — recording it here would make the speaker the one who gave up.",
             RequiredBindings = ["the acting character (the one offering to give up)", "the ONE opposing character the terms are offered to", "the ordinary inventory items promised (may be none)", "whether the weapon in hand is promised"],
-            Preconditions = ["offerer is the current actor and active", "the recipient is a living, present, active character on an OPPOSING side", "every promised item is an ordinary item the offerer owns right now", "the offerer holds nothing back: every offer must promise a carried item, unless they carry nothing at all, in which case the weapon in hand alone is enough", "the offerer has no other offer already awaiting an answer"],
+            Preconditions = ["offerer is the current actor and active", "the recipient is a living, present, active character on an OPPOSING side", "every promised item is an ordinary item the offerer owns right now", "the offer promises at least one real concession — one or more carried items, the weapon in hand, or both; either alone is a complete offer", "the offerer has no other offer already awaiting an answer"],
             TurnCost = "consumes the offerer's WHOLE turn and cannot be combined with anything else. An intent that both strikes (or guards) AND offers terms is the striking action, with the terms as mere speech",
             RngRequirement = "none",
             Visibility = "public: everyone present hears the terms",
             SuccessBehaviour = "a pending offer is recorded. NOTHING moves, nobody is disarmed, no disposition changes and the offerer stays an active, targetable combatant. Only the named recipient can accept it, on their own turn",
             FailureBehaviour = "refused if the offer promises nothing concrete, names an item the offerer does not own, names an ally rather than an opponent, or duplicates an offer already awaiting an answer",
-            Exclusions = ["a bare plea with nothing promised — speech, not an offer", "terms promising only the weapon while the offerer still carries other things — holding possessions back is not a real offer (a character carrying NOTHING may promise the weapon alone)", "yielding without naming an opponent", "promising anything the offerer does not carry, including another character's belongings", "making somebody else surrender, or DEMANDING that they yield", "promises about the future — service or ransom beyond what is handed over on acceptance", "a secret offer: terms are always public"]
+            Exclusions = ["a bare plea with nothing promised at all — no item and no weapon forfeited — is speech, not an offer", "yielding without naming an opponent", "promising anything the offerer does not carry, including another character's belongings", "making somebody else surrender, or DEMANDING that they yield", "promises about the future — service or ransom beyond what is handed over on acceptance", "a secret offer: terms are always public"]
         },
         new RuleCard
         {

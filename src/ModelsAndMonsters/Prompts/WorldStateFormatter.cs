@@ -42,11 +42,12 @@ public sealed class WorldStateFormatter
 
         builder.AppendLine();
         builder.AppendLine("CHARACTERS:");
+        AppendTeamsSummary(builder, state);
 
         foreach (var character in state.Characters)
         {
             builder.AppendLine();
-            builder.AppendLine($"{character.Name} (id: {character.Id}, {character.Role.ToString().ToLowerInvariant()}) - {DescribeDisposition(character)}");
+            builder.AppendLine($"{character.Name} (id: {character.Id}, {character.Role.ToString().ToLowerInvariant()}, team: {character.Team}) - {DescribeDisposition(character)}");
             builder.AppendLine($"  Condition: {DescribeCondition(character)}");
             builder.AppendLine($"  Currently holding: {FormatWeapon(character.Weapon)}");
             builder.AppendLine($"  Carrying: {FormatInventory(character.Inventory)}");
@@ -98,8 +99,26 @@ public sealed class WorldStateFormatter
         }
         builder.AppendLine("- ACTIONS THE WORLD CAN RESOLVE: attack_character, use_item, use_ability, defend, open_container, take_item, inspect_object, open_exit, escape_encounter, offer_surrender, accept_surrender, give_item, drop_item, steal_item, intimidate_character, steady_ally, take_cover, leave_cover, damage_environmental_object. Nothing else exists.");
         builder.AppendLine("- A Scared status is what a face shows, not a number. There is no morale figure here to reveal, and being Scared compels nobody: a frightened character still chooses, and yielding or leaving still take their own actions.");
+        builder.AppendLine("- Two characters are allies exactly when their TEAM matches (shown in the TEAMS line and on every character), never inferred from role, species or which side of the fight they look like they are on. Two characters sharing a team are always allies of each other, whatever their role.");
 
         return builder.ToString().TrimEnd();
+    }
+
+    /// <summary>
+    /// A compact team roster line, so the Dungeon Master never has to infer who fights alongside whom from
+    /// role or narrative context. Ally/enemy status is decided by <see cref="Character.Team"/> alone
+    /// (<see cref="Character.IsAllyOf"/>), which — before this — was never actually rendered anywhere in the
+    /// authoritative snapshot despite the DM's own core prompt claiming every character has "a team... in
+    /// the authoritative snapshot". A live run had the Dungeon Master refuse Vark steadying his own squadmate
+    /// Skrit, inventing the reason "Skrit is not on your side; he is an enemy goblin" — both goblins, same
+    /// team — because nothing in the state it was given ever said so.
+    /// </summary>
+    private static void AppendTeamsSummary(StringBuilder builder, GameState state)
+    {
+        var teams = state.Characters
+            .GroupBy(c => c.Team, StringComparer.OrdinalIgnoreCase)
+            .Select(g => $"{g.Key}: {string.Join(", ", g.Select(c => c.Name))}");
+        builder.AppendLine($"TEAMS (same team = allies, different team = opponents): {string.Join(" | ", teams)}");
     }
 
     /// <summary>
@@ -440,7 +459,11 @@ public sealed class WorldStateFormatter
             else if (cover.CurrentOccupantId is { } occupantId)
             {
                 var occupantName = state.FindById(occupantId)?.Name ?? occupantId;
-                lines.Add($"- {cover.Name} is already occupied by {occupantName}; there is no room for you there right now.");
+                lines.Add(
+                    $"- {cover.Name} is already occupied by {occupantName}; there is no room for you there right now. " +
+                    $"You could instead strike {cover.Name} itself, deliberately, with the weapon in your hand — " +
+                    $"battering it down rather than {occupantName}, which destroys it outright and leaves " +
+                    $"{occupantName} exposed. It makes no roll.");
             }
             else
             {
@@ -683,8 +706,15 @@ public sealed class WorldStateFormatter
     private static string FormatInjuries(IReadOnlyList<Injury> injuries) =>
         injuries.Count == 0 ? "none" : string.Join("; ", injuries.Select(i => i.Description));
 
-    private static string FormatItem(InventoryItem item) =>
-        item.HealingAmount is { } healing ? $"{item.DisplayName} (restores {healing} health)" : item.DisplayName;
+    private static string FormatItem(InventoryItem item)
+    {
+        if (item.IsWeaponTrophy)
+        {
+            return $"{item.DisplayName} (taken as a trophy — carried, not equipped; cannot be fought with)";
+        }
+
+        return item.HealingAmount is { } healing ? $"{item.DisplayName} (restores {healing} health)" : item.DisplayName;
+    }
 
     private static string FormatBulletList(IEnumerable<string> values)
     {

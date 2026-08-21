@@ -348,6 +348,119 @@ public sealed class AnswerFactsTests
         Assert.Equal("There is nothing else. No other kind of action exists in this world.", facts.Affordances[^1]);
     }
 
+    // ------------------------------------------------------------------------------------------
+    // Attack outcomes are answerable, and a guard relationship never leaves its partner unnamed
+    // ------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Reproduces a live v0.10 misanswer: Rowan guards Elara, Elara attacks Vark directly (a guard never
+    /// redirects a blow aimed at an opponent), the engine confirms the blow landed, and Vark asks whether it
+    /// did. Before this fix, nothing in Vark's projected facts confirmed the attack happened at all — the
+    /// Dungeon Master had only the ambiguously-worded guard statuses to answer from, and guessed wrong.
+    /// </summary>
+    [Fact]
+    public void An_attack_that_lands_is_a_fact_its_target_can_be_answered_from()
+    {
+        var (projector, ledger, _) = Build();
+        var engine = TestWorld.V07Engine(new SeededRng(1), CombatRules.NoGlancing);
+
+        Assert.True(engine.Execute(new UseAbilityAction("Rowan", AbilityCatalog.GuardAllyId, "Elara")).Accepted);
+
+        var attack = engine.Execute(new AttackCharacterAction("Elara", "Vark", "Iron Mace"));
+        Assert.True(attack.Accepted);
+        var outcome = Assert.IsType<AttackOutcome>(attack.Outcome);
+        Assert.True(outcome.Hit);
+        Assert.False(outcome.Redirected); // Rowan's guard shields Elara; it can never redirect a blow aimed at Vark.
+
+        var worldVersion = engine.State.Version;
+        var fact = ledger.GetOrAddAttackFact(outcome.AttackerId, outcome.AttackerName, outcome.TargetId, outcome.TargetName,
+            outcome.WeaponName, outcome.Hit, outcome.Redirected, outcome.IntendedTargetName, worldVersion);
+        ledger.Learn(TestWorld.VarkId, fact.Fact.Id, KnowledgeSource.PublicEvent, 3, 11, worldVersion);
+
+        var facts = projector.Project(engine.State, TestWorld.VarkId,
+            "Did Elara's blow land on Vark, or did Rowan's intervention block it?");
+
+        Assert.Contains(facts.KnownFirstHand,
+            line => line.Contains("Elara", StringComparison.Ordinal) && line.Contains("landed", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_missed_attack_is_also_a_fact_its_target_can_be_answered_from()
+    {
+        var (projector, ledger, _) = Build();
+        var engine = TestWorld.V07Engine(new SeededRng(1), CombatRules.NoGlancing, TestWorld.RowanV07(),
+            TestWorld.ElaraV07(), TestWorld.VarkV07(hitChance: 0), TestWorld.SkritV07());
+
+        var attack = engine.Execute(new AttackCharacterAction("Vark", "Rowan", "Notched Sabre"));
+        var outcome = Assert.IsType<AttackOutcome>(attack.Outcome);
+        Assert.False(outcome.Hit);
+
+        var worldVersion = engine.State.Version;
+        var fact = ledger.GetOrAddAttackFact(outcome.AttackerId, outcome.AttackerName, outcome.TargetId, outcome.TargetName,
+            outcome.WeaponName, outcome.Hit, outcome.Redirected, outcome.IntendedTargetName, worldVersion);
+        ledger.Learn(TestWorld.RowanId, fact.Fact.Id, KnowledgeSource.PublicEvent, 1, 1, worldVersion);
+
+        var facts = projector.Project(engine.State, TestWorld.RowanId, "Did the goblin's blow land on me?");
+
+        Assert.Contains(facts.KnownFirstHand,
+            line => line.Contains("Vark", StringComparison.Ordinal) && line.Contains("missed", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The mirror case: a blow genuinely redirected by a guard names who actually took it, never leaving the
+    /// intended target thinking the blow simply vanished or landed on them anyway.
+    /// </summary>
+    [Fact]
+    public void A_redirected_attack_names_who_actually_took_the_blow()
+    {
+        var (projector, ledger, _) = Build();
+        var engine = TestWorld.V07Engine(new SeededRng(1), CombatRules.NoGlancing);
+
+        Assert.True(engine.Execute(new UseAbilityAction("Rowan", AbilityCatalog.GuardAllyId, "Elara")).Accepted);
+
+        var attack = engine.Execute(new AttackCharacterAction("Vark", "Elara", "Notched Sabre"));
+        var outcome = Assert.IsType<AttackOutcome>(attack.Outcome);
+        Assert.True(outcome.Redirected);
+        Assert.Equal(TestWorld.RowanId, outcome.TargetId);
+
+        var worldVersion = engine.State.Version;
+        var fact = ledger.GetOrAddAttackFact(outcome.AttackerId, outcome.AttackerName, outcome.TargetId, outcome.TargetName,
+            outcome.WeaponName, outcome.Hit, outcome.Redirected, outcome.IntendedTargetName, worldVersion);
+        ledger.Learn(TestWorld.ElaraId, fact.Fact.Id, KnowledgeSource.PublicEvent, 1, 1, worldVersion);
+
+        var facts = projector.Project(engine.State, TestWorld.ElaraId, "Did Vark's blow land on me?");
+
+        Assert.Contains(facts.KnownFirstHand, line =>
+            line.Contains("Rowan", StringComparison.Ordinal) &&
+            line.Contains("instead", StringComparison.Ordinal) &&
+            line.Contains("Elara", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The other half of the same v0.10 fix: a guard relationship must name its actual partner rather than
+    /// leaving "them"/"this character" to be resolved by whoever happens to be reading it. Regression test
+    /// for the exact wording a live run sent to a model that then misattributed the guard to the wrong
+    /// character entirely.
+    /// </summary>
+    [Fact]
+    public void A_guard_relationship_names_its_own_partner_rather_than_an_unscoped_pronoun()
+    {
+        var (projector, _, _) = Build();
+        var engine = TestWorld.V07Engine(new SeededRng(1), CombatRules.NoGlancing);
+        Assert.True(engine.Execute(new UseAbilityAction("Rowan", AbilityCatalog.GuardAllyId, "Elara")).Accepted);
+
+        var facts = projector.Project(engine.State, TestWorld.VarkId,
+            "Did Elara's blow land on Vark, or did Rowan's intervention block it?");
+
+        Assert.Contains(facts.PlainlyVisible, line => line.Contains("Rowan is standing guard over Elara", StringComparison.Ordinal));
+        Assert.Contains(facts.PlainlyVisible, line => line.Contains("Elara is guarded by Rowan", StringComparison.Ordinal));
+
+        // Never phrased so vaguely that the guard could be misread as concerning anyone but Elara.
+        Assert.DoesNotContain(facts.PlainlyVisible, line => line.Contains("an ally", StringComparison.Ordinal));
+        Assert.DoesNotContain(facts.PlainlyVisible, line => line.Contains("aimed at them", StringComparison.Ordinal));
+        Assert.DoesNotContain(facts.PlainlyVisible, line => line.Contains("this character", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void The_projection_never_contains_the_withheld_facts_it_records()
     {

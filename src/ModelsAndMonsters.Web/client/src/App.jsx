@@ -34,6 +34,8 @@ export default function App() {
   const [turn, setTurn] = useState(null)
   const [round, setRound] = useState(null)
   const [log, setLog] = useState([])
+  const [story, setStory] = useState(null)
+  const [showStory, setShowStory] = useState(false)
   const esRef = useRef(null)
   const bottomRef = useRef(null)
 
@@ -54,6 +56,15 @@ export default function App() {
       return
     }
     if (evt.type === 'turnStarted') { setTurn(p.character); return }
+    // The full text lives in the popover, not the scrolling transcript — LOG_KINDS deliberately never
+    // lists 'story' itself; a short marker line stands in for it (a first pass at this popped the story
+    // straight into the log and it silently vanished, because handling it here never happened at all).
+    if (evt.type === 'story') {
+      setStory(p.text)
+      setShowStory(true)
+      setLog((l) => [...l, { type: 'storyReady', payload: {} }])
+      return
+    }
     if (evt.type === 'round') setRound(p.round)
     if (evt.type === 'completed') setStatus('done')
     if (LOG_KINDS.has(evt.type)) setLog((l) => [...l, evt])
@@ -64,6 +75,7 @@ export default function App() {
     setCharacters([]); setObjects([]); setExits([]); setGround([]); setCover([])
     setPendingOffers([]); setSettledOffers([]); setAgreements([])
     setTurn(null); setRound(null); setLog([]); setStatus('running')
+    setStory(null); setShowStory(false)
     const res = await fetch(`${API}/api/runs`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
     })
@@ -82,10 +94,11 @@ export default function App() {
   return (
     <div className="app">
       <header className="top">
-        <h1>🎲 Models &amp; Monsters 🧌 <span className="version">v0.9</span></h1>
+        <h1>🎲 Models &amp; Monsters 🧌 <span className="version">v0.10</span></h1>
         <div className="controls">
           {round != null && <span className="round">Round {round}</span>}
           <span className={`status ${status}`}>{status}</span>
+          {story && <button onClick={() => setShowStory(true)} className="ghost">📖 Read the tale</button>}
           <button onClick={start} disabled={status === 'running'}>Start run</button>
           <button onClick={cancel} disabled={status !== 'running'} className="ghost">Cancel</button>
         </div>
@@ -163,8 +176,79 @@ export default function App() {
         {log.map((e, i) => <LogLine key={i} evt={e} />)}
         <div ref={bottomRef} />
       </section>
+
+      {showStory && story && <StoryPopover text={story} onClose={() => setShowStory(false)} />}
     </div>
   )
+}
+
+// The encounter's story, once it is written: a popover rather than another line in the scrolling
+// transcript, since a short story deserves to be read as one thing rather than found buried in the log.
+// Clicking the backdrop or pressing Escape closes it; clicking the card itself does not.
+function StoryPopover({ text, onClose }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  return (
+    <div className="story-backdrop" onClick={onClose}>
+      <div className="story-card" onClick={(e) => e.stopPropagation()}>
+        <button className="story-close" onClick={onClose} aria-label="Close">✕</button>
+        <div className="story-heading">📖 The tale of it</div>
+        <div className="story-body">{renderStoryMarkdown(text)}</div>
+      </div>
+    </div>
+  )
+}
+
+// Minimal, dependency-free markdown for the story text: headings, paragraphs and **bold**/*italic*
+// emphasis — exactly the subset the summariser's own prompt asks for, and nothing more. Deliberately
+// never uses dangerouslySetInnerHTML: the story is unmoderated model output, so every element it becomes
+// is a real React node built from parsed text, never raw HTML the model could have slipped something into.
+function renderStoryMarkdown(text) {
+  const blocks = []
+  let paragraph = []
+  const flushParagraph = () => {
+    if (paragraph.length) {
+      blocks.push({ type: 'p', text: paragraph.join(' ') })
+      paragraph = []
+    }
+  }
+
+  for (const rawLine of (text || '').replace(/\r\n/g, '\n').split('\n')) {
+    const line = rawLine.trim()
+    const heading = line.match(/^(#{1,6})\s+(.*)/)
+    if (heading) {
+      flushParagraph()
+      blocks.push({ type: 'h', level: heading[1].length, text: heading[2] })
+    } else if (line === '') {
+      flushParagraph()
+    } else {
+      paragraph.push(line)
+    }
+  }
+  flushParagraph()
+
+  return blocks.map((block, i) => {
+    if (block.type === 'h') {
+      // Keeps headings modest inside a card that already has its own "The tale of it" title — a ## becomes
+      // an h4, not a page-level h2.
+      const Tag = `h${Math.min(block.level + 2, 6)}`
+      return <Tag key={i} className="story-section-heading">{renderInline(block.text)}</Tag>
+    }
+    return <p key={i} className="story-paragraph">{renderInline(block.text)}</p>
+  })
+}
+
+// **bold** and *italic*, applied left to right and not nested — the only inline emphasis a story ever uses.
+function renderInline(text) {
+  return text.split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g).map((part, i) => {
+    if (part.startsWith('**') && part.endsWith('**')) return <strong key={i}>{part.slice(2, -2)}</strong>
+    if (part.startsWith('*') && part.endsWith('*')) return <em key={i}>{part.slice(1, -1)}</em>
+    return part
+  })
 }
 
 // Status badges. Each one is a mechanical fact the engine is enforcing, so it is shown as its own badge
@@ -372,6 +456,9 @@ function LogLine({ evt }) {
       const lines = (p.text || '').split('\n').filter(Boolean).slice(1)
       return lines.length ? <div className="line sys">{lines.map((l, i) => <div key={i}>{l}</div>)}</div> : null
     }
+    // The full text is handled outside the log entirely (see StoryPopover) — this is only the marker that
+    // tells a reader scrolling back through the transcript when it arrived.
+    case 'storyReady': return <div className="line sys">📖 The tale of the encounter is ready — see “Read the tale”.</div>
     default: return null
   }
 }

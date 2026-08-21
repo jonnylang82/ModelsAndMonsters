@@ -34,4 +34,7 @@ public interface IGameConsole
     void Notice(string text);
 
     void Ending(string text);
+
+    /// <summary>The short dramatic story generated from the finished encounter's public transcript.</summary>
+    void EncounterStory(string text);
 }
