@@ -65,6 +65,16 @@ public sealed record ProviderCapabilities
     public required bool SupportsRepeatPenalty { get; init; }
 
     /// <summary>
+    /// Whether the provider can constrain a reply to a JSON schema at the decoder — a response format the
+    /// server enforces token by token, not merely asks for in the prompt. Ollama takes a JSON schema as its
+    /// <c>format</c> field and llama.cpp constrains decoding to it; OpenAI has strict structured outputs;
+    /// Anthropic has no JSON mode, so there a schema-constrained request degrades to prompt-plus-parse. Gated
+    /// like every other uneven capability: where it is unsupported the constraint is dropped and reported, and
+    /// tolerant parsing with a whole-rulebook fallback remains the backstop either way.
+    /// </summary>
+    public required bool SupportsStructuredOutputSchema { get; init; }
+
+    /// <summary>
     /// Whether the provider silently drops the oldest messages when a request exceeds the context window.
     /// Ollama does (and reports only the post-truncation size), which is why the harness infers it from the
     /// sent-versus-reported gap. OpenAI does not: it rejects an over-long request with an error rather than
@@ -88,6 +98,7 @@ public sealed record ProviderCapabilities
             AllowsTemperatureAndTopPTogether = true,
             SupportsPenalties = true,
             SupportsRepeatPenalty = true,
+            SupportsStructuredOutputSchema = true,
             SilentlyTruncatesHistory = true
         },
 
@@ -105,6 +116,7 @@ public sealed record ProviderCapabilities
             AllowsTemperatureAndTopPTogether = true,
             SupportsPenalties = true,
             SupportsRepeatPenalty = false,
+            SupportsStructuredOutputSchema = true,
             SilentlyTruncatesHistory = false
         },
 
@@ -124,6 +136,9 @@ public sealed record ProviderCapabilities
             AllowsTemperatureAndTopPTogether = false,
             SupportsPenalties = false,
             SupportsRepeatPenalty = false,
+            // Anthropic has no JSON/structured-output mode the harness wires up; a schema-constrained request
+            // degrades to prompt-plus-parse there, dropped-and-reported like every other uneven capability.
+            SupportsStructuredOutputSchema = false,
             SilentlyTruncatesHistory = false
         },
 

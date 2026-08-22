@@ -92,20 +92,32 @@ public static class ContextTruncation
     /// FULL request — the messages the estimate sees, PLUS the tool schemas and chat-template scaffolding it
     /// does not (<paramref name="observedPromptOverhead"/>, measured from the provider's reported input),
     /// PLUS room for the model's reply — stays safely inside the window. Without a window the configured
-    /// budget is used unchanged. The configured budget is always an upper bound: a large window does not
-    /// license an unbounded history.
+    /// budget is used unchanged (unless <paramref name="unboundedWithoutWindow"/> says otherwise). The
+    /// configured budget is always an upper bound when a window IS known: a large window does not license
+    /// an unbounded history.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// This is the fix for a real miscalibration: summarising against a message-only estimate (which omits the
     /// tool scaffolding) let a "trimmed to 5,500" history sit at ~7,600 real tokens — right under an 8,192
     /// window, with almost no output room, so replies truncated. Reserving the overhead and the output room
     /// makes compaction target the real prompt size, keeping the request inside the window on its own.
+    /// </para>
+    /// <para>
+    /// <paramref name="unboundedWithoutWindow"/> carries
+    /// <see cref="Configuration.HarnessOptions.UnboundedHistoryOnHostedModels"/>: without it, "no window
+    /// known" (a hosted agent with <see cref="Configuration.HarnessOptions.EnforceContextWindowOnHostedModels"/>
+    /// off) silently falls back to the flat <paramref name="configuredBudget"/> anyway — a local-model-sized
+    /// ceiling reintroduced on exactly the runs meant to be exempt from one.
+    /// </para>
     /// </remarks>
-    public static int EffectiveHistoryBudget(int configuredBudget, int? contextWindow, int? maxOutputTokens, int observedPromptOverhead)
+    public static int EffectiveHistoryBudget(
+        int configuredBudget, int? contextWindow, int? maxOutputTokens, int observedPromptOverhead,
+        bool unboundedWithoutWindow = false)
     {
         if (contextWindow is not int window)
         {
-            return configuredBudget;
+            return unboundedWithoutWindow ? int.MaxValue : configuredBudget;
         }
 
         var outputReserve = maxOutputTokens is int max and > 0 ? max : DefaultOutputReserveTokens;

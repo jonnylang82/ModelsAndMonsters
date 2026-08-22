@@ -51,6 +51,9 @@ public sealed class RuleCatalog : IRuleRepository
             RuleId = "combat.attack",
             Summary = "Striking another character with the weapon in hand — a blow that actually makes contact.",
             RelatedRuleIds = ["combat.defend", "ability.dirty-strike", "combat.morale", "environment.cover"],
+            // A blow at a person, told apart from a deliberate blow at an OBJECT, and from posturing with no
+            // blow — a threat is speech (intimidation), not an attack. Both are live-proven confusions.
+            DistinguishedFrom = [DungeonMasterTools.DamageEnvironmentalObjectName, DungeonMasterTools.IntimidateCharacterName],
             ActionName = DungeonMasterTools.AttackCharacterName,
             Description = "One character striking another with the weapon they are carrying — a direct melee blow that MAKES CONTACT. What makes it an attack is the BLOW, never the movement: a swing, slash, stab, cut, chop or thrust that lands. Rushing, lunging or stepping toward somebody counts only when a blow is what arrives; rushing to them to hand them something, to shield them or to speak to them is the rule for that deed, not this one. A character moving, readying, threatening or posturing with no blow described is NOT attacking. This is still the right action when the target is sheltering behind cover — cover changes what the one roll can mean, never which action to call.",
             RequiredBindings = ["the acting character (attacker)", "the target character", "the attacker's weapon"],
@@ -67,6 +70,9 @@ public sealed class RuleCatalog : IRuleRepository
             RuleId = "inventory.use",
             Summary = "Using an item from your own inventory on yourself; the item is consumed.",
             RelatedRuleIds = [],
+            // A drunk salve is an item; a prayer that closes a wound is an ability. Same hoped-for outcome,
+            // different rule — the live-proven use-item-vs-heal-ability confusion.
+            DistinguishedFrom = [DungeonMasterTools.UseAbilityName],
             ActionName = DungeonMasterTools.UseItemName,
             Description = "A character using an item from their own inventory on themselves; the item is consumed.",
             RequiredBindings = ["the acting character", "the item from their own inventory"],
@@ -149,6 +155,9 @@ public sealed class RuleCatalog : IRuleRepository
             RuleId = "container.take",
             Summary = "Taking one item out of an already-open container, or off the floor or a body, into your hands.",
             RelatedRuleIds = ["container.open", "object.inspect", "inventory.steal"],
+            // Lifting from the floor or a body, told apart from a snatch off a LIVING person (steal), and
+            // from taking the tribute a pending offer promised — grabbing that IS the acceptance, not a take.
+            DistinguishedFrom = [DungeonMasterTools.StealItemName, DungeonMasterTools.AcceptSurrenderName],
             ActionName = DungeonMasterTools.TakeItemName,
             // Container-CONTEXTUAL phrases, not bare verbs: "seize"/"snatch"/"grab" are shared with stealing
             // from a person (inventory.steal), so keying on them here would wrongly outrank a theft. Instead
@@ -227,6 +236,9 @@ public sealed class RuleCatalog : IRuleRepository
             RuleId = "encounter.offer-surrender",
             Summary = "Offering to give up YOUR OWN fight to one named opponent, on concrete terms you promise to hand over.",
             RelatedRuleIds = ["encounter.accept-surrender", "combat.morale", "inventory.give"],
+            // Yielding on concrete terms, told apart from an ordinary give or drop — a weapon laid down or an
+            // item held out to buy one's own life is a surrender term, not a gift and not a discard.
+            DistinguishedFrom = [DungeonMasterTools.GiveItemName, DungeonMasterTools.DropItemName],
             ActionName = DungeonMasterTools.OfferSurrenderName,
             Description = "THE ACTOR GIVING UP THEIR OWN FIGHT, to ONE named opponent, on concrete terms they promise to hand over: one or more items they carry, the weapon in their hand, or both — either concession alone is enough, whatever else the offerer does or does not carry. Yielding is never unilateral and never free. Recognise it in yielding, surrendering, giving in, begging to be spared, buying their life, offering payment or a weapon for mercy — PROVIDED something concrete is promised. A weapon held out by the flat, laid down, or offered to buy mercy (\"I hold my sabre out by the flat and offer to lay it down if you spare me\") is this rule with forfeit_weapon alone, not a give_item and not a bare plea. So is an item offered specifically to buy one's own life (\"I offer Rowan the goblin salve in exchange for my life\") — an item traded for being spared is a surrender term, never an ordinary gift. The plea itself is ordinary speech; this action is only the enforceable terms. WHOSE fight is decisive: 'take my purse and let me live' is this rule, while 'hand over your purse and I will spare you' is a DEMAND, binds nobody, and is speech alone — recording it here would make the speaker the one who gave up.",
             RequiredBindings = ["the acting character (the one offering to give up)", "the ONE opposing character the terms are offered to", "the ordinary inventory items promised (may be none)", "whether the weapon in hand is promised"],
@@ -243,6 +255,9 @@ public sealed class RuleCatalog : IRuleRepository
             RuleId = "encounter.accept-surrender",
             Summary = "Taking up a pending offer of surrender that was made to you, sparing the one who offered.",
             RelatedRuleIds = ["encounter.offer-surrender"],
+            // Reaching out and taking the promised thing reads exactly like a theft; ruling out a snatch is
+            // how you know the grab was an acceptance. The v0.7 defect that cost a release.
+            DistinguishedFrom = [DungeonMasterTools.StealItemName],
             ActionName = DungeonMasterTools.AcceptSurrenderName,
             // The physical description of an acceptance IS reaching out and taking the promised thing, which
             // reads exactly like taking-from-a-hand — an unsupported action. A live run refused a recipient
@@ -264,6 +279,9 @@ public sealed class RuleCatalog : IRuleRepository
             RuleId = "combat.defend",
             Summary = "Spending the whole turn braced behind your guard instead of striking — NOT behind a named piece of cover.",
             RelatedRuleIds = ["combat.attack", "environment.take-cover"],
+            // One's own guard, told apart from sheltering behind a named object — naming a real object to get
+            // behind is take-cover, whatever defensive word accompanies it. The sharpest boundary in the book.
+            DistinguishedFrom = [DungeonMasterTools.TakeCoverName],
             ActionName = DungeonMasterTools.DefendName,
             Description = "The acting character spending the whole turn braced behind their OWN guard instead of striking, so the next blow that lands on them is softened. Every active character can do this, as often as they like. Recognise it in words like bracing, standing one's ground, holding or keeping the guard up, readying to parry, turning aside a blow, covering oneself, or setting one's feet — any defensive posture with no blow described AND naming no real object in the room. Defensive posturing with no object named is THIS, never an attack.",
             RequiredBindings = ["the acting character"],
@@ -312,6 +330,10 @@ public sealed class RuleCatalog : IRuleRepository
             RuleId = "ability.guard-ally",
             Summary = "The technique of standing over one companion so the next blow aimed at them lands on you.",
             RelatedRuleIds = ["combat.attack", "combat.defend"],
+            // Stepping in front of a companion to take the blow meant for them reads like striking or being
+            // struck; a live run routed exactly that to attack_character. Declared so routing to attack also
+            // surfaces this card.
+            DistinguishedFrom = [DungeonMasterTools.AttackCharacterName],
             ActionName = DungeonMasterTools.UseAbilityName,
             Description = "Ability 'guard-ally' (Guard Ally), a repeatable technique: the acting character spends the whole turn standing over ONE companion so the next blow an enemy aims at that companion lands on the guardian instead. Recognise it in words like shielding, covering, standing over, stepping in front of, putting oneself between an enemy and a companion, or taking the next blow meant for them. Only a character whose ability list includes 'guard-ally' can do it.",
             RequiredBindings = ["the acting character (the guardian)", "the ability id 'guard-ally'", "the ONE companion being guarded"],
@@ -392,6 +414,9 @@ public sealed class RuleCatalog : IRuleRepository
             RuleId = "environment.leave-cover",
             Summary = "Deliberately stepping out from cover, with nothing else attempted.",
             RelatedRuleIds = ["environment.cover", "environment.take-cover"],
+            // A bare step-out (the whole turn), told apart from an ordinary exposing action — an accepted
+            // attack, reach or opening vacates cover on its own, with no separate leave.
+            DistinguishedFrom = [DungeonMasterTools.AttackCharacterName],
             ActionName = DungeonMasterTools.LeaveCoverName,
             Description = "The acting character deliberately stepping out from the cover they occupy, as the whole of their turn. Use only when leaving is the entire attempt — an accepted attack, reach or opening already exposes the character as a side effect of resolving it, with no separate leave needed.",
             RequiredBindings = ["the acting character"],

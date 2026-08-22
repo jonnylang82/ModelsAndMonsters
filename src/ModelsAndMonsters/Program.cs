@@ -169,6 +169,14 @@ if (args.Contains("--rulebook-eval"))
             "RuleIndexSelector", options.Agents.RulebookResolver.Overlay(options.Agents.Default),
             options.Harness.EnforceContextWindowOnHostedModels);
 
+        // Honour a configured seed so a measurement is reproducible — the model-backed selectors then choose
+        // identically run to run, and a before/after comparison is not muddied by sampling noise. Null (the
+        // default) leaves the eval unseeded, matching the originally published methodology.
+        if (options.Harness.Seed is { } evalSeed)
+        {
+            profile = profile with { Seed = evalSeed };
+        }
+
         IChatClient? client = null;
         try
         {
@@ -209,6 +217,12 @@ if (args.Contains("--rulebook-eval"))
     {
         Console.Error.WriteLine("Measurement cancelled.");
         return 130;
+    }
+    catch (InvalidOperationException ex)
+    {
+        // The corpus-coverage check (or a catalog validation) fails the eval on purpose rather than warning.
+        Console.Error.WriteLine($"Rulebook eval failed: {ex.Message}");
+        return 1;
     }
 }
 

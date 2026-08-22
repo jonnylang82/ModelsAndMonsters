@@ -23,7 +23,9 @@ public static class RuleSelectionSupport
         int modelCalls = 0,
         long? inputTokens = null,
         long? outputTokens = null,
-        double latencyMs = 0)
+        double latencyMs = 0,
+        IReadOnlyList<string>? droppedLabels = null,
+        IReadOnlyList<string>? linkExpandOnly = null)
     {
         var direct = new List<string>();
         var chosen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -37,10 +39,20 @@ public static class RuleSelectionSupport
         }
 
         // Declared related rules, one hop. This is what stops a confident top-1 answering "escape" without
-        // the rule that says the door has to be opened first.
+        // the rule that says the door has to be opened first. When linkExpandOnly is given, only those ids
+        // follow their links — a selector can expand its PRIMARY pick without every also-ran (a ruled-out
+        // action, say) dragging in its own related closure and fanning the set out to the whole book.
+        var expandFrom = linkExpandOnly is null
+            ? null
+            : new HashSet<string>(linkExpandOnly, StringComparer.OrdinalIgnoreCase);
         var expanded = new List<string>();
         foreach (var id in direct.ToList())
         {
+            if (expandFrom is not null && !expandFrom.Contains(id))
+            {
+                continue;
+            }
+
             foreach (var related in repository.Find(id)!.RelatedRuleIds)
             {
                 if (repository.Find(related) is { } card && chosen.Add(card.RuleId))
@@ -66,34 +78,51 @@ public static class RuleSelectionSupport
             ModelCalls = modelCalls,
             InputTokens = inputTokens,
             OutputTokens = outputTokens,
-            LatencyMs = latencyMs
+            LatencyMs = latencyMs,
+            DroppedLabels = droppedLabels ?? []
         };
     }
 
-    /// <summary>The whole bounded rulebook, marked as a fallback with the reason it was needed.</summary>
+    /// <summary>The whole bounded rulebook, marked as a fallback with the reason it was needed and its kind.</summary>
     public static RuleSelection Fallback(
         IRuleRepository repository,
         RuleSelectionMode mode,
         string reason,
+        RuleSelectionFallbackKind kind,
         int modelCalls = 0,
         long? inputTokens = null,
         long? outputTokens = null,
-        double latencyMs = 0) => new()
+        double latencyMs = 0,
+        IReadOnlyList<string>? droppedLabels = null) => new()
         {
             Mode = mode,
             Cards = repository.AllCards,
             DirectlySelectedRuleIds = [.. repository.AllCards.Select(c => c.RuleId)],
             FellBack = true,
             FallbackReason = reason,
+            FallbackKind = kind,
             ModelCalls = modelCalls,
             InputTokens = inputTokens,
             OutputTokens = outputTokens,
-            LatencyMs = latencyMs
+            LatencyMs = latencyMs,
+            DroppedLabels = droppedLabels ?? []
         };
 
-    /// <summary>The compact index: one line per card, in catalog order.</summary>
+    /// <summary>
+    /// The compact index: one line per card, in catalog order, each carrying the card's own exclusions — the
+    /// boundary as well as the purpose.
+    /// </summary>
+    /// <remarks>
+    /// The exclusions are here as a deliberate control (v0.10 investigation Task 1): a summary line tells a
+    /// model what a card is FOR and says much less about what it is NOT, and the cases a compact selection
+    /// loses are exactly the ones whose decision turns on a card the intent must be told APART from — the theft
+    /// card behind an acceptance, the cover card behind a brace. Putting the boundary in front of the model
+    /// costs selection tokens; whether it buys back that recall is measured in
+    /// <c>reports/rulebook-efficiency.md</c>. It is kept present for every model-read index so the only variable
+    /// between the compact-index and action-routing selectors is the routing indirection, not the exclusions.
+    /// </remarks>
     public static string BuildIndex(IRuleRepository repository) =>
-        string.Join("\n", repository.AllCards.Select(c => c.ToIndexLine()));
+        string.Join("\n", repository.AllCards.Select(c => c.ToIndexLine(includeExclusions: true)));
 }
 
 /// <summary>
@@ -161,7 +190,8 @@ public sealed class StructuredRoutingSelector : IRuleSelector
         if (string.IsNullOrWhiteSpace(action))
         {
             return Task.FromResult(RuleSelectionSupport.Fallback(_repository, Mode,
-                "no action family was declared for this request, and the router never infers one from language"));
+                "no action family was declared for this request, and the router never infers one from language",
+                RuleSelectionFallbackKind.Semantic));
         }
 
         var matches = _repository.AllCards
@@ -172,7 +202,7 @@ public sealed class StructuredRoutingSelector : IRuleSelector
         if (matches.Count == 0)
         {
             return Task.FromResult(RuleSelectionSupport.Fallback(_repository, Mode,
-                $"no card is declared against action '{action}'"));
+                $"no card is declared against action '{action}'", RuleSelectionFallbackKind.Semantic));
         }
 
         return Task.FromResult(RuleSelectionSupport.Build(_repository, Mode, matches,

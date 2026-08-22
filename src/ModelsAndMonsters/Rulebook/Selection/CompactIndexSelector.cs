@@ -106,6 +106,7 @@ public sealed class CompactIndexSelector : ModelAgent, IRuleSelector
             stopwatch.Stop();
             return RuleSelectionSupport.Fallback(_repository, Mode,
                 $"the index selection call failed ({ex.GetType().Name}), so the whole rulebook was sent",
+                RuleSelectionFallbackKind.Mechanical,
                 modelCalls: 1, latencyMs: stopwatch.Elapsed.TotalMilliseconds);
         }
 
@@ -114,6 +115,10 @@ public sealed class CompactIndexSelector : ModelAgent, IRuleSelector
         var raw = ModelText.Clean(response);
         var ids = TryParseIds(raw);
         var known = ids.Where(id => _repository.Find(id) is not null).ToList();
+        // Every id the model named that the catalog does not hold. Recorded, never silently discarded: a
+        // reply of ["combat.attack", "combat.parry"] must not produce artefacts indistinguishable from one
+        // that returned ["combat.attack"] alone. Hallucinated ids are the signal for judging the model.
+        var dropped = ids.Where(id => _repository.Find(id) is null).ToList();
 
         if (known.Count == 0)
         {
@@ -121,10 +126,14 @@ public sealed class CompactIndexSelector : ModelAgent, IRuleSelector
                 ids.Count == 0
                     ? "the index selection returned nothing parseable, so the whole rulebook was sent"
                     : "the index selection named no rule this catalog holds, so the whole rulebook was sent",
+                // Unparseable is the machinery; a well-formed reply naming only unknown ids is the model
+                // choosing outside the set — the boundaries.
+                ids.Count == 0 ? RuleSelectionFallbackKind.Mechanical : RuleSelectionFallbackKind.Semantic,
                 modelCalls: 1,
                 inputTokens: response.Usage?.InputTokenCount,
                 outputTokens: response.Usage?.OutputTokenCount,
-                latencyMs: stopwatch.Elapsed.TotalMilliseconds);
+                latencyMs: stopwatch.Elapsed.TotalMilliseconds,
+                droppedLabels: dropped);
         }
 
         var selection = RuleSelectionSupport.Build(_repository, Mode, known,
@@ -132,7 +141,8 @@ public sealed class CompactIndexSelector : ModelAgent, IRuleSelector
             modelCalls: 1,
             inputTokens: response.Usage?.InputTokenCount,
             outputTokens: response.Usage?.OutputTokenCount,
-            latencyMs: stopwatch.Elapsed.TotalMilliseconds);
+            latencyMs: stopwatch.Elapsed.TotalMilliseconds,
+            droppedLabels: dropped);
 
         if (_cacheEnabled)
         {

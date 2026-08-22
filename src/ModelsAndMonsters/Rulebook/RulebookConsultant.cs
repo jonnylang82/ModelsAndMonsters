@@ -333,6 +333,8 @@ public sealed class RulebookConsultant
             SelectionExpandedRuleIds = selection?.ExpandedRuleIds ?? [],
             SelectionReasons = selection?.SelectionReasons ?? [],
             SelectionFallback = selection?.FallbackReason,
+            SelectionFallbackKind = selection?.FallbackKind?.ToString(),
+            SelectionDroppedLabels = selection?.DroppedLabels ?? [],
             SelectionModelCalls = selection?.ModelCalls ?? 0,
             SelectionInputTokens = selection?.InputTokens,
             SelectionOutputTokens = selection?.OutputTokens,

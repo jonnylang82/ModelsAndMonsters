@@ -1221,6 +1221,27 @@ public sealed class TurnCoordinator
             action = corpseTake!;
         }
 
+        // The item a character names is taken from where it ACTUALLY lies. People point at the wrong place —
+        // "grab the purse off the floor" when it is on a fallen body, "take the vial from the case" when it
+        // spilled onto the ground — and the deed is the same take, from where the thing really is. This only
+        // ever moves WHICH container a take the rulebook already allowed reads from; the knowledge check below
+        // still applies to that real location, so nothing hidden is handed over.
+        if (RedirectsMisplacedTake(action, out var movedTake, out var takeFrom))
+        {
+            _trace.Emit(TraceEventType.ToolCallDispatched, new ToolCallDispatchPayload
+            {
+                AgentName = DungeonMasterAgent.AgentIdentifier,
+                CallId = call.CallId,
+                ToolName = call.Name,
+                Arguments = ChatTraceMapper.MapArguments(call.Arguments),
+                DispatchDecision =
+                    $"Redirected {DungeonMasterTools.TakeItemName} to {takeFrom}: the named item is not in the container " +
+                    "named but lies there, which is where it is taken from."
+            }, DungeonMasterAgent.AgentIdentifier);
+
+            action = movedTake!;
+        }
+
         // A theft must have a legitimate informational basis: the thief cannot steal an item it has no way of
         // knowing the target carries. This is enforced deterministically here, before the engine (and before
         // any RNG), from the thief's own knowledge ledger — never by revealing the target's hidden inventory.
@@ -2952,7 +2973,7 @@ public sealed class TurnCoordinator
         // the tool schemas and chat-template scaffolding the estimate cannot see, plus room for the reply)
         // inside the window. Budgeting against the message-only estimate alone let the real prompt sit right
         // under the window and truncate replies.
-        var budget = character.EffectiveHistoryBudget(_limits.HistoryTokenBudget);
+        var budget = character.EffectiveHistoryBudget(_limits.HistoryTokenBudget, _limits.UnboundedHistoryOnHostedModels);
 
         var before = character.EstimateHistoryTokens();
         if (before <= budget)
@@ -3842,15 +3863,23 @@ public sealed class TurnCoordinator
 
         // The corpse widening stays inside the fail-safe: it only ever refines a grab the rulebook already
         // allowed, so an intent the rulebook refused outright is never handed a second way to act on it.
+        var corpses = _engine.State.Room.Objects.OfType<Container>().Where(c => c.IsCorpse).ToList();
         if (!rulebookRefused
             && names.Contains(DungeonMasterTools.StealItemName)
-            && _engine.State.Room.Objects.OfType<Container>().Any(c => c.IsCorpse)
+            && corpses.Count > 0
             && names.Add(DungeonMasterTools.TakeItemName))
         {
             widened.Add(DungeonMasterTools.TakeItem);
+            // Name the fallen and counter the "impossible" framing head-on: a live run had the DM absorb the
+            // "cannot steal from the dead" half of a generic note and then REJECT the grab as impossible,
+            // instead of binding the take_item this widening had just handed it. Naming the body the intent
+            // refers to, and saying plainly it is not impossible, is what closes that gap.
+            var bodies = string.Join(", ", corpses.Select(c => c.Name));
             notes.Add(
-                $"STATE THE RULEBOOK COULD NOT SEE: a fallen character's body lies here holding what they carried. " +
-                $"Nothing can be stolen from the dead; looting a body is {DungeonMasterTools.TakeItemName} from it.");
+                $"STATE THE RULEBOOK COULD NOT SEE: {bodies} lies here, holding what they carried. Taking from the " +
+                $"fallen is NOT impossible and is never a theft — a corpse cannot be stolen from, but its belongings " +
+                $"are within reach and are taken with {DungeonMasterTools.TakeItemName}. If {character.Name} is taking " +
+                $"anything from {bodies}, bind {DungeonMasterTools.TakeItemName}; do not reject it as an impossible steal.");
         }
 
         // Withdraw acceptance when there is nothing to accept. The rulebook reads an intent like "I accept
@@ -4026,6 +4055,45 @@ public sealed class TurnCoordinator
 
         corpseName = target.Name;
         take = new TakeItemAction(steal.ThiefRef, corpse.Id, steal.ItemRef);
+        return true;
+    }
+
+    /// <summary>
+    /// True when a take names an item that is not in the container it named, but that same item IS in exactly
+    /// one other place the actor could loot from — the ground, a fallen body, or an open container in the room.
+    /// The correction only ever changes the container the take reads from, never the item; the deed the
+    /// rulebook allowed is unchanged. When the item lies nowhere lootable, or in more than one place, it is
+    /// left for the engine (and the knowledge check) to rule on rather than guessed at.
+    /// </summary>
+    private bool RedirectsMisplacedTake(GameAction action, out GameAction? corrected, out string? fromName)
+    {
+        corrected = null;
+        fromName = null;
+
+        if (action is not TakeItemAction take)
+        {
+            return false;
+        }
+
+        // Nothing to correct when the named container really holds the named item.
+        if (FindContainer(take.ContainerRef)?.FindItem(take.ItemRef) is not null)
+        {
+            return false;
+        }
+
+        var elsewhere = _engine.State.Room.Objects.OfType<Container>()
+            .Where(c => (c.IsGround || c.IsCorpse || c.IsOpen)
+                        && !string.Equals(c.Id, take.ContainerRef, StringComparison.OrdinalIgnoreCase)
+                        && c.FindItem(take.ItemRef) is not null)
+            .ToList();
+
+        if (elsewhere.Count != 1)
+        {
+            return false;
+        }
+
+        corrected = take with { ContainerRef = elsewhere[0].Id };
+        fromName = elsewhere[0].Name;
         return true;
     }
 

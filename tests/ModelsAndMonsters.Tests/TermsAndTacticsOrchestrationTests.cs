@@ -736,6 +736,59 @@ public sealed class TermsAndTacticsOrchestrationTests
     }
 
     [Fact]
+    public async Task A_take_naming_the_wrong_place_is_redirected_to_where_the_item_actually_lies()
+    {
+        // A character points at "the floor" for a purse that is really on a fallen body. The deed is the same
+        // take, from where the item actually is — not a refusal, and not a grab of whatever else is on the
+        // floor. This is the item-vs-location binding fix (a live run took an Iron Mace off the floor when the
+        // character asked for the purses that were on a corpse).
+        var corpse = new Container
+        {
+            Id = $"corpse-{TestWorld.RowanId}",
+            Name = "Rowan's body",
+            Description = "The fallen body of Rowan, its belongings within reach.",
+            IsOpen = true,
+            IsCorpse = true,
+            Contents = [TestWorld.Purse("rowan")]
+        };
+
+        var baseline = TestWorld.V07State();
+        var dead = baseline.RequireById(TestWorld.RowanId) with
+        {
+            Health = 0,
+            Disposition = CharacterDisposition.Dead,
+            Inventory = []
+        };
+        var state = baseline.WithCharacter(dead) with
+        {
+            Room = baseline.Room with { Objects = baseline.Room.Objects.Add(corpse) }
+        };
+
+        var harness = Harness(
+            new ScriptedChatClient(
+                // The DM names the ground (the wrong place) for a purse that is on the body.
+                ScriptedChatClient.Call("dm-take", DungeonMasterTools.TakeItemName,
+                    ("actor", "Skrit"), ("container", Container.GroundId), ("item", "purse-rowan")),
+                ScriptedChatClient.Text("Skrit lifts the purse from the body.")),
+            MultiActorHarness.Clients(("Skrit", new ScriptedChatClient(
+                Act("s-1", "I grab the purse off the floor.")))),
+            state);
+
+        var turn = await harness.RunTurn("Skrit", round: 3, turn: 12);
+
+        Assert.Equal(TurnOutcome.ActionResolved, turn.Outcome);
+
+        // The purse moved from the body, where it really was, to Skrit — not refused for not being on the floor.
+        Assert.Contains(harness.Engine.State.RequireById(TestWorld.SkritId).Inventory, i => i.Id == "purse-rowan");
+        Assert.Empty(harness.Engine.State.Room.Objects.OfType<Container>().Single(c => c.IsCorpse).Contents);
+
+        var dispatch = harness.Sink.Payloads<ToolCallDispatchPayload>(TraceEventType.ToolCallDispatched)
+            .First(p => p.ToolName == DungeonMasterTools.TakeItemName);
+        Assert.Contains("Redirected", dispatch.DispatchDecision, StringComparison.Ordinal);
+        Assert.Contains("Rowan's body", dispatch.DispatchDecision, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task An_ignored_offer_lapses_at_the_end_of_the_recipients_turn_and_the_room_is_told()
     {
         var offer = new SurrenderOffer

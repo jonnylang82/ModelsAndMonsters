@@ -1272,6 +1272,12 @@ public sealed record RulebookConsultationPayload
     /// <summary>Set when the strategy gave up and sent the whole bounded rulebook, with the reason. Null otherwise.</summary>
     public string? SelectionFallback { get; init; }
 
+    /// <summary>Whether a fallback was semantic (the boundaries) or mechanical (the machinery). Null when it did not fall back.</summary>
+    public string? SelectionFallbackKind { get; init; }
+
+    /// <summary>Labels the model returned that were not recognised and were discarded — a hallucinated id or an action outside the set.</summary>
+    public IReadOnlyList<string> SelectionDroppedLabels { get; init; } = [];
+
     /// <summary>Model calls the SELECTION made, not counting the resolver call that follows it.</summary>
     public int SelectionModelCalls { get; init; }
 

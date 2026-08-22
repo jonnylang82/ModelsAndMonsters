@@ -31,7 +31,32 @@ public enum RuleSelectionMode
     /// Embed each card once, embed the incoming intent, take a small top-K and expand through declared
     /// related rules. Requires a configured embedding provider; without one the selector falls back.
     /// </summary>
-    Embedding
+    Embedding,
+
+    /// <summary>
+    /// Show a model the engine's ACTION surface — one line per action saying what it is and what it must be
+    /// told apart from — and ask for one action label plus the actions it rules out. Code expands that to cards
+    /// from metadata declared on the cards (<see cref="RuleCard.ActionName"/> and
+    /// <see cref="RuleCard.DistinguishedFrom"/>). Unlike <see cref="CompactIndex"/> the model never reads the
+    /// rulebook, and the index is bounded by the engine's ~19 actions rather than by the card count.
+    /// </summary>
+    ActionRouting
+}
+
+/// <summary>
+/// Why a selector gave up and sent the whole bounded rulebook — a rule of the world firing versus something
+/// breaking. The two demand opposite responses and must never read as one number: many SEMANTIC fallbacks
+/// mean the action boundaries are wrong; many MECHANICAL ones mean the model or the transport is broken. The
+/// same distinction the engine draws between SpeechNotHeard and HarnessLimitReached.
+/// </summary>
+public enum RuleSelectionFallbackKind
+{
+    /// <summary>The model understood the format but the answer could not be trusted to narrow safely — it said
+    /// it was unclear, or it named an action outside the closed set. The boundaries, not the machinery.</summary>
+    Semantic,
+
+    /// <summary>The reply could not be parsed, or the model call threw. The machinery, not the boundaries.</summary>
+    Mechanical
 }
 
 /// <summary>The cards chosen for one consultation, and the complete account of how they were chosen.</summary>
@@ -50,6 +75,14 @@ public sealed record RuleSelection
     /// <summary>The ids the strategy itself picked, before related-rule expansion.</summary>
     public required IReadOnlyList<string> DirectlySelectedRuleIds { get; init; }
 
+    /// <summary>
+    /// The single engine action a routing selector named as the primary deed, or null for a selector that does
+    /// not route by action (or a routing selector that fell back before naming one). This is the raw label the
+    /// model chose — kept even when it named an action outside the closed set — so action-label accuracy can be
+    /// measured against the labelled expectation.
+    /// </summary>
+    public string? PrimaryActionLabel { get; init; }
+
     /// <summary>The ids added purely by following declared related-rule links.</summary>
     public IReadOnlyList<string> ExpandedRuleIds { get; init; } = [];
 
@@ -64,6 +97,21 @@ public sealed record RuleSelection
 
     /// <summary>Why it fell back. Null when it did not.</summary>
     public string? FallbackReason { get; init; }
+
+    /// <summary>
+    /// Whether a fallback was SEMANTIC (the boundaries) or MECHANICAL (the machinery). Null when the strategy
+    /// did not fall back. Kept distinct so a diagnostic never collapses "the action set is wrong" and "the
+    /// transport broke" into one count.
+    /// </summary>
+    public RuleSelectionFallbackKind? FallbackKind { get; init; }
+
+    /// <summary>
+    /// Labels the model returned that were not recognised and were discarded — a hallucinated rule id, or an
+    /// action name outside the closed set. Recorded rather than silently dropped (the project's own standard,
+    /// from ProviderCapabilities), because a partially-invented reply is exactly the signal for judging whether
+    /// a smaller model can do the routing step. Empty when the model invented nothing.
+    /// </summary>
+    public IReadOnlyList<string> DroppedLabels { get; init; } = [];
 
     /// <summary>Model calls the SELECTION itself made, not counting the resolver call that follows.</summary>
     public int ModelCalls { get; init; }

@@ -73,9 +73,16 @@ public sealed class CharacterAgent : ModelAgent
     /// Derived from this character's own window, output budget and measured prompt overhead, so it self-
     /// calibrates per model rather than trusting a fixed number that ignores the window and the tool overhead.
     /// </summary>
-    public int EffectiveHistoryBudget(int configuredBudget) =>
+    /// <param name="unboundedWithoutWindow">
+    /// Carries <see cref="Configuration.HarnessOptions.UnboundedHistoryOnHostedModels"/> — when this
+    /// character's <see cref="AI.AgentModelProfile.BindingContextWindow"/> is null (a hosted profile with
+    /// <see cref="Configuration.HarnessOptions.EnforceContextWindowOnHostedModels"/> off), true exempts it from
+    /// <paramref name="configuredBudget"/> entirely rather than falling back to it.
+    /// </param>
+    public int EffectiveHistoryBudget(int configuredBudget, bool unboundedWithoutWindow = false) =>
         ContextTruncation.EffectiveHistoryBudget(
-            configuredBudget, Profile.BindingContextWindow, Profile.MaxOutputTokens, ObservedPromptOverheadTokens);
+            configuredBudget, Profile.BindingContextWindow, Profile.MaxOutputTokens, ObservedPromptOverheadTokens,
+            unboundedWithoutWindow);
 
     /// <summary>Plans a summary trim keeping the last <paramref name="keepRecentTurns"/> turns full; false if there is nothing older to fold.</summary>
     public bool TryPlanHistorySummary(int keepRecentTurns, out int boundary, out string olderHistory) =>

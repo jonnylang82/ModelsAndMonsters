@@ -61,6 +61,27 @@ public sealed record RuleCard
     /// </remarks>
     public IReadOnlyList<string> RelatedRuleIds { get; init; } = [];
 
+    /// <summary>
+    /// The engine actions this card must be told APART from — the ones a reader needs in front of them to be
+    /// sure this is the right card, given as engine-action names (the same vocabulary as <see cref="ActionName"/>,
+    /// which is the action this card GOVERNS).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the load-bearing metadata behind action routing (v0.10). Similarity retrieval finds what an
+    /// intent RESEMBLES; a decision often turns on the rule it must be DISTINGUISHED from — the theft card
+    /// behind an acceptance, the cover card behind a brace, a thing struck versus a person struck. Declaring
+    /// those neighbours here lets the router compose an index that says what an action is NOT, and lets card
+    /// expansion surface the neighbour whether or not the intent ever named it.
+    /// </para>
+    /// <para>
+    /// Declared directionally — one edge, on one card — and traversed SYMMETRICALLY at expansion: if
+    /// accept-surrender declares it must be told apart from <c>steal_item</c>, then routing to <c>steal_item</c>
+    /// also surfaces accept-surrender. One list, declared once, avoids two half-maintained copies.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<string> DistinguishedFrom { get; init; } = [];
+
     /// <summary>The bindings the Dungeon Master must fill from authoritative state to submit the action.</summary>
     public required IReadOnlyList<string> RequiredBindings { get; init; }
 
@@ -101,6 +122,7 @@ public sealed record RuleCard
         builder.Append(Description).Append('\n');
         builder.Append(Summary).Append('\n');
         builder.AppendJoin("|", RelatedRuleIds).Append('\n');
+        builder.AppendJoin("|", DistinguishedFrom).Append('\n');
         builder.AppendJoin("|", RequiredBindings).Append('\n');
         builder.AppendJoin("|", Preconditions).Append('\n');
         builder.Append(TurnCost).Append('\n');
@@ -151,10 +173,26 @@ public sealed record RuleCard
     /// This is what a selection strategy shows a model in place of the whole card, so that the model still
     /// does the semantic work but reads a few hundred characters instead of a few thousand.
     /// </summary>
-    public string ToIndexLine() =>
-        IsReference
+    /// <param name="includeExclusions">
+    /// When true, the card's own exclusion text is appended after the summary — the boundary, not just the
+    /// purpose. A summary line says what a card is FOR and much less about what it is NOT, and the cases
+    /// selection loses are the ones a decision must be told apart from (the theft card behind an acceptance,
+    /// the cover card behind a brace). Sourced from <see cref="Exclusions"/> itself, never a second hand-written
+    /// copy that could drift from the card.
+    /// </param>
+    public string ToIndexLine(bool includeExclusions = false)
+    {
+        var line = IsReference
             ? $"{RuleId} [background mechanic] — {Summary}"
             : $"{RuleId} [{ActionName}] — {Summary}";
+
+        if (includeExclusions && Exclusions.Count > 0)
+        {
+            line += " NOT: " + string.Join("; ", Exclusions);
+        }
+
+        return line;
+    }
 
     private static string Join(IReadOnlyList<string> values) => values.Count == 0 ? "none" : string.Join("; ", values);
 }

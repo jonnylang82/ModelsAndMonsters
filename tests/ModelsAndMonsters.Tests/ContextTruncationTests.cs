@@ -134,8 +134,27 @@ public sealed class ContextTruncationTests
     public void The_history_budget_is_the_configured_value_when_no_window_is_known()
     {
         // Hosted models (OpenAI/Anthropic) do not expose a per-request window here; the configured budget is
-        // used unchanged, since those windows are far larger than any history this harness produces.
+        // used unchanged by default — this is exactly the flat ceiling `UnboundedHistoryOnHostedModels`
+        // exists to lift, see the next test.
         Assert.Equal(5500, ContextTruncation.EffectiveHistoryBudget(5500, contextWindow: null, maxOutputTokens: 1500, observedPromptOverhead: 2000));
+    }
+
+    [Fact]
+    public void Unbounded_without_window_lifts_the_flat_ceiling_only_when_no_window_is_known()
+    {
+        // The whole point of the setting: a hosted profile with EnforceContextWindowOnHostedModels off has no
+        // BindingContextWindow, so without this flag it still summarised at the flat configured number — a
+        // local-model-sized ceiling reintroduced on exactly the run meant to be exempt from one.
+        Assert.Equal(int.MaxValue, ContextTruncation.EffectiveHistoryBudget(
+            5500, contextWindow: null, maxOutputTokens: 1500, observedPromptOverhead: 2000, unboundedWithoutWindow: true));
+
+        // It must not change anything once a real window IS known — the derived, window-based budget still
+        // wins; "unbounded" only ever applies to the "no window known" branch.
+        var derived = ContextTruncation.EffectiveHistoryBudget(
+            5500, contextWindow: 8192, maxOutputTokens: 1500, observedPromptOverhead: 2000, unboundedWithoutWindow: true);
+        Assert.Equal(
+            ContextTruncation.EffectiveHistoryBudget(5500, contextWindow: 8192, maxOutputTokens: 1500, observedPromptOverhead: 2000),
+            derived);
     }
 
     [Fact]

@@ -52,18 +52,27 @@ public sealed class RuleSelectionTests
     }
 
     [Fact]
-    public void The_compact_index_is_one_short_line_per_card()
+    public void The_compact_index_is_one_line_per_card_carrying_its_exclusions()
     {
         var index = RuleSelectionSupport.BuildIndex(Catalog);
         var lines = index.Split('\n');
 
+        // One line per card, each a single physical line.
         Assert.Equal(Catalog.AllCards.Count, lines.Length);
-        Assert.All(lines, line => Assert.True(line.Length < 220, $"Index line too long to be an index: {line}"));
 
-        // And it is genuinely a fraction of the full book — that is the whole point of it.
+        // Each line now carries the card's own boundary, not just its purpose (v0.10 Task 1 control). The
+        // text is sourced from the card's exclusion field, so container.take's line names the living-person
+        // boundary that a summary alone leaves out.
+        var takeLine = Array.Find(lines, l => l.StartsWith("container.take ", StringComparison.Ordinal))!;
+        Assert.Contains("NOT:", takeLine, StringComparison.Ordinal);
+        Assert.Contains("LIVING", takeLine, StringComparison.Ordinal);
+
+        // Still a genuine reduction against sending the whole book: the index omits every card's full
+        // description, preconditions and version header, so even with exclusions present it is smaller than the
+        // resolver block set. (The exact selection-token cost is measured in reports/rulebook-efficiency.md.)
         var full = Catalog.AllCards.Sum(c => c.ToResolverBlock().Length);
-        Assert.True(index.Length * 5 < full,
-            $"The index is {index.Length} characters against {full} of cards — not compact enough to be worth a call.");
+        Assert.True(index.Length < full,
+            $"The index is {index.Length} characters against {full} of full cards — no longer a reduction.");
     }
 
     [Fact]
@@ -251,7 +260,7 @@ public sealed class RuleSelectionTests
     }
 
     [Fact]
-    public async Task A_selection_naming_one_real_rule_among_inventions_keeps_the_real_one()
+    public async Task A_selection_naming_one_real_rule_among_inventions_keeps_the_real_one_and_records_the_dropped()
     {
         var client = new ScriptedChatClient(
             ScriptedChatClient.Text("""{"ruleIds": ["magic.fireball", "combat.attack"]}"""));
@@ -260,6 +269,10 @@ public sealed class RuleSelectionTests
 
         Assert.False(selection.FellBack);
         Assert.Equal(["combat.attack"], selection.DirectlySelectedRuleIds);
+
+        // The invented id is recorded, not silently discarded (v0.10 Task 3.5): a partially-invented reply
+        // must not be indistinguishable from a clean one.
+        Assert.Contains("magic.fireball", selection.DroppedLabels);
     }
 
     [Fact]
@@ -297,6 +310,270 @@ public sealed class RuleSelectionTests
     [InlineData("", 0)]
     public void Selection_replies_are_parsed_tolerantly_and_never_throw(string reply, int expected) =>
         Assert.Equal(expected, CompactIndexSelector.TryParseIds(reply).Count);
+
+    // ------------------------------------------------------------------------------------------
+    // Action routing
+    // ------------------------------------------------------------------------------------------
+
+    private static ActionRoutingSelector ActionRouter(ScriptedChatClient client, bool cache = false)
+    {
+        var profile = new AgentModelProfile
+        {
+            AgentName = "RuleActionRouter",
+            Provider = ModelProvider.Ollama,
+            ModelId = "scripted-model",
+            Temperature = 0.1f
+        };
+        var trace = new ExperimentTrace("selection-test", new RecordingTraceSink());
+        return new ActionRoutingSelector(profile, new TracingChatClient(client, profile, trace), Catalog, cache);
+    }
+
+    private static ChatResponse Route(string action, string[] ruleOut, string confidence = "clear")
+    {
+        var ruleOutJson = string.Join(", ", ruleOut.Select(a => $"\"{a}\""));
+        return ScriptedChatClient.Text($$"""{"action": "{{action}}", "ruleOut": [{{ruleOutJson}}], "confidence": "{{confidence}}"}""");
+    }
+
+    [Fact]
+    public async Task Routing_to_a_known_action_selects_that_actions_cards()
+    {
+        var selection = await ActionRouter(new ScriptedChatClient(Route("attack_character", [])))
+            .SelectAsync("I bring my longsword down on the goblin captain", default);
+
+        Assert.False(selection.FellBack);
+        Assert.Equal("attack_character", selection.PrimaryActionLabel);
+        Assert.Contains(selection.Cards, c => c.RuleId == "combat.attack");
+        Assert.Contains(selection.Cards, c => c.RuleId == RuleCatalog.RejectRuleId);
+        Assert.True(selection.Cards.Count < Catalog.AllCards.Count);
+        Assert.Equal(1, selection.ModelCalls);
+    }
+
+    [Fact]
+    public async Task A_ruleOut_pulls_the_ruled_out_actions_cards_the_acceptance_and_theft_pair()
+    {
+        // The v0.7 case: reaching for the promised tribute reads exactly like a theft, and the theft card is
+        // needed to rule it out. Naming steal_item in ruleOut must surface the theft card alongside acceptance.
+        var selection = await ActionRouter(new ScriptedChatClient(Route("accept_surrender", ["steal_item"])))
+            .SelectAsync("I take the purse out of Skrit's hand and tell him he can live", default);
+
+        Assert.False(selection.FellBack);
+        Assert.Contains(selection.Cards, c => c.RuleId == "encounter.accept-surrender");
+        Assert.Contains(selection.Cards, c => c.RuleId == "inventory.steal");
+    }
+
+    [Fact]
+    public async Task DistinguishedFrom_is_traversed_symmetrically()
+    {
+        // container.take and encounter.accept-surrender both declare they must be told apart from steal_item.
+        // Routing to steal_item — declared by neither ON steal — must still surface both, backward along the
+        // edge, or the declaration would have to be maintained twice.
+        var selection = await ActionRouter(new ScriptedChatClient(Route("steal_item", [])))
+            .SelectAsync("I snatch the vial off Vark's belt", default);
+
+        Assert.False(selection.FellBack);
+        Assert.Contains(selection.Cards, c => c.RuleId == "inventory.steal");
+        Assert.Contains(selection.Cards, c => c.RuleId == "encounter.accept-surrender");
+        Assert.Contains(selection.Cards, c => c.RuleId == "container.take");
+    }
+
+    [Fact]
+    public async Task An_unclear_confidence_falls_back_recorded_as_semantic()
+    {
+        var selection = await ActionRouter(new ScriptedChatClient(Route("attack_character", [], "unclear")))
+            .SelectAsync("I do something the world may not have a word for", default);
+
+        Assert.True(selection.FellBack);
+        Assert.Equal(RuleSelectionFallbackKind.Semantic, selection.FallbackKind);
+        Assert.Equal(Catalog.AllCards.Count, selection.Cards.Count);
+    }
+
+    [Fact]
+    public async Task An_unknown_action_label_falls_back_recorded_as_semantic_and_kept()
+    {
+        var selection = await ActionRouter(new ScriptedChatClient(Route("cast_fireball", [])))
+            .SelectAsync("I cast a fireball", default);
+
+        Assert.True(selection.FellBack);
+        Assert.Equal(RuleSelectionFallbackKind.Semantic, selection.FallbackKind);
+        Assert.Contains("cast_fireball", selection.DroppedLabels);
+        // The label the model chose is kept, so the confusion table can show what it wrongly named.
+        Assert.Equal("cast_fireball", selection.PrimaryActionLabel);
+    }
+
+    [Fact]
+    public async Task An_unparseable_routing_reply_falls_back_recorded_as_mechanical()
+    {
+        var selection = await ActionRouter(new ScriptedChatClient(ScriptedChatClient.Text("probably an attack?")))
+            .SelectAsync("I hit him", default);
+
+        Assert.True(selection.FellBack);
+        Assert.Equal(RuleSelectionFallbackKind.Mechanical, selection.FallbackKind);
+        Assert.Equal(Catalog.AllCards.Count, selection.Cards.Count);
+    }
+
+    [Fact]
+    public async Task A_thrown_routing_call_falls_back_recorded_as_mechanical()
+    {
+        // An empty scripted client throws on the first call, standing for a provider error.
+        var selection = await ActionRouter(new ScriptedChatClient()).SelectAsync("I hit him", default);
+
+        Assert.True(selection.FellBack);
+        Assert.Equal(RuleSelectionFallbackKind.Mechanical, selection.FallbackKind);
+        Assert.Contains("failed", selection.FallbackReason!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task A_huge_ruleOut_does_not_fan_the_selection_out_to_the_whole_book()
+    {
+        // The live failure this guards: a model that rules out a dozen actions used to expand — via every
+        // ruled-out card's related links — to all 25 cards, silently, not flagged as a fallback.
+        string[] manyRuleOut =
+        [
+            "take_cover", "damage_environmental_object", "intimidate_character", "steady_ally", "use_ability",
+            "give_item", "drop_item", "steal_item", "take_item", "open_container", "escape_encounter", "defend"
+        ];
+        var selection = await ActionRouter(new ScriptedChatClient(Route("attack_character", manyRuleOut)))
+            .SelectAsync("I bring my longsword down on the goblin", default);
+
+        Assert.True(selection.Cards.Count < Catalog.AllCards.Count,
+            $"A huge ruleOut fanned out to {selection.Cards.Count} of {Catalog.AllCards.Count} cards.");
+        Assert.Contains(selection.Cards, c => c.RuleId == "combat.attack");
+    }
+
+    [Fact]
+    public async Task Related_links_are_followed_only_from_the_routed_action_not_ruled_out_ones()
+    {
+        // Route to attack, rule out escape. encounter.escape's card is pulled (it was ruled out), but its
+        // related link to encounter.open-exit is NOT — only the routed action's cards follow their links.
+        var selection = await ActionRouter(new ScriptedChatClient(Route("attack_character", ["escape_encounter"])))
+            .SelectAsync("I strike him", default);
+
+        Assert.Contains(selection.Cards, c => c.RuleId == "encounter.escape");
+        Assert.DoesNotContain(selection.Cards, c => c.RuleId == "encounter.open-exit");
+    }
+
+    [Fact]
+    public async Task A_partially_unknown_ruleOut_keeps_the_known_and_records_the_dropped()
+    {
+        var selection = await ActionRouter(new ScriptedChatClient(Route("attack_character", ["cast_fireball", "combat.parry"])))
+            .SelectAsync("I hit him", default);
+
+        Assert.False(selection.FellBack);
+        Assert.Contains(selection.Cards, c => c.RuleId == "combat.attack");
+        Assert.Contains("cast_fireball", selection.DroppedLabels);
+        Assert.Contains("combat.parry", selection.DroppedLabels);
+    }
+
+    [Fact]
+    public async Task A_routing_cache_hit_makes_no_second_call_and_reports_zero()
+    {
+        var client = new ScriptedChatClient(Route("attack_character", []));
+        var router = ActionRouter(client, cache: true);
+
+        var first = await router.SelectAsync("I hit him", default);
+        var second = await router.SelectAsync("I hit him", default);
+
+        Assert.Equal(first.DirectlySelectedRuleIds, second.DirectlySelectedRuleIds);
+        Assert.Equal(1, client.CallCount);
+        Assert.Equal(0, second.ModelCalls);
+        Assert.Null(second.InputTokens);
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // Action-surface startup validation
+    // ------------------------------------------------------------------------------------------
+
+    [Fact]
+    public void Startup_validation_fails_on_an_engine_action_with_no_governing_card()
+    {
+        var withoutDefend = Catalog.AllCards
+            .Where(c => c.ActionName != DungeonMasterTools.DefendName)
+            .ToList();
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ActionSurfaceValidation.Validate(withoutDefend));
+        Assert.Contains(DungeonMasterTools.DefendName, ex.Message, StringComparison.Ordinal);
+        Assert.Contains("no rule card", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Startup_validation_fails_on_a_DistinguishedFrom_naming_a_nonexistent_action()
+    {
+        var withBadEdge = Catalog.AllCards
+            .Select(c => c.RuleId == "combat.attack" ? c with { DistinguishedFrom = ["fly_away"] } : c)
+            .ToList();
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ActionSurfaceValidation.Validate(withBadEdge));
+        Assert.Contains("DistinguishedFrom", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("fly_away", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Startup_validation_passes_for_the_live_catalog()
+    {
+        ActionSurfaceValidation.Validate(Catalog.AllCards);
+        ActionSurfaceValidation.ValidateIndexFits(ActionRoutingSelector.BuildIndex(Catalog), LocalResolverProfile(), 300);
+    }
+
+    [Fact]
+    public void The_action_routing_index_fits_the_window_and_is_a_real_reduction()
+    {
+        var index = ActionRoutingSelector.BuildIndex(Catalog);
+
+        // The real budget: the routing request must fit the resolver's window with room to answer. (The ≤400
+        // aspirational target is exceeded — the composed request measures ~1,000 tokens; see
+        // reports/rulebook-efficiency.md for the honest reporting of that.)
+        ActionSurfaceValidation.ValidateIndexFits(index, LocalResolverProfile(), 300);
+
+        var requestTokens = ContextTruncation.EstimateTokensForCharacters(
+            ActionRoutingSelector.SystemPrompt.Length + index.Length + 200 + 200);
+        var wholeBookTokens = ContextTruncation.EstimateTokensForCharacters(
+            Catalog.AllCards.Sum(c => c.ToResolverBlock().Length));
+
+        // A genuine narrowing: the routing call reads a fraction of what sending the whole book would.
+        Assert.True(requestTokens * 2 < wholeBookTokens,
+            $"The routing request is ~{requestTokens} tokens against a ~{wholeBookTokens}-token whole book — not a real reduction.");
+
+        // A guard against accidental bloat: the composed request measured ~1,000 tokens.
+        Assert.True(requestTokens < 1400, $"The routing request has grown to ~{requestTokens} tokens — investigate.");
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // Corpus coverage check
+    // ------------------------------------------------------------------------------------------
+
+    [Fact]
+    public void Coverage_fails_on_a_card_no_case_requires()
+    {
+        // Drop the allow-list entry that saves the background cover-mechanic card: it is now genuinely uncovered.
+        var noAllowList = new Dictionary<string, string>();
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            RuleSelectionCoverage.CheckCoverage(Catalog, RuleSelectionCorpus.Cases, noAllowList));
+        Assert.Contains("environment.cover", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("no case requires", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Coverage_fails_on_an_engine_action_no_case_routes_to()
+    {
+        // Remove the only case that routes to defend; combat.defend stays covered by defend-vs-take-cover, so
+        // only the ACTION goes uncovered.
+        var withoutDefendCase = RuleSelectionCorpus.Cases.Where(c => c.Id != "defend").ToList();
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            RuleSelectionCoverage.CheckCoverage(Catalog, withoutDefendCase, RuleSelectionCorpus.IntentionallyUncoveredRuleIds));
+        Assert.Contains("defend", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("routes to", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Coverage_passes_for_the_live_corpus_and_catalog()
+    {
+        var report = RuleSelectionCoverage.Check(Catalog);
+
+        Assert.True(report.HashMatches, $"Corpus labelled against {report.LabelledHash}, catalog is {report.CurrentHash}.");
+        Assert.Contains("environment.cover", report.AllowListedCards.Keys);
+    }
 
     // ------------------------------------------------------------------------------------------
     // Embedding retrieval
@@ -344,6 +621,17 @@ public sealed class RuleSelectionTests
     // ------------------------------------------------------------------------------------------
 
     [Fact]
+    public void The_corpus_is_still_labelled_against_the_live_catalog()
+    {
+        // The corpus's required-card and expected-action labels were hand-verified against a specific catalog.
+        // When the catalog drifts, those labels must be re-checked and the pin bumped — the same discipline as
+        // RulebookMaxCards throwing at startup, so a card can never again be added across releases without the
+        // corpus being brought with it. If this fails: re-derive the labels, then set the constant to the value
+        // printed below.
+        Assert.Equal(RuleSelectionCorpus.LabelledAgainstRulebookVersion, Catalog.RulebookVersion);
+    }
+
+    [Fact]
     public void The_corpus_covers_every_family_the_brief_names_and_labels_only_real_rules()
     {
         var categories = RuleSelectionCorpus.Cases.Select(c => c.Category).ToHashSet(StringComparer.Ordinal);
@@ -352,7 +640,7 @@ public sealed class RuleSelectionTests
                  {
                      "attack vs ability", "inspect vs open vs take", "give vs drop vs steal",
                      "exit vs escape", "offer vs accept", "threat vs speech", "steady vs speech",
-                     "compound", "stale ownership", "unsupported"
+                     "compound", "stale ownership", "unsupported", "cover"
                  })
         {
             Assert.Contains(required, categories);

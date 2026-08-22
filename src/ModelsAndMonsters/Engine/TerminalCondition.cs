@@ -27,7 +27,7 @@ public enum EncounterOutcome
     HarnessLimit
 }
 
-/// <summary>
+/// <summary>6
 /// One team's membership at the moment the terminal condition was checked, broken down by disposition.
 /// </summary>
 /// <remarks>

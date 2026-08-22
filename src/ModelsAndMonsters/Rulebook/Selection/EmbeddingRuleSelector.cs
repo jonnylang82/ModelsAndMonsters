@@ -149,7 +149,8 @@ public sealed class EmbeddingRuleSelector : IRuleSelector
         if (!_embedder.IsAvailable)
         {
             return RuleSelectionSupport.Fallback(_repository, Mode,
-                "no embedding provider is configured, so the whole rulebook was sent");
+                "no embedding provider is configured, so the whole rulebook was sent",
+                RuleSelectionFallbackKind.Mechanical);
         }
 
         await EnsureCardVectorsAsync(cancellationToken).ConfigureAwait(false);
@@ -158,7 +159,8 @@ public sealed class EmbeddingRuleSelector : IRuleSelector
         if (query.Count == 0)
         {
             return RuleSelectionSupport.Fallback(_repository, Mode,
-                "the intent produced no vector, so the whole rulebook was sent");
+                "the intent produced no vector, so the whole rulebook was sent",
+                RuleSelectionFallbackKind.Mechanical);
         }
 
         var ranked = _cardVectors!
@@ -171,7 +173,8 @@ public sealed class EmbeddingRuleSelector : IRuleSelector
         {
             return RuleSelectionSupport.Fallback(_repository, Mode,
                 $"the best card scored {(ranked.Count == 0 ? 0 : ranked[0].Score):F3}, below the confidence floor " +
-                $"of {_minimumSimilarity:F2}, so the whole rulebook was sent");
+                $"of {_minimumSimilarity:F2}, so the whole rulebook was sent",
+                RuleSelectionFallbackKind.Semantic);
         }
 
         var top = ranked.Take(_topK).Where(x => x.Score >= _minimumSimilarity).ToList();

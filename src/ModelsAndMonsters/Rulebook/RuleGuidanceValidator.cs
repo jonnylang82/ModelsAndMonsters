@@ -42,12 +42,25 @@ public sealed class RuleGuidanceValidator
             ? null
             : suppliedCards.Select(c => c.RuleId).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        // Cited rules must exist at the exact version the resolver claims to have seen, and must be a card it
-        // was actually shown. Checked FIRST, because the candidate actions are then checked against them.
+        // Cited rules must name a real card the resolver was actually shown. When the supplied set is KNOWN
+        // (the live path always passes it), a cited rule that is in that set was demonstrably put in front of
+        // the resolver, so its current version is authoritative and the version STRING the model wrote is not
+        // trusted character-for-character: a model transcribing an 8-hex-char hash occasionally fat-fingers a
+        // digit (measured live: inventory.steal cited @…45aff99f for the real …45aff90f, container.take
+        // @…4102bc90 for the real …4102bc93), and rejecting a correct action over a one-character version typo
+        // on a rule that WAS supplied cost ~1% of live consultations. The citation is repaired to the card's
+        // real version rather than demanded verbatim. A rule that was NOT supplied is still dropped, so the
+        // "use ONLY these" guarantee is untouched. When the supplied set is UNKNOWN (null — no live caller does
+        // this), we cannot confirm the rule was shown, so the exact-version guard is kept as the conservative
+        // choice. Checked FIRST, because the candidate actions are then checked against these.
         var citations = guidance.CitedRules
-            .Where(c => !string.IsNullOrWhiteSpace(c.RuleId)
-                        && _repository.IsValid(c.RuleId, c.Version)
-                        && (supplied is null || supplied.Contains(c.RuleId)))
+            .Select(c => (Cited: c, Card: _repository.Find(c.RuleId)))
+            .Where(x => x.Card is not null
+                        && (supplied is null
+                            ? string.Equals(x.Card!.Version, x.Cited.Version, StringComparison.Ordinal)
+                            : supplied.Contains(x.Card!.RuleId)))
+            .Select(x => new CitedRule(x.Card!.RuleId, x.Card.Version))
+            .Distinct()
             .ToList();
 
         // The actions those surviving citations actually govern. A background card (morale) governs none, so

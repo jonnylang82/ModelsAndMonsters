@@ -268,6 +268,9 @@ public sealed class SimulationRunner
                 // provider does not error on an over-full request — it returns a truncated reply that reads
                 // downstream as malformed guidance — so the only place to catch it is before the run starts.
                 RulebookRequestBudget.Validate(catalog, _prompts, rulebookResolverProfile, harness.RulebookOutputTokens);
+                // Same discipline for the routing metadata: a card that governs nothing, an action no card
+                // governs, or a boundary naming a non-existent action is a rule that can never be selected.
+                ActionSurfaceValidation.Validate(catalog.AllCards);
 
                 var validator = new RuleGuidanceValidator(catalog);
                 var cache = new RuleGuidanceCache();
@@ -281,6 +284,12 @@ public sealed class SimulationRunner
                 var selector = RuleSelectorFactory.Create(
                     harness, _options.Providers, catalog, rulebookResolverProfile,
                     profile => CreateTracingClient(profile, trace, clients));
+
+                // When routing is the configured mode, its composed index must fit the resolver window too.
+                if (selector is ActionRoutingSelector router)
+                {
+                    ActionSurfaceValidation.ValidateIndexFits(router.Index, rulebookResolverProfile, harness.RulebookOutputTokens);
+                }
 
                 rulebook = new RulebookConsultant(catalog, retriever, resolver, validator, cache, trace,
                     new RulebookConsultationOptions(

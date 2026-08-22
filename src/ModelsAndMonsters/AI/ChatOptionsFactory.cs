@@ -11,7 +11,8 @@ public sealed record ResolvedChatOptions(ChatOptions Options, ImmutableArray<str
 /// <summary>Builds provider-appropriate <see cref="ChatOptions"/> from an agent's profile.</summary>
 public static class ChatOptionsFactory
 {
-    public static ResolvedChatOptions Create(AgentModelProfile profile, IReadOnlyList<AITool>? tools = null)
+    public static ResolvedChatOptions Create(
+        AgentModelProfile profile, IReadOnlyList<AITool>? tools = null, ChatResponseFormat? responseFormat = null)
     {
         ArgumentNullException.ThrowIfNull(profile);
 
@@ -240,6 +241,20 @@ public static class ChatOptionsFactory
         if (forceToolChoice && !forcedChoiceHonoured)
         {
             dropped.Add(nameof(AgentModelProfile.ForceToolChoice));
+        }
+
+        // A schema-constrained reply, where the provider can enforce it at the decoder. Dropped-and-reported
+        // where it cannot (Anthropic); the caller still asks for the shape in the prompt and parses tolerantly.
+        if (responseFormat is not null)
+        {
+            if (capabilities.SupportsStructuredOutputSchema)
+            {
+                options.ResponseFormat = responseFormat;
+            }
+            else
+            {
+                dropped.Add("ResponseFormat");
+            }
         }
 
         if (tools is { Count: > 0 })

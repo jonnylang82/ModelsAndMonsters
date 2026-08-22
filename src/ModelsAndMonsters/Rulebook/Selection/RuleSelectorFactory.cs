@@ -52,6 +52,15 @@ public static class RuleSelectorFactory
                 catalog,
                 harness.RulebookSelectionCacheEnabled),
 
+            // Intent -> engine action -> cards. Like CompactIndex it runs on the resolver's own profile and
+            // makes one stateless, cached selection call; unlike it, the model reads the action surface, not
+            // the rulebook, and an invalid label is unrepresentable where the provider constrains decoding.
+            RuleSelectionMode.ActionRouting => new ActionRoutingSelector(
+                resolverProfile,
+                createClient(resolverProfile),
+                catalog,
+                harness.RulebookSelectionCacheEnabled),
+
             // A blank embedding model falls back to the offline trigram prototype, which is a lexical
             // measure and NOT a semantic one — enough to exercise top-K, declared-link expansion and the
             // confidence fallback, and not enough to draw a conclusion from.

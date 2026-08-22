@@ -271,18 +271,49 @@ public sealed class HarnessOptions
 
     /// <summary>
     /// Whether a configured <c>ContextWindow</c> constrains history summarisation on providers that never
-    /// receive it — OpenAI and Anthropic, whose windows are fixed per model and far larger. Off by default,
-    /// so a hosted run keeps its history verbatim instead of compacting to a local model's ceiling.
+    /// receive it — OpenAI and Anthropic, whose windows are fixed per model and far larger. Off by default.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Turn it on to level the field. Comparing providers is the point of this harness, and a hosted model
     /// that never has to forget anything is not answering the same question as a local one working inside
     /// 8k — so when the comparison is about how well a model plays a long fight, the handicap belongs on
     /// both sides. When the comparison is about the best each provider can do, leave it off. Either way the
     /// choice is now explicit and recorded in <c>run.json</c>, rather than an accident of which defaults a
     /// hosted profile happened to inherit.
+    /// </para>
+    /// <para>
+    /// Leaving this off does NOT, on its own, make a hosted run keep its history verbatim: see
+    /// <see cref="UnboundedHistoryOnHostedModels"/> for the separate flat ceiling that still applies
+    /// underneath it.
+    /// </para>
     /// </remarks>
     public bool EnforceContextWindowOnHostedModels { get; set; }
+
+    /// <summary>
+    /// Whether a hosted agent whose <c>ContextWindow</c> is not binding (<see cref="EnforceContextWindowOnHostedModels"/>
+    /// left off) is exempted from <see cref="HistoryTokenBudget"/> entirely, rather than still being
+    /// summarised once its history crosses that flat number. Off by default, matching existing behaviour.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A real gap, not a hypothetical one: <see cref="AI.ContextTruncation.EffectiveHistoryBudget"/> falls
+    /// back to the flat <see cref="HistoryTokenBudget"/> (9000) whenever no window is known to bind a
+    /// request — which is exactly the case a hosted profile is in when
+    /// <see cref="EnforceContextWindowOnHostedModels"/> is left off. So turning that toggle off stops
+    /// <c>ContextWindow</c> from constraining a hosted run, but a Claude or GPT conversation still gets
+    /// proactively compacted the moment it crosses ~9000 estimated tokens regardless — a local-model-sized
+    /// ceiling reintroduced exactly where the other toggle was meant to remove it.
+    /// </para>
+    /// <para>
+    /// Set this to true to actually let a hosted run keep its full history uncompacted for as long as its own
+    /// (far larger) real window allows, to see what an unbounded-memory hosted run looks like. The trade-off
+    /// is real: nothing then caps prompt size or cost on a long hosted run — the harness is trusting the
+    /// provider's own window entirely, the same way it already does for truncation-detection once
+    /// <see cref="EnforceContextWindowOnHostedModels"/> is off.
+    /// </para>
+    /// </remarks>
+    public bool UnboundedHistoryOnHostedModels { get; set; }
 
     public int MaxRounds { get; set; } = 8;
 
@@ -427,7 +458,8 @@ public sealed class HarnessOptions
 
     /// <summary>
     /// How the cards for a consultation are chosen: <c>WholeRulebook</c> (the default and the shipped
-    /// production path), <c>CompactIndex</c>, <c>Embedding</c> or <c>StructuredRouting</c>.
+    /// production path), <c>CompactIndex</c>, <c>Embedding</c>, <c>StructuredRouting</c> or
+    /// <c>ActionRouting</c>.
     /// </summary>
     /// <remarks>
     /// Everything but the default is EXPERIMENTAL and behind this switch on purpose. Each alternative is

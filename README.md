@@ -448,6 +448,14 @@ Nothing said so: the setting was dropped from the request and forgotten.
   answering the same question as a local one working inside 8k, so when the comparison is about playing a
   long fight well, the handicap belongs on both sides. Leave it off when the question is what each provider
   can do at its best.
+- **Leaving `EnforceContextWindowOnHostedModels` off does not, on its own, stop history summarisation on a
+  hosted run.** `null` `BindingContextWindow` (v0.10) falls back to the flat `Harness:HistoryTokenBudget`
+  (9000) rather than to "no limit" — a hosted conversation still gets proactively compacted once it crosses
+  that number, a local-model-sized ceiling reintroduced on exactly the run meant to be exempt from one.
+  `Harness:UnboundedHistoryOnHostedModels` (default `false`) is the separate toggle that actually removes it:
+  set it `true` on one run to see what a hosted model does with its full history intact for as long as its
+  own (far larger) real window allows — nothing then caps prompt size or cost on that run, so treat it as an
+  experiment to run deliberately, not a setting to leave on by habit.
 
 ### The provider's own tool-call parser can 500, and a retry has to actually re-sample (v0.8)
 
@@ -1689,6 +1697,25 @@ a caller that already knows the action family. Every one of them falls back to t
 when it is not confident, and traces its ids, its reasons, its declared-link expansions and any fallback.
 The measured comparison — including which of them quietly drops the card a decision turns on — is in
 [`reports/rulebook-efficiency.md`](reports/rulebook-efficiency.md).
+
+**v0.10 added a fourth experimental mode, `ActionRouting`, and refreshed the labelled corpus** it is measured
+against (33 → 45 cases, covering the v0.9 cover cards and the v0.10 closure batch; the eval now *fails* if a
+card or engine action is left uncovered). ActionRouting inserts a bounded intermediate — intent → engine
+action → cards — showing the model the engine's ~19-action surface (composed from each card's `ActionName`
+and a new `DistinguishedFrom` list of the actions it must be told apart from) instead of the rulebook, then
+expanding the returned action + ruled-out actions to cards. It carries a semantic/mechanical fallback split
+and records dropped (hallucinated) labels, both also back-filled onto `CompactIndex`. A **fan-out cap** keeps
+its expansion tight (cap the model's `ruleOut`, follow related links only from the routed action, and report a
+still-whole-book expansion as a fallback instead of hiding it). Startup validation (`ActionSurfaceValidation`)
+fails a run if an engine action has no card, a card governs a non-existent action, or a `DistinguishedFrom`
+edge names one. Measured (seeded `qwen3.5:9b`, 45-case corpus), it is the **best real strategy** — 98.9%
+recall, 0 silent omissions, 7.2 avg cards, 42.3% total token reduction — strictly better than `CompactIndex`
+on every axis, beaten on recall only by `WholeRulebook` (which cannot hide a card) and the Oracle. See
+[`reports/rulebook-efficiency.md`](reports/rulebook-efficiency.md) (v0.10 update section) for the full
+comparison, the fan-out cap, and a first live end-to-end pass. A control landed alongside it: putting each
+card's own exclusions into the `CompactIndex` index recovered the `accept-surrender` case on wording alone,
+confirming the distinguishing-card gap is partly index wording, not retrieval method — at 2.4× the
+selection-token cost.
 
 ## Randomness and seeds
 

@@ -112,6 +112,25 @@ public sealed class RulebookGuidanceTests
     }
 
     [Fact]
+    public void A_supplied_rule_cited_at_a_typoed_version_is_accepted_and_the_version_repaired()
+    {
+        // A live failure mode: the resolver names the RIGHT rule but fat-fingers one hex digit of the version
+        // hash (measured: inventory.steal cited @…9f for the real …0f). When the rule WAS supplied it was
+        // demonstrably shown, so its real version is authoritative — the correct action is not thrown away over
+        // a transcription typo, and the stored citation carries the card's real version, not the typo.
+        var steal = Catalog.Find("inventory.steal")!;
+        var typoed = steal.Version[..^1] + (steal.Version[^1] == '0' ? '1' : '0');
+        Assert.NotEqual(steal.Version, typoed);
+        var supplied = new[] { steal, Catalog.RejectCard };
+
+        var validation = Validator.Validate(Supported("steal_item", "inventory.steal", typoed), supplied);
+
+        Assert.True(validation.IsValid);
+        Assert.Equal(["steal_item"], validation.Guidance.CandidateActions);
+        Assert.Equal(steal.Version, Assert.Single(validation.Guidance.CitedRules).Version);
+    }
+
+    [Fact]
     public void Not_knowing_what_was_supplied_falls_back_to_the_catalog_check_alone()
     {
         // Null means "not known", not "nothing was sent" — a caller without that information must not have

@@ -20,6 +20,198 @@ for embeddings), the same configuration the harness runs on.
 
 ---
 
+# v0.10 update — refreshed corpus, an exclusions control, and the ActionRouting selector
+
+**The v0.8 tables in §§1–3 below are superseded.** Both the corpus and the catalog moved, and a new strategy
+(`ActionRouting`) and a control (exclusions in the compact index) were added. This section replaces the
+numbers; the v0.8 prose is kept for its reasoning. Nothing shipped changed: `RulebookSelectionMode` still
+defaults to `WholeRulebook`. The definitive run is seeded, so it reproduces exactly:
+
+```bash
+# from src/ModelsAndMonsters/bin/Release/net10.0 (which holds scenario.json + appsettings.json)
+ModelsAndMonsters__Agents__Default__Provider=Ollama ModelsAndMonsters__Agents__Default__ModelId=qwen3.5:9b \
+ModelsAndMonsters__Harness__Seed=20260822 \
+  dotnet ModelsAndMonsters.dll --rulebook-eval <output-path>
+```
+
+## What moved before any new strategy existed
+
+| | v0.8 (published) | v0.10 (now) |
+| --- | --- | --- |
+| Catalog | 21 cards, `rulebook-24bb318aa8` | **25 cards**, `rulebook-a77b3336d2` |
+| Whole-rulebook resolver input | 5,260 tokens | **6,386 tokens** |
+| Corpus | 33 cases, 10 families | **45 cases, 11 families** |
+| Clarity | 15 clear / 13 ambiguous / 5 unsupported | **18 / 19 / 8** (40% / 42% / 18%) |
+| One case moves recall by | 3.0 points | **2.2 points** (1/45) |
+
+The v0.9 cover cards (take-cover, leave-cover, damage-object, and the cover reference) and the v0.10 closure
+batch (weapon-only surrender, weapon trophies, forcing, demands) were entirely uncovered by the labelled
+corpus — a gap that had, in the words of the spec, *biased every strategy comparison in the same direction*,
+because a selector was never penalised for dropping a card no case required. Twelve cases were added — ten in
+the corpus refresh (five of them the `cover` family, including the sharpest boundary in the project,
+`combat.defend` vs `environment.take-cover`), and two more harvested from the live runs below
+(`use-item-vs-steady-purpose`, `throw-item-to-ally`) — labelled by hand from the rules with intents harvested
+verbatim from run traces. `--rulebook-eval` now **fails** if a card or an engine action is left uncovered again.
+
+The on-demand projection in §4 re-derives with the new distribution: clear share 45% → **40%**, Oracle
+1,913 → **2,132** tokens, so the projected on-demand cost is `0.60 × 2,132 ≈ 1,280` tokens (an ~80% cut on
+the fixed baseline), not the `0.55 × 1,913 ≈ 1,050` first published. Still a projection from a labelled
+proxy, not a measurement.
+
+## The refreshed comparison (seeded `qwen3.5:9b`)
+
+| Strategy | Required-card recall | Cases complete | Wrongly unsupported | Avg cards | Resolver tok | Selection tok | Total reduction |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **WholeRulebook** (shipped) | 100.0% | 45/45 | 0 | 25.0 | 6,386 | 0 | — |
+| *Oracle (ceiling)* | 100.0% | 45/45 | 0 | 4.8 | 2,132 | 0 | 66.6% |
+| Embedding — `nomic-embed-text`, top-3 | 87.8% | 36/45 | 5 | 7.7 | 2,761 | 0 | 56.8% |
+| **CompactIndex** (+ exclusions) | 96.7% | 42/45 | 1 | 7.5 | 2,802 | 2,372 | 19.0% |
+| **ActionRouting** (capped) | **98.9%** | **44/45** | **0** | **7.2** | 2,713 | 975 | **42.3%** |
+
+ActionRouting is now strictly better than CompactIndex on every column — higher recall, more cases complete,
+no silent omission, fewer cards, and a selection call a third the size — for more than double the total token
+reduction. Only WholeRulebook (which cannot hide a card) and the Oracle (the answer key) recall more. Two
+changes since the first ActionRouting measurement got it there: a **fan-out cap** (avg cards 11.2 → 7.2, total
+reduction 27.7% → 42.3%; see below) and a single declared boundary (`ability.guard-ally` ⟷ `attack_character`)
+that closed the last silent omission (recall 96.5% → 98.9%, wrongly-unsupported 1 → 0). Its one remaining miss
+is `plain-coordination` — an intent that is *correctly* unsupported, where the steadying card it would be
+refused under was not surfaced, so the refusal is less grounded than the baseline's, not wrong.
+
+## Task 1 — the control: exclusions in the compact index
+
+Before attributing anything to the routing indirection, the control asks whether simply putting each card's
+own exclusions in front of the model — the boundary, not just the purpose — recovers the lost cases. It does,
+partly. Measured on the same corpus (an earlier unseeded run isolates the exclusions delta):
+
+| CompactIndex | Recall | Complete | Wrongly unsupported | Selection tok | Misses |
+| --- | --- | --- | --- | --- | --- |
+| summaries only (v0.8 wording) | 95.3% | 40/43 | 1 | 1,039 | accept-surrender, plain-coordination, unsupported-force-container |
+| **+ exclusions** | 97.7% | 41/43 | 0 | 2,371 | plain-coordination, unsupported-force-container |
+
+**Exclusions recovered `accept-surrender` — the v0.7 case that cost a release — and eliminated the
+wrongly-unsupported decision.** That is a real finding in its own right: the *distinguishing-card* gap this
+whole investigation is about is, in part, a matter of **index wording, not retrieval method**. But it did not
+reach full recall (`plain-coordination`, `unsupported-force-container` still lost), and it is expensive:
+dumping every card's verbose exclusions **2.3×'d the selection call** (1,039 → 2,371 tokens) and collapsed the
+total saving from ~43% to 19.6%. The change is kept for both model-read selectors, so the only variable
+between CompactIndex and ActionRouting is the routing indirection.
+
+## ActionRouting — intent → engine action → cards
+
+The new selector shows the model the engine's **action surface** (one line per action: what it is, and what
+it must be told apart from, composed from the `DistinguishedFrom` edges declared on the cards), and returns
+one action label plus the actions it rules out. Code expands that to cards. It reads the actions, never the
+rulebook, and the index is bounded by the **~19 engine actions**, not by the card count.
+
+Against the success criteria the spec set (the final figures, after the fan-out cap and the one boundary edge
+described below):
+
+| | Target | ActionRouting | Read |
+| --- | --- | --- | --- |
+| Required-card recall | ≥ CompactIndex (96.7%) | **98.9%** | Exceeds — 44/45 complete vs CompactIndex's 42/45. Only `plain-coordination` is missed, and it is *correctly* unsupported. |
+| Wrongly unsupported | 0 | **0** | Meets. The one silent omission (`ability-guard`) was closed by a declared boundary. |
+| Avg cards after expansion | 5–7 (Oracle 4.8) | **7.2** | In the band — a card below CompactIndex (7.5), a few above the Oracle ceiling. |
+| Avg selection tokens | ≤ 400 | **975** | Above target, but **2.4× cheaper than CompactIndex+exclusions** (2,372) — the per-action summaries dominate (`use_ability` alone carries four ability cards), so ~400 is unreachable without hand-authoring terser glosses, which the no-language rule forbids. |
+| Action-label accuracy | high, named | **77%** (34/44) | See confusions below. |
+| Semantic fallback rate | low, named | **0** | The model committed on every case; it never said unclear. |
+
+**Net:** ActionRouting is now the **best real strategy on this corpus** — strictly better than CompactIndex on
+recall, cases-complete, silent omissions, avg cards, selection tokens *and* total reduction (42.3% vs 19.0%).
+Only WholeRulebook (which cannot hide a card) and the Oracle (the answer key) recall more. The scale argument
+(Claim 2) stands on top of that: its index does not grow a line per card, so the gap widens as the book grows.
+
+### The fan-out cap (what got it from 11.2 cards to 7.2)
+
+The first measurement had ActionRouting at **11.2 cards / 27.7% reduction** — above the 5–7 band. A live run
+made the cause concrete: on ~12% of consultations the model returned a *huge* `ruleOut` list (20+ actions),
+and the symmetric-boundary + related-link closure fanned it out to the **whole 25-card book** — no saving, and
+*not* flagged as a fallback. Three levers fixed it:
+
+1. **Cap `ruleOut`** to the first few (3). A model ruling out a dozen actions is hedging, not narrowing; the
+   declared `DistinguishedFrom` edges carry the boundaries that matter, so trimming the model's dynamic list
+   loses little.
+2. **Follow related-links only from the routed action's cards**, not every ruled-out or distinguished one — so
+   a single also-ran can no longer drag its own related closure in behind it.
+3. **Backstop:** if the expansion still reaches most of the book, report it as a *semantic fallback* rather
+   than let a de-facto whole-rulebook send read as a confident narrowing.
+
+Result: 11.2 → **7.2** cards, 27.7% → **42.3%** reduction, recall unchanged, and the silent whole-book
+blowups gone.
+
+### The one boundary edge (what closed the last silent omission)
+
+`ability-guard` ("I step in front of Elara and take whatever comes at her") routed to `attack_character`, and
+with no `attack_character` ⟷ `use_ability` boundary the guard-ally card was never surfaced — a *wrongly
+unsupported* decision, the one failure mode that matters. The principled fix (spec §3.6: a `DistinguishedFrom`
+edge, never a synonym) was to declare `ability.guard-ally` distinguished from `attack_character`. Routing to
+attack now surfaces the guard card, so recall went 96.5% → **98.9%** and wrongly-unsupported 1 → **0**.
+
+Note what the edge does and does not do: the model *still* labels the intent `attack_character` (the confusion
+below persists), but the expansion now carries the right card anyway. `DistinguishedFrom` is an expansion
+safety net, not a routing corrector — which is exactly its designed role, and why recall can exceed
+action-label accuracy.
+
+**Action-label confusions (each points at a boundary to write):**
+
+| Expected → named | Cases |
+| --- | --- |
+| `use_ability` → `attack_character` (×2) | attack-vs-dirty-strike, ability-guard (recall now held via the edge) |
+| `open_container` → `take_item` | open-and-take-compound |
+| `give_item` → `damage_environmental_object` | throw-item-to-ally |
+| `attack_character` → `steal_item` | steal-vs-attack-compound |
+| `accept_surrender` → `take_item` | accept-surrender (recall held via ruleOut) |
+| `offer_surrender` → `intimidate_character` | demand-surrender |
+| `steady_ally` → `inspect_object` | plain-coordination (the one unrecovered miss) |
+| `offer_surrender` → `give_item` | stale-ownership-offer |
+| `damage_environmental_object` → `open_container` | unsupported-force-container (recall held) |
+
+## Live end-to-end runs — where selection sprang holes (and a caveat about the method)
+
+Four live runs, same master seed and model (`qwen3.5:9b`), one per `RulebookSelectionMode`
+(`20260822-092059Z` WholeRulebook, `-093625Z` CompactIndex, `-094613Z` ActionRouting, `-095719Z` Embedding).
+A first pass at recommendation #3 (below) — a live resolver, not the modelled one.
+
+**Method caveat, and it is a real one.** The four runs are NOT one encounter adjudicated four ways. They
+diverge at turn 1 (WholeRulebook's Rowan opens "…forcing him to defend himself"; the other three open with an
+identical "…aiming to wound him") and share no intent thereafter. Same seed, but temperature-0.8 character
+sampling is not bit-reproducible across separate Ollama sessions, and — more fundamentally — each mode feeds
+the resolver a different card set, which changes adjudications, which changes the next character's context and
+so its intent. The seed does not hold the *encounter* fixed; it produces four different encounters. Holes
+below were therefore found *within* each run, not by cross-run diffing. No mode ever hit its fallback in these
+runs — every hole is a confident wrong selection, not the safety net firing.
+
+- **CompactIndex — one dropped-card refusal.** r2t7 Vark *"I bend and pick up the Iron Mace from the floor"*
+  → Unsupported: it **dropped `container.take`**, so a plain floor pickup had no card to route to. One turn
+  later Skrit's *"snatch the iron mace from the floor"* → `take_item` **Supported** — same object, same act,
+  because there the take card survived selection. (Its other two refusals were correct — throwing to a person.)
+- **Embedding — one dropped-card refusal, hit twice.** r6t21 Rowan *"shove the flask of strong wine down my
+  throat, hoping the burn will steady my hands"* → Unsupported, twice: it **dropped `inventory.use`**, matching
+  the *purpose* ("steady my hands") over the *deed* ("drink the flask"). The exact failure the offline report
+  predicted for embeddings. Both new corpus cases were harvested here.
+- **ActionRouting — no dropped-card refusals; the opposite failure.** 0 Unsupported, because it over-supplied:
+  12.7 cards, and 4 of 33 consultations silently sent the whole book via a giant `ruleOut`. This is the leak
+  the fan-out cap (above) now closes.
+- **WholeRulebook — no selection holes**, by construction; its two refusals were Skrit striking Rowan's corpse.
+
+**One resolver (not selection) issue, in passing.** ActionRouting r7t25: Rowan looting his *dead* ally's body
+routed correctly to `take_item` and supplied both `container.take` and `inventory.steal`, yet the resolver
+cited `steal_item` — the dead-vs-living error v0.9 #3 was meant to close. Selection did its job; the resolver
+mis-chose. Worth a separate look.
+
+The live holes match the offline confusion table exactly — Embedding drops the governing card, CompactIndex
+intermittently drops the take card on terse phrasings, ActionRouting never omits but (pre-cap) failed to
+narrow — corroborating the modelled eval.
+
+## Caveat carried, not designed around
+
+45 cases, so one case is 2.2 points, and the modelled resolver makes every agreement figure an upper bound.
+These figures **rank** the strategies; they do not pin any of them. The four live runs above are a first,
+imperfect pass at recommendation #3 (they diverge, so they compare modes only loosely); a proper version needs
+a **fixed intent script** — replay one run's intents through every mode with the resolver at temperature 0 —
+so the encounter is genuinely held constant. That harness is not yet built.
+
+---
+
 ## 1. The baseline
 
 | | |

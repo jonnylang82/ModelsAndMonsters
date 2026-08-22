@@ -69,9 +69,11 @@ public abstract class ModelAgent
         string purpose,
         IReadOnlyList<AITool>? tools,
         CancellationToken cancellationToken,
-        int? maxOutputTokens = null)
+        int? maxOutputTokens = null,
+        ChatResponseFormat? responseFormat = null)
     {
-        var response = await SendWithTransientRetryAsync(conversation, purpose, tools, maxOutputTokens, cancellationToken)
+        var response = await SendWithTransientRetryAsync(
+                conversation, purpose, tools, maxOutputTokens, responseFormat, cancellationToken)
             .ConfigureAwait(false);
 
         foreach (var message in response.Messages)
@@ -130,6 +132,7 @@ public abstract class ModelAgent
         string purpose,
         IReadOnlyList<AITool>? tools,
         int? maxOutputTokens,
+        ChatResponseFormat? responseFormat,
         CancellationToken cancellationToken)
     {
         for (var attempt = 1; ; attempt++)
@@ -144,7 +147,7 @@ public abstract class ModelAgent
 
             try
             {
-                var resolved = ChatOptionsFactory.Create(profile, tools);
+                var resolved = ChatOptionsFactory.Create(profile, tools, responseFormat);
                 using (_client.BeginCall(purpose, resolved.UnsupportedOptionsDropped, attempt))
                 {
                     var response = await _client

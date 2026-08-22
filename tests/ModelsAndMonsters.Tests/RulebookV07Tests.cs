@@ -544,10 +544,16 @@ public sealed class RulebookV07Tests
     }
 
     [Fact]
-    public async Task Guidance_citing_an_ability_rule_at_a_stale_version_is_refused_as_malformed()
+    public async Task Guidance_citing_a_supplied_rule_at_a_wrong_version_is_repaired_rather_than_refused()
     {
-        // The version is a content hash, so an edited card invalidates guidance that cited the old text. A
-        // confidently wrong resolver cannot smuggle an action past the validator on a stale citation.
+        // The version is a content hash the resolver copies back, and a small model occasionally mis-copies it
+        // (measured live: ~1% of consultations lost a CORRECT action to a one-character version typo). Since the
+        // resolver is only ever shown the current cards, a wrong version on a rule that WAS supplied is a
+        // transcription error, not a stale citation — so the citation is repaired to the card's real version
+        // rather than the right action being thrown away. Staleness after a genuine card edit is still caught,
+        // but by the guidance CACHE key (which folds in the version), not by refusing live guidance. The
+        // action-governance and was-supplied checks — not the version string — are what stop a bad action
+        // getting through. (v0.10)
         var (consultant, _) = Build(ScriptedChatClient.Text("""
             {
               "supported": true,
@@ -558,8 +564,10 @@ public sealed class RulebookV07Tests
 
         var result = await consultant.ConsultAsync("hero-rowan", "Rowan", "I shield Elara.", CancellationToken.None);
 
-        Assert.Equal(RulebookOutcome.MalformedGuidance, result.Outcome);
-        Assert.Equal([DungeonMasterTools.RejectActionName], result.CandidateTools.Select(t => t.Name));
+        Assert.Equal(RulebookOutcome.Supported, result.Outcome);
+        Assert.Contains(DungeonMasterTools.UseAbilityName, result.CandidateTools.Select(t => t.Name));
+        // The stored citation carries the card's real version, not the mis-copied one.
+        Assert.Equal(Catalog.Find("ability.guard-ally")!.Version, Assert.Single(result.Guidance!.CitedRules).Version);
     }
 
     [Fact]

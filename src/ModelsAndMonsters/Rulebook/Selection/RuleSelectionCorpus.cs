@@ -39,6 +39,20 @@ public sealed record RuleSelectionCase
     /// <summary>The engine action the resolver should name, or null when the intent is genuinely unsupported.</summary>
     public string? ExpectedAction { get; init; }
 
+    /// <summary>
+    /// The engine action an action-ROUTER should name to surface the deciding card — which differs from
+    /// <see cref="ExpectedAction"/> only for unsupported intents. A supported intent's routing target is the
+    /// action it binds to; an unsupported intent has no outcome action, yet the router should still name the
+    /// family whose card is needed to refuse it FOR THE RIGHT REASON (a demand routes to offer_surrender so
+    /// the offer card can rule it out). Null means the router should genuinely find no action and say so.
+    /// Explicitly null on <see cref="ExpectedAction"/>-bearing cases, where <see cref="RoutingTarget"/> falls
+    /// back to it.
+    /// </summary>
+    public string? ExpectedRoutingAction { get; init; }
+
+    /// <summary>The action a router is expected to name: its own override, or the expected action for a supported case.</summary>
+    public string? RoutingTarget => ExpectedRoutingAction ?? ExpectedAction;
+
     public required IntentClarity Clarity { get; init; }
 
     /// <summary>Why this case is here and what it is meant to catch.</summary>
@@ -118,6 +132,19 @@ public static class RuleSelectionCorpus
             ExpectedAction = "use_item",
             Clarity = IntentClarity.Ambiguous,
             Note = "The contrast case for the prayer: same outcome hoped for, entirely different rule."
+        },
+        new()
+        {
+            // Added post-v0.10 from a live ActionRouting/Embedding run: Embedding matched the PURPOSE language
+            // ("steady my hands", "quiet my fear") to the steadying and ability cards and dropped inventory.use,
+            // refusing a plain drink twice. Verbatim intent from run 20260822-095719Z-ca45da19.
+            Id = "use-item-vs-steady-purpose",
+            Category = "attack vs ability",
+            Intent = "I shove the flask of strong wine down my throat, hoping the burn will steady my hands and quiet my fear.",
+            RequiredRuleIds = ["inventory.use"],
+            ExpectedAction = "use_item",
+            Clarity = IntentClarity.Ambiguous,
+            Note = "The deed is using an item on oneself (use_item); the stated PURPOSE — steadying nerves, quieting fear — points hard at the steadying and ability cards, which is what a similarity retrieval matched live while dropping the item card. Whether the wine has a supported effect is the engine's precondition to judge, exactly as stale-ownership leaves live state to the engine."
         },
         new()
         {
@@ -215,6 +242,19 @@ public static class RuleSelectionCorpus
         },
         new()
         {
+            // Throwing/sliding an item to a specific person to catch is a recurring live dead-end (gap survey
+            // A4); it is not a supported action. Verbatim from run 20260822-093625Z-e0167129.
+            Id = "throw-item-to-ally",
+            Category = "give vs drop vs steal",
+            Intent = "I kick the Iron Mace toward Skrit, sending it sliding across the floor to him.",
+            RequiredRuleIds = ["action.reject", "inventory.give"],
+            ExpectedAction = null,
+            ExpectedRoutingAction = "give_item",
+            Clarity = IntentClarity.Unsupported,
+            Note = "Reads like a give at a distance, but throwing an item to somebody to catch is explicitly unsupported (the give card's exclusion). The give card is needed to refuse it for the right reason rather than mistaking it for a drop."
+        },
+        new()
+        {
             Id = "steal-vs-attack-compound",
             Category = "compound",
             Intent = "I slash at his arm to make him drop the purse, then take it.",
@@ -284,6 +324,7 @@ public static class RuleSelectionCorpus
             Intent = "I tell Vark to throw down his spear and I will let him live.",
             RequiredRuleIds = ["encounter.offer-surrender"],
             ExpectedAction = null,
+            ExpectedRoutingAction = "offer_surrender",
             Clarity = IntentClarity.Unsupported,
             Note = "A demand, not an offer. The offer card is needed precisely so it can be REFUSED for the right reason."
         },
@@ -326,6 +367,7 @@ public static class RuleSelectionCorpus
             Intent = "I laugh at the goblin and tell Rowan these two are not worth the steel.",
             RequiredRuleIds = ["action.reject", "combat.intimidate"],
             ExpectedAction = null,
+            ExpectedRoutingAction = "intimidate_character",
             Clarity = IntentClarity.Unsupported,
             Note = "Words aimed at nobody in particular are speech and no action at all."
         },
@@ -358,6 +400,7 @@ public static class RuleSelectionCorpus
             Intent = "I tell Elara the chest is open and there is a vial inside.",
             RequiredRuleIds = ["action.reject", "combat.steady-ally"],
             ExpectedAction = null,
+            ExpectedRoutingAction = "steady_ally",
             Clarity = IntentClarity.Unsupported,
             Note = "Passing information is ordinary speech and no action. The steadying card is needed to rule it out."
         },
@@ -402,6 +445,7 @@ public static class RuleSelectionCorpus
             Intent = "I twist my blade against his and send the spear spinning out of his hands.",
             RequiredRuleIds = ["action.reject", "combat.attack", "ability.dirty-strike"],
             ExpectedAction = null,
+            ExpectedRoutingAction = "attack_character",
             Clarity = IntentClarity.Unsupported,
             Note = "Disarming is excluded by both the attack card and the trick card, and it takes both to know it."
         },
@@ -414,10 +458,160 @@ public static class RuleSelectionCorpus
             ExpectedAction = "take_item",
             Clarity = IntentClarity.Ambiguous,
             Note = "Terse to the point of vagueness. The floor is taken from like any container; which thing is the engine's problem."
+        },
+
+        // ---- Cover: brace-behind-an-object versus one's own guard, striking cover, leaving it ------
+        // Added at the v0.10 corpus refresh. The v0.9 cover cards (take/leave cover, damage-object) shipped
+        // uncovered, and combat.defend vs environment.take-cover is the sharpest boundary in the project
+        // (v0_9_issues #1, fixed by card authoring). Intents are verbatim from live runs where noted.
+        new()
+        {
+            Id = "defend-vs-take-cover",
+            Category = "cover",
+            // Verbatim: Skrit, run 20260821-110442Z-1667ed2a — routed to take_cover live.
+            Intent = "I brace myself behind the overturned workbench, keeping my guard up so the next blow that comes lands with less weight.",
+            RequiredRuleIds = ["environment.take-cover", "combat.defend"],
+            ExpectedAction = "take_cover",
+            Clarity = IntentClarity.Ambiguous,
+            Note = "THE case. Pure defend vocabulary — bracing, keeping the guard up — but it names a real object to get behind, and naming the object is what decides it. Both cards are needed: the defend card is the one it must be told apart from."
+        },
+        new()
+        {
+            Id = "take-cover-plain",
+            Category = "cover",
+            // Verbatim: Skrit, run 20260821-110442Z-1667ed2a.
+            Intent = "I duck behind the overturned mill workbench to take cover.",
+            RequiredRuleIds = ["environment.take-cover"],
+            ExpectedAction = "take_cover",
+            Clarity = IntentClarity.Clear,
+            Note = "The unambiguous baseline the defend-vs-cover contrast is measured against: no defensive-posture word at all, just getting behind the object."
+        },
+        new()
+        {
+            Id = "leave-cover-plain",
+            Category = "cover",
+            // Phrasing follows the many live "step out from behind the workbench" intents; leaving is the whole act.
+            Intent = "I step out from behind the overturned workbench, keeping my mace ready, and do nothing else.",
+            RequiredRuleIds = ["environment.leave-cover"],
+            ExpectedAction = "leave_cover",
+            Clarity = IntentClarity.Clear,
+            Note = "The standalone leave — the whole of the turn, nothing else attempted — which is the only shape leave_cover is for. The baseline the exposing-action contrast is measured against."
+        },
+        new()
+        {
+            Id = "damage-object-vs-attack",
+            Category = "cover",
+            // Verbatim: Vark, run 20260821-103453Z-24103320 — routed to damage_environmental_object, workbench destroyed.
+            Intent = "I step forward and bring my sabre down hard on the workbench, battering it to try to knock Elara out of her cover.",
+            RequiredRuleIds = ["environment.damage-object", "combat.attack"],
+            ExpectedAction = "damage_environmental_object",
+            Clarity = IntentClarity.Ambiguous,
+            Note = "A weapon brought down hard reads like an attack; the blow is deliberately AT the object, not the person sheltering behind it. The attack card is the one it must be told apart from — ruling out a strike at a person is the decision."
+        },
+        new()
+        {
+            Id = "leave-cover-vs-exposing-action",
+            Category = "cover",
+            // Verbatim: run 20260821-173106Z-222b9865 — an attack that vacates cover as a side effect.
+            Intent = "I leave the cover of the workbench and bring my mace down on Vark's shoulder.",
+            RequiredRuleIds = ["combat.attack", "environment.leave-cover"],
+            ExpectedAction = "attack_character",
+            Clarity = IntentClarity.Ambiguous,
+            Note = "Says 'leave the cover' outright, which tempts a standalone leave_cover — but the primary act is the blow, and an exposing action vacates cover on its own. The leave-cover card is needed (though the deed is an attack) to know not to spend the turn on a bare leave."
+        },
+
+        // ---- v0.10 closure batch: weapon-only surrender, weapon trophies, forcing, demands ---------
+        new()
+        {
+            Id = "weapon-only-surrender",
+            Category = "offer vs accept",
+            // Verbatim: Rowan, run 20260821-195550Z-54bb47ea — OfferSurrender(items=[], forfeitWeapon=True), accepted.
+            Intent = "I hold my longsword out by the flat toward Vark, offering to lay it down if he and Skrit let me walk out of here alive.",
+            RequiredRuleIds = ["encounter.offer-surrender"],
+            ExpectedAction = "offer_surrender",
+            Clarity = IntentClarity.Ambiguous,
+            Note = "Valid since v0.10: a weapon-only concession is a complete offer, whatever else the offerer carries. Laying a weapon down reads like a drop or a bare plea; it is a surrender term because it is offered to buy the offerer's own life."
+        },
+        new()
+        {
+            Id = "trophy-weapon-take",
+            Category = "inspect vs open vs take",
+            // Verbatim shape from run 20260820-223901Z-847c633e ('snatch the Longsword from the floor', accepted).
+            Intent = "I bend forward and snatch the notched sabre from the floor.",
+            RequiredRuleIds = ["container.take"],
+            ExpectedAction = "take_item",
+            Clarity = IntentClarity.Clear,
+            Note = "A forfeited weapon on the floor is an ordinary takeable item (v0.10). 'Snatch' is theft vocabulary, but naming the floor makes it a take; whether the sabre is a trophy or scenery is live state the engine settles."
+        },
+        new()
+        {
+            Id = "unsupported-equip",
+            Category = "unsupported",
+            // Authored: no clean live phrasing exists — real attempts were compound clauses the engine dropped
+            // (e.g. run 20260821-120828Z-6be85760). Grounded in build_v0_10: a trophy is carried but never equipped or wielded.
+            Intent = "I take up the notched sabre I looted and fight on with it in place of my own blade.",
+            RequiredRuleIds = ["action.reject", "combat.attack"],
+            ExpectedAction = null,
+            ExpectedRoutingAction = "attack_character",
+            Clarity = IntentClarity.Unsupported,
+            Note = "A looted weapon can be carried but never equipped or attacked with (v0.10), and there is no swap-weapon action. The attack card is needed to know a blow is struck with the weapon already in hand — a trophy is not it. NOTE (labelling judgment): unlike stale-ownership, which the resolver routes and the engine refuses on state, this is labelled unsupported at the resolver level per the spec's explicit intent; flagged for review."
+        },
+        new()
+        {
+            Id = "unsupported-force-container",
+            Category = "unsupported",
+            // Verbatim shape from runs 20260819-113024Z-249115b6 / 20260819-075929Z-db054513 (pry/force a case → DmUnsupported).
+            Intent = "I wedge my sabre under the lid of the medicine case and force it open to get at what's inside.",
+            RequiredRuleIds = ["action.reject", "environment.damage-object"],
+            ExpectedAction = null,
+            ExpectedRoutingAction = "damage_environmental_object",
+            Clarity = IntentClarity.Unsupported,
+            Note = "Forcing a container is a deliberate exclusion: an unlocked case opens for free, and 'pry'/'force'/'smash' is not parsed as opening. The damage-object card is needed to rule the container OUT as a damage target — it is for cover, never an ordinary container."
+        },
+        new()
+        {
+            Id = "demand-vs-offer",
+            Category = "offer vs accept",
+            // Threat-demand, adapted from live 'throw down ... or I kill you' / 'or I'll cut you open' patterns
+            // (runs 20260820-080524Z-6da9b8d3, 20260819-232940Z-564aab54).
+            Intent = "I level my sabre at Vark and tell him to throw down his own blade or die where he stands.",
+            RequiredRuleIds = ["combat.intimidate", "combat.morale", "encounter.offer-surrender"],
+            ExpectedAction = "intimidate_character",
+            Clarity = IntentClarity.Ambiguous,
+            Note = "A threat that invites the enemy to yield is intimidation, not the speaker's own surrender: a demand binds nobody. The offer card is needed to rule out the v0.7 defect where 'throw down your blade' was recorded as the demander forfeiting their OWN weapon."
         }
     ];
 
     /// <summary>Every rule id the corpus requires at least once, so a strategy's coverage can be checked against it.</summary>
     public static IReadOnlyList<string> AllRequiredRuleIds { get; } =
         [.. Cases.SelectMany(c => c.RequiredRuleIds).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.Ordinal)];
+
+    /// <summary>
+    /// The rulebook content hash the corpus was last hand-labelled against. Surfaced in every measurement so a
+    /// published figure says which catalog it describes, and pinned by a test that fails when the live catalog
+    /// drifts from it — so a card can never again be added across releases without the labels being re-checked
+    /// and this constant bumped. It was <c>rulebook-24bb318aa8</c> (21 cards) when the corpus was written; the
+    /// v0.9/v0.10 cards and this refresh moved it here (25 cards; the DistinguishedFrom routing metadata added
+    /// in the same refresh is part of the hash but changes no required-card or expected-action label).
+    /// </summary>
+    public const string LabelledAgainstRulebookVersion = "rulebook-a77b3336d2";
+
+    /// <summary>
+    /// Cards that no case requires, on purpose, each with the reason it genuinely cannot be exercised as a
+    /// required card. The coverage check in <c>--rulebook-eval</c> fails on any OTHER uncovered card, so this
+    /// list is an explicit, reasoned exception rather than a silent gap.
+    /// </summary>
+    /// <remarks>
+    /// A background mechanic that describes how something works, rather than an act, is only ever pulled in
+    /// through another card's declared links — never as the card a decision turns on — so it has nothing to be
+    /// a required card of. <c>combat.morale</c> is NOT here: it is co-required by every intimidation and
+    /// steadying case, because those decisions genuinely turn on what fear does and does not compel.
+    /// </remarks>
+    public static IReadOnlyDictionary<string, string> IntentionallyUncoveredRuleIds { get; } =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["environment.cover"] =
+                "A background mechanic (how cover capacity, interception and destruction work), not an action. " +
+                "It is reached only through the cover actions' declared links; no decision turns on it being the required card.",
+        };
 }

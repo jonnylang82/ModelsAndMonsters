@@ -48,12 +48,42 @@ public sealed record StrategyMeasurement
 
     public required int Fallbacks { get; init; }
 
+    /// <summary>Fallbacks where the model understood the format but the answer could not narrow safely (unclear, or an action outside the set). The boundaries.</summary>
+    public required int SemanticFallbacks { get; init; }
+
+    /// <summary>Fallbacks where the reply could not be parsed or the call threw. The machinery.</summary>
+    public required int MechanicalFallbacks { get; init; }
+
     /// <summary>The ids of the cases where a required card was missing, so a failure can be looked at rather than averaged away.</summary>
     public required IReadOnlyList<string> CasesMissingRequiredCards { get; init; }
+
+    /// <summary>Per-case outcome, so the report can build the action-label confusion table and the named-hard-case grid.</summary>
+    public required IReadOnlyList<CaseOutcome> CaseOutcomes { get; init; }
 
     public double DecisionAgreementRate => Cases == 0 ? 0 : (double)DecisionAgreements / Cases;
 
     public double FullRecallRate => Cases == 0 ? 0 : (double)CasesWithEveryRequiredCard / Cases;
+}
+
+/// <summary>What one strategy did on one labelled case — enough to read a confusion table and a hard-case grid.</summary>
+public sealed record CaseOutcome
+{
+    public required string Id { get; init; }
+
+    public required string Category { get; init; }
+
+    /// <summary>The action a router was expected to name (the case's <see cref="RuleSelectionCase.RoutingTarget"/>).</summary>
+    public required string? ExpectedRoutingAction { get; init; }
+
+    /// <summary>The action the strategy actually named, or null for a strategy that does not route by action.</summary>
+    public required string? ActualActionLabel { get; init; }
+
+    /// <summary>True when a required card was not supplied for this case.</summary>
+    public required bool MissingRequired { get; init; }
+
+    public required bool FellBack { get; init; }
+
+    public required RuleSelectionFallbackKind? FallbackKind { get; init; }
 }
 
 /// <summary>
@@ -106,7 +136,9 @@ public sealed class RuleSelectionEvaluator
 
         double recallSum = 0, cardsSum = 0, resolverTokensSum = 0, selectionTokensSum = 0, latencySum = 0;
         int fullRecall = 0, agreements = 0, wronglySupported = 0, wronglyUnsupported = 0, fallbacks = 0, calls = 0;
+        int semanticFallbacks = 0, mechanicalFallbacks = 0;
         var missing = new List<string>();
+        var outcomes = new List<CaseOutcome>();
 
         foreach (var labelled in cases)
         {
@@ -114,8 +146,9 @@ public sealed class RuleSelectionEvaluator
             var supplied = selection.Cards.Select(c => c.RuleId).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             var present = labelled.RequiredRuleIds.Count(id => supplied.Contains(id));
+            var missingThis = present != labelled.RequiredRuleIds.Count;
             recallSum += (double)present / labelled.RequiredRuleIds.Count;
-            if (present == labelled.RequiredRuleIds.Count)
+            if (!missingThis)
             {
                 fullRecall++;
             }
@@ -146,7 +179,27 @@ public sealed class RuleSelectionEvaluator
             if (selection.FellBack)
             {
                 fallbacks++;
+                switch (selection.FallbackKind)
+                {
+                    case RuleSelectionFallbackKind.Semantic:
+                        semanticFallbacks++;
+                        break;
+                    case RuleSelectionFallbackKind.Mechanical:
+                        mechanicalFallbacks++;
+                        break;
+                }
             }
+
+            outcomes.Add(new CaseOutcome
+            {
+                Id = labelled.Id,
+                Category = labelled.Category,
+                ExpectedRoutingAction = labelled.RoutingTarget,
+                ActualActionLabel = selection.PrimaryActionLabel,
+                MissingRequired = missingThis,
+                FellBack = selection.FellBack,
+                FallbackKind = selection.FallbackKind
+            });
         }
 
         var n = cases.Count;
@@ -165,7 +218,10 @@ public sealed class RuleSelectionEvaluator
             ModelCallsPerConsultation = (double)calls / n,
             AverageSelectionLatencyMs = latencySum / n,
             Fallbacks = fallbacks,
-            CasesMissingRequiredCards = missing
+            SemanticFallbacks = semanticFallbacks,
+            MechanicalFallbacks = mechanicalFallbacks,
+            CasesMissingRequiredCards = missing,
+            CaseOutcomes = outcomes
         };
     }
 
@@ -200,19 +256,13 @@ public sealed class RuleSelectionEvaluator
 
         return selector switch
         {
-            CompactIndexSelector index =>
-                ContextIndexTokens(index, intent),
+            CompactIndexSelector index => ContextTruncation.EstimateTokensForCharacters(
+                CompactIndexSelector.SystemPrompt.Length + index.Index.Length + intent.Length + RequestScaffoldChars),
+            ActionRoutingSelector router => ContextTruncation.EstimateTokensForCharacters(
+                ActionRoutingSelector.SystemPrompt.Length + router.Index.Length + intent.Length + RequestScaffoldChars),
             _ => 0
         };
     }
-
-    /// <summary>
-    /// The selection request, sized from the real system prompt and the real index rather than estimated.
-    /// The constant is the fixed scaffolding of the request template around the intent and the index.
-    /// </summary>
-    private static double ContextIndexTokens(CompactIndexSelector selector, string intent) =>
-        ContextTruncation.EstimateTokensForCharacters(
-            CompactIndexSelector.SystemPrompt.Length + selector.Index.Length + intent.Length + RequestScaffoldChars);
 
     private const int RequestScaffoldChars = 200;
 
@@ -261,5 +311,5 @@ public sealed class OracleRuleSelector : IRuleSelector
     public Task<RuleSelection> SelectAsync(string intent, CancellationToken cancellationToken) =>
         Task.FromResult(_byIntent.TryGetValue(intent, out var ids)
             ? RuleSelectionSupport.Build(_repository, Mode, ids, ["labelled requirement (answer key)"])
-            : RuleSelectionSupport.Fallback(_repository, Mode, "no label for this intent"));
+            : RuleSelectionSupport.Fallback(_repository, Mode, "no label for this intent", RuleSelectionFallbackKind.Semantic));
 }
