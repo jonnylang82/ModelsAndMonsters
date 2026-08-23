@@ -262,7 +262,9 @@ const STATUS_BADGE = {
   // Fear itself is shown by the meter below; this badge is the public fact — that everyone in the room
   // can see it — which is a different claim from the number.
   Scared: () => '😰 scared',
-  InCover: () => '🛖 in cover'
+  InCover: () => '🛖 in cover',
+  // Reeling from a stunning blow: the whole effect is the next turn, lost.
+  Stunned: () => '💥 stunned (loses next turn)'
 }
 
 // Disposition drives how a card reads. Only the dead are "fallen"; a surrendered or escaped character is

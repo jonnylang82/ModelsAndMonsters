@@ -192,6 +192,12 @@ public static class ChatOptionsFactory
         var openAiCannotTakeEffort = profile.Provider == ModelProvider.OpenAI
             && !IsOpenAIReasoningModel(profile.ModelId);
 
+        // OpenRouter takes reasoning as its own `reasoning` request object, which the standard chat request
+        // cannot carry — so it is injected client-side by a pipeline policy (see ChatClientFactory), not set
+        // here. Effort is therefore neither applied as a ChatOption nor reported dropped for OpenRouter: it is
+        // handled elsewhere, and genuinely takes effect.
+        var openRouterHandlesEffortClientSide = profile.Provider == ModelProvider.OpenRouter;
+
         // Reasoning effort is the unified cross-provider knob and supersedes the legacy Thinking toggle.
         // Ollama takes a native think level; OpenAI and Anthropic take it through ChatOptions.Reasoning,
         // which their Microsoft.Extensions.AI adapters translate to the provider's reasoning-effort field.
@@ -215,6 +221,12 @@ public static class ChatOptionsFactory
                 {
                     dropped.Add(nameof(AgentModelProfile.Effort));
                 }
+            }
+            // OpenRouter's reasoning is applied by a client-side pipeline policy, not as a ChatOption — so it
+            // is neither set nor reported dropped here. The config takes effect via that policy.
+            else if (openRouterHandlesEffortClientSide)
+            {
+                // no-op
             }
             else
             {

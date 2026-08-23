@@ -168,6 +168,18 @@ public abstract class ModelAgent
                 // rarely reproduces the same fault.
                 await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), cancellationToken).ConfigureAwait(false);
             }
+            catch (ArgumentOutOfRangeException)
+                when (attempt < MaxTransientAttempts && !cancellationToken.IsCancellationRequested)
+            {
+                // A degenerate provider response, not a request we shaped wrong. Some OpenAI-compatible
+                // providers — notably free-tier and aggregator models via OpenRouter — return a 200 with an
+                // empty completion (no message, no role), and the OpenAI SDK throws ArgumentOutOfRangeException
+                // indexing the empty response while Microsoft.Extensions.AI converts it (observed at
+                // OpenAI.Chat.ChatCompletion.get_Role). Like a 5xx, that is a flaky reply a fresh draw usually
+                // clears, so it is retried rather than allowed to end an hour-long run. If it persists past the
+                // retry budget it propagates, which is correct: a model returning nothing but empties is broken.
+                await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), cancellationToken).ConfigureAwait(false);
+            }
         }
     }
 

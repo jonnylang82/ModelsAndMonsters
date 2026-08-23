@@ -28,8 +28,8 @@ public sealed class CharacterPromptContractTests
         var prompt = RowanSystemPrompt();
 
         Assert.Contains("One deed, not several", prompt, StringComparison.Ordinal);
-        Assert.Contains("I attack Vark while shouting a warning", prompt, StringComparison.Ordinal);
-        Assert.Contains("I attack Vark and steal his purse", prompt, StringComparison.Ordinal);
+        Assert.Contains("I attack the enemy while shouting a warning", prompt, StringComparison.Ordinal);
+        Assert.Contains("I attack the enemy and steal their purse", prompt, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -65,7 +65,7 @@ public sealed class CharacterPromptContractTests
     {
         var prompt = RowanSystemPrompt();
 
-        Assert.Contains("I hold my sabre out by the flat", prompt, StringComparison.Ordinal);
+        Assert.Contains("I hold my sword out by the flat", prompt, StringComparison.Ordinal);
     }
 
     // A live run had Rowan spend seven of eleven turns guarding a companion at full health while he himself

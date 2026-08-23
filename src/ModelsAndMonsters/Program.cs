@@ -30,13 +30,35 @@ if (args is ["--report", var runDirectory, ..])
     }
 }
 
+// Print the content-hash version of the rulebook and exit. No host, no scenario, no model — just the
+// catalog. Handy after editing a rule card, since the corpus pins the version and the pin must be updated.
+if (args is ["--rulebook-version", ..])
+{
+    Console.WriteLine(new RuleCatalog().RulebookVersion);
+    return 0;
+}
+
 var builder = Host.CreateApplicationBuilder(args);
+
+// Which scenario file to run. Defaults to scenario.json, but a run can be pointed at any other scenario
+// (they are all copied beside the binary by the scenario*.json glob) with `--scenario-file <name>` or the
+// `ScenarioFile` config key — without editing application settings. The flag name is deliberately NOT
+// "--scenario", which the command-line config provider would fold into the "Scenario" section itself.
+var scenarioFile = ResolveScenarioFile(args, builder.Configuration);
+var scenarioPath = FindScenarioPath(scenarioFile);
+if (scenarioPath is null)
+{
+    Console.Error.WriteLine(
+        $"Scenario file '{scenarioFile}' was not found beside the application or in the working directory. " +
+        $"Available scenarios: {string.Join(", ", ListAvailableScenarios())}.");
+    return 1;
+}
 
 // appsettings.json, environment variables and command line come from the host builder. The scenario
 // lives in its own file so scenarios can be swapped without touching application settings, and user
 // secrets are added explicitly so an OpenAI key works outside the Development environment too.
 builder.Configuration
-    .AddJsonFile("scenario.json", optional: false, reloadOnChange: false)
+    .AddJsonFile(scenarioPath, optional: false, reloadOnChange: false)
     .AddUserSecrets(Assembly.GetExecutingAssembly(), optional: true, reloadOnChange: false);
 
 builder.Services.Configure<SimulationOptions>(builder.Configuration.GetSection(SimulationOptions.SectionName));
@@ -242,6 +264,70 @@ catch (Exception ex)
     // Operational failure reporting only; the experiment trace already holds the detail.
     Console.Error.WriteLine($"Run failed: {ex.GetType().Name}: {ex.Message}");
     return 1;
+}
+
+// Which scenario file the run should load: `--scenario-file <name>` / `--scenario-file=<name>` first, then the
+// `ScenarioFile` config key (appsettings or environment), then the default. Parsed from args by hand rather
+// than left to the command-line config provider, whose only latitude here is the fallback config key.
+static string ResolveScenarioFile(string[] arguments, IConfiguration configuration)
+{
+    for (var i = 0; i < arguments.Length; i++)
+    {
+        if (string.Equals(arguments[i], "--scenario-file", StringComparison.Ordinal) && i + 1 < arguments.Length)
+        {
+            return arguments[i + 1];
+        }
+
+        const string inlinePrefix = "--scenario-file=";
+        if (arguments[i].StartsWith(inlinePrefix, StringComparison.Ordinal))
+        {
+            return arguments[i][inlinePrefix.Length..];
+        }
+    }
+
+    var configured = configuration["ScenarioFile"];
+    return string.IsNullOrWhiteSpace(configured) ? "scenario.json" : configured.Trim();
+}
+
+// Resolves a scenario file name to an absolute path, looking beside the binary and in the working directory
+// (the same two places the scenario*.json glob and a `dotnet run` invocation put it), or null if absent.
+static string? FindScenarioPath(string scenarioFile)
+{
+    if (Path.IsPathRooted(scenarioFile))
+    {
+        return File.Exists(scenarioFile) ? scenarioFile : null;
+    }
+
+    foreach (var baseDirectory in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
+    {
+        var candidate = Path.Combine(baseDirectory, scenarioFile);
+        if (File.Exists(candidate))
+        {
+            return Path.GetFullPath(candidate);
+        }
+    }
+
+    return null;
+}
+
+// The scenario files actually present, for a helpful error when the requested one is missing.
+static IReadOnlyList<string> ListAvailableScenarios()
+{
+    var names = new SortedSet<string>(StringComparer.Ordinal);
+    foreach (var baseDirectory in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
+    {
+        if (!Directory.Exists(baseDirectory))
+        {
+            continue;
+        }
+
+        foreach (var path in Directory.EnumerateFiles(baseDirectory, "scenario*.json"))
+        {
+            names.Add(Path.GetFileName(path));
+        }
+    }
+
+    return names.Count == 0 ? ["scenario.json"] : [.. names];
 }
 
 /// <summary>A trace sink for the one-shot probe: the call is traced, and nothing is kept.</summary>

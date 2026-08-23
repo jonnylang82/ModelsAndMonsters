@@ -37,8 +37,9 @@ button {
 button:disabled { opacity: 0.4; cursor: default; }
 button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
 
-/* Character cards */
-.cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
+/* Character cards. Column count adapts to the roster: a 2v2 fits four across, a 3v2 five, without a lone
+   card wrapping under a fixed four-column grid. */
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 16px; }
 .empty { grid-column: 1 / -1; color: var(--muted); padding: 24px; text-align: center; border: 1px dashed var(--line); border-radius: 8px; }
 
 .card {
@@ -151,6 +152,7 @@ button.ghost { background: transparent; color: var(--muted); border: 1px solid v
 .badge.rallied { color: var(--accent); border-color: var(--accent); }
 .badge.offbalance { color: var(--monsters); border-color: var(--monsters); }
 .badge.defending { color: #cfe3ff; border-color: #6f86a8; }
+.badge.stunned { color: #ffcf6f; border-color: #d99a2b; background: rgba(217, 154, 43, 0.12); }
 
 .abilities { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .ability {

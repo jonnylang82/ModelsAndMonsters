@@ -57,7 +57,7 @@ public static class CharacterTools
           "description": "Anything you say ALOUD as you do this, if anything. Put the exact words you speak here — not a description of speaking, and not any other quoted text. Everyone still alive in the room hears them. Leave this out entirely if you say nothing. Speaking costs you nothing, and you may say at most one thing in a turn.",
           "items": {
             "type": "string",
-            "description": "The exact words you speak aloud. For example: 'Elara, get whatever is in that chest — I will hold off the captain.'"
+            "description": "The exact words you speak aloud. For example: 'Get whatever is in that chest — I will hold them off.'"
           }
         },
         "{{AddressedToParameter}}": {
@@ -116,7 +116,7 @@ public static class CharacterTools
           "properties": {
             "{{MessageParameter}}": {
               "type": "string",
-              "description": "The exact words you speak aloud, as you would say them. For example: 'Elara, get whatever is in that chest — I'll hold off the captain.'"
+              "description": "The exact words you speak aloud, as you would say them. For example: 'Get whatever is in that chest — I'll hold them off.'"
             }
           },
           "required": ["{{MessageParameter}}"]

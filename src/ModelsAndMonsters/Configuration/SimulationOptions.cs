@@ -53,11 +53,42 @@ public sealed class ProvidersOptions
     public OpenAIProviderOptions OpenAI { get; set; } = new();
 
     public AnthropicProviderOptions Anthropic { get; set; } = new();
+
+    public OpenRouterProviderOptions OpenRouter { get; set; } = new();
 }
 
 public sealed class OllamaProviderOptions
 {
     public string Endpoint { get; set; } = "http://localhost:11434";
+
+    /// <summary>
+    /// Environment variable consulted for an Ollama API key. Only needed to reach Ollama Cloud
+    /// (Endpoint <c>https://ollama.com</c>); a local Ollama needs none, so this is unset in effect there.
+    /// Never place the key itself here.
+    /// </summary>
+    public string ApiKeyEnvironmentVariable { get; set; } = "OLLAMA_API_KEY";
+
+    /// <summary>
+    /// Optional Ollama Cloud key supplied through user secrets. When a key is resolved (from here or the
+    /// environment variable) it is sent as a bearer token, which is what turns the plain local client into
+    /// an Ollama Cloud one. Configuration files in the repository must not set it.
+    /// </summary>
+    public string? ApiKey { get; set; }
+}
+
+public sealed class OpenRouterProviderOptions
+{
+    /// <summary>Environment variable consulted for the API key. Never place the key itself here.</summary>
+    public string ApiKeyEnvironmentVariable { get; set; } = "OPENROUTER_API_KEY";
+
+    /// <summary>
+    /// Optional key supplied through user secrets. Configuration files in the repository must not set
+    /// this; it exists so <c>dotnet user-secrets</c> works without an environment variable.
+    /// </summary>
+    public string? ApiKey { get; set; }
+
+    /// <summary>OpenRouter's OpenAI-compatible base URL. The chat-completions path is appended by the client.</summary>
+    public string Endpoint { get; set; } = "https://openrouter.ai/api/v1";
 }
 
 public sealed class OpenAIProviderOptions

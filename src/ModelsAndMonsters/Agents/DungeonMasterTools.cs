@@ -73,7 +73,7 @@ public static class DungeonMasterTools
 
     public static readonly AIFunctionDeclaration UseItem = AIFunctionFactory.CreateDeclaration(
         UseItemName,
-        "Resolve a character using an item from their own inventory on themselves. The item is consumed.",
+        "Resolve a character using an item from their own inventory on themselves — drinking a healing item (which is consumed), or attuning to a focus item to rekindle one of their own spent abilities (which is not consumed).",
         ToolSchema.Parse($$"""
         {
           "type": "object",

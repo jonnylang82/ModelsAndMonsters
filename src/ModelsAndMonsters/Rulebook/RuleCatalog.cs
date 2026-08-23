@@ -16,14 +16,32 @@ public sealed class RuleCatalog : IRuleRepository
     public const string RejectRuleId = "action.reject";
 
     private readonly IReadOnlyDictionary<string, RuleCard> _byId;
+    private readonly IReadOnlyDictionary<string, RuleCard> _byNormalisedId;
 
     public RuleCatalog()
     {
         AllCards = BuildCards();
         _byId = AllCards.ToDictionary(c => c.RuleId, StringComparer.OrdinalIgnoreCase);
+
+        // A separator-tolerant index alongside the exact one. Weak models routinely transcribe a rule id with
+        // underscores for hyphens ("environment.take_cover" for "environment.take-cover"), which is a
+        // formatting slip on an exact identifier, not a different rule. Resolving it here — never by inferring
+        // meaning from prose — recovers a citation the model got right in substance; the exact index is always
+        // tried first, so a real id is never shadowed. Built with TryAdd so a future pair that collided under
+        // normalisation would simply fall back to exact-only rather than throw.
+        var normalised = new Dictionary<string, RuleCard>(StringComparer.Ordinal);
+        foreach (var card in AllCards)
+        {
+            normalised.TryAdd(NormaliseRuleId(card.RuleId), card);
+        }
+
+        _byNormalisedId = normalised;
         RejectCard = _byId[RejectRuleId];
         RulebookVersion = ComputeRulebookVersion(AllCards);
     }
+
+    /// <summary>A rule id reduced to its separator-and-case-insensitive form, so "take_cover" matches "take-cover".</summary>
+    private static string NormaliseRuleId(string ruleId) => ruleId.Trim().ToLowerInvariant().Replace('_', '-');
 
     public IReadOnlyList<RuleCard> AllCards { get; }
 
@@ -31,8 +49,19 @@ public sealed class RuleCatalog : IRuleRepository
 
     public string RulebookVersion { get; }
 
-    public RuleCard? Find(string ruleId) =>
-        !string.IsNullOrWhiteSpace(ruleId) && _byId.TryGetValue(ruleId.Trim(), out var card) ? card : null;
+    public RuleCard? Find(string ruleId)
+    {
+        if (string.IsNullOrWhiteSpace(ruleId))
+        {
+            return null;
+        }
+
+        // Exact match first (case-insensitive), then the separator-tolerant fallback so a real id is never
+        // shadowed by a normalised near-miss.
+        return _byId.TryGetValue(ruleId.Trim(), out var card)
+            ? card
+            : _byNormalisedId.GetValueOrDefault(NormaliseRuleId(ruleId));
+    }
 
     public bool IsValid(string ruleId, string version) =>
         Find(ruleId) is { } card && string.Equals(card.Version, version, StringComparison.Ordinal);
@@ -68,21 +97,21 @@ public sealed class RuleCatalog : IRuleRepository
         new RuleCard
         {
             RuleId = "inventory.use",
-            Summary = "Using an item from your own inventory on yourself; the item is consumed.",
+            Summary = "Using an item on yourself — drinking a healing item, or attuning to an item to rekindle a spent power.",
             RelatedRuleIds = [],
             // A drunk salve is an item; a prayer that closes a wound is an ability. Same hoped-for outcome,
             // different rule — the live-proven use-item-vs-heal-ability confusion.
             DistinguishedFrom = [DungeonMasterTools.UseAbilityName],
             ActionName = DungeonMasterTools.UseItemName,
-            Description = "A character using an item from their own inventory on themselves; the item is consumed.",
+            Description = "A character using an item from their own inventory on themselves: drinking a healing item, OR ATTUNING to a focus item to rekindle one of their OWN spent powers — attuning to a crystal or focus to draw a spent spell back and recover a used ability, even when the intent names the spell recovered.",
             RequiredBindings = ["the acting character", "the item from their own inventory"],
-            Preconditions = ["actor is active and carries the item", "the item has a supported effect (a healing item)"],
+            Preconditions = ["actor is active and carries the item", "the item has a supported effect: a healing item, or a focus item that restores a spent ability"],
             TurnCost = "consumes the turn",
             RngRequirement = "none",
             Visibility = "public: the room sees the item used",
-            SuccessBehaviour = "the engine applies the item's effect and consumes it",
-            FailureBehaviour = "refused if the actor does not carry the item or it has no supported effect",
-            Exclusions = ["using an item on another character"]
+            SuccessBehaviour = "the engine applies the item's effect: a healing item restores health and is consumed; a focus item restores one spent charge of the user's own limited ability and is NOT consumed",
+            FailureBehaviour = "refused if the actor does not carry the item, it has no supported effect, or a focus item is used with no spent power left to restore",
+            Exclusions = ["using an item on another character", "attuning to recharge another's ability — a focus item rekindles only its user's own"]
         },
         new RuleCard
         {
@@ -240,7 +269,7 @@ public sealed class RuleCatalog : IRuleRepository
             // item held out to buy one's own life is a surrender term, not a gift and not a discard.
             DistinguishedFrom = [DungeonMasterTools.GiveItemName, DungeonMasterTools.DropItemName],
             ActionName = DungeonMasterTools.OfferSurrenderName,
-            Description = "THE ACTOR GIVING UP THEIR OWN FIGHT, to ONE named opponent, on concrete terms they promise to hand over: one or more items they carry, the weapon in their hand, or both — either concession alone is enough, whatever else the offerer does or does not carry. Yielding is never unilateral and never free. Recognise it in yielding, surrendering, giving in, begging to be spared, buying their life, offering payment or a weapon for mercy — PROVIDED something concrete is promised. A weapon held out by the flat, laid down, or offered to buy mercy (\"I hold my sabre out by the flat and offer to lay it down if you spare me\") is this rule with forfeit_weapon alone, not a give_item and not a bare plea. So is an item offered specifically to buy one's own life (\"I offer Rowan the goblin salve in exchange for my life\") — an item traded for being spared is a surrender term, never an ordinary gift. The plea itself is ordinary speech; this action is only the enforceable terms. WHOSE fight is decisive: 'take my purse and let me live' is this rule, while 'hand over your purse and I will spare you' is a DEMAND, binds nobody, and is speech alone — recording it here would make the speaker the one who gave up.",
+            Description = "THE ACTOR GIVING UP THEIR OWN FIGHT, to ONE named opponent, on concrete terms they promise to hand over: one or more items they carry, the weapon in their hand, or both — either concession alone is enough, whatever else the offerer does or does not carry. Yielding is never unilateral and never free. Recognise it in yielding, surrendering, giving in, begging to be spared, buying their life, offering payment or a weapon for mercy — PROVIDED something concrete is promised. A weapon held out by the flat, laid down, or offered to buy mercy (\"I hold my sabre out by the flat and offer to lay it down if you spare me\") is this rule with forfeit_weapon alone, not a give_item and not a bare plea. So is an item offered specifically to buy one's own life (\"I offer them my vial of salve in exchange for my life\") — an item traded for being spared is a surrender term, never an ordinary gift. The plea itself is ordinary speech; this action is only the enforceable terms. WHOSE fight is decisive: 'take my purse and let me live' is this rule, while 'hand over your purse and I will spare you' is a DEMAND, binds nobody, and is speech alone — recording it here would make the speaker the one who gave up.",
             RequiredBindings = ["the acting character (the one offering to give up)", "the ONE opposing character the terms are offered to", "the ordinary inventory items promised (may be none)", "whether the weapon in hand is promised"],
             Preconditions = ["offerer is the current actor and active", "the recipient is a living, present, active character on an OPPOSING side", "every promised item is an ordinary item the offerer owns right now", "the offer promises at least one real concession — one or more carried items, the weapon in hand, or both; either alone is a complete offer", "the offerer has no other offer already awaiting an answer"],
             TurnCost = "consumes the offerer's WHOLE turn and cannot be combined with anything else. An intent that both strikes (or guards) AND offers terms is the striking action, with the terms as mere speech",
@@ -383,7 +412,7 @@ public sealed class RuleCatalog : IRuleRepository
             Summary = "The foul blow that strikes with the weapon in hand and leaves the foe off balance, once in an encounter.",
             RelatedRuleIds = ["combat.attack"],
             ActionName = DungeonMasterTools.UseAbilityName,
-            Description = "Ability 'dirty-strike' (Dirty Strike), a trick usable ONCE per encounter: the acting character makes one underhanded blow with the weapon in hand — a kick or foul behind the strike — that on landing leaves the enemy off balance so their next attack is markedly less likely to land. Recognise it in words like a dirty or low blow, kicking, tripping, fouling, striking below the belt, flinging grit, or hitting someone while distracting them. Only a character whose ability list includes 'dirty-strike' can do it.",
+            Description = "Ability 'dirty-strike' (Dirty Strike), a trick usable ONCE per encounter: the acting character makes one underhanded blow with the weapon in hand — a kick or foul behind the strike — that on landing leaves the enemy off balance so their next attack is markedly less likely to land. Recognise it in words like a dirty or low blow, kicking, tripping, fouling, striking below the belt, flinging grit, or hitting someone while distracting them. Naming 'a dirty strike' — or using the trick by name — is THIS card even when an ordinary slash, thrust or weapon blow is described in the same breath: the trick IS that blow, so cite this alongside combat.attack rather than dropping it to a plain attack. Only a character whose ability list includes 'dirty-strike' can do it.",
             RequiredBindings = ["the acting character", "the ability id 'dirty-strike'", "the opposing character struck"],
             Preconditions = ["the actor is the current actor, active, armed, holds the ability, and has a use of it left", "the target is a living, present, active character on an OPPOSING side"],
             TurnCost = "consumes the turn",
@@ -391,7 +420,45 @@ public sealed class RuleCatalog : IRuleRepository
             Visibility = "public: everyone present sees the foul blow",
             SuccessBehaviour = "ordinary weapon damage is applied, and on a hit the target is left off balance for their next attack. The use is spent whether the blow lands or misses",
             FailureBehaviour = "a miss deals nothing, applies nothing, and still spends the turn and the use. Refused, WITHOUT spending the use, if the ability is not held, has no uses left, the actor is unarmed, or the target is an ally, dead, surrendered or fled",
-            Exclusions = ["knocking a target down, stunning or dazing them — the only effect is the off-balance penalty to their next attack", "disarming the target", "using it on an ally", "using it more than once in an encounter", "moving anyone: there is no distance in this world"]
+            Exclusions = ["knocking a target down, or stunning and dazing them into losing a turn — the only effect is the off-balance penalty to their next attack; making a foe lose a turn is the separate 'stun' ability, not this trick", "disarming the target", "using it on an ally", "using it more than once in an encounter", "moving anyone: there is no distance in this world"]
+        },
+        new RuleCard
+        {
+            RuleId = "ability.firebolt",
+            Summary = "The spell that hurls a bolt of fire at one enemy, burning through armour, once in an encounter.",
+            RelatedRuleIds = ["combat.attack", "environment.cover", "combat.morale"],
+            // A hurled bolt of fire reads like an attack; declaring the boundary means routing to attack also
+            // surfaces this card, and the resolver picks the ability when the intent names fire or a spell.
+            DistinguishedFrom = [DungeonMasterTools.AttackCharacterName],
+            ActionName = DungeonMasterTools.UseAbilityName,
+            Description = "Ability 'firebolt' (Firebolt), a spell usable ONCE per encounter: the caster looses a bolt of fire at ONE opposing character; the magical fire ignores armour. Recognise it in loosing or hurling a bolt or lance of fire at a foe. No weapon needed.",
+            RequiredBindings = ["the acting character (the caster)", "the ability id 'firebolt'", "the opposing character it is aimed at"],
+            Preconditions = ["the caster is the current actor, active, holds firebolt, and has a use left", "the target is a living, present, active OPPOSING character"],
+            TurnCost = "consumes the turn",
+            RngRequirement = "exactly the ORDINARY attack rolls and no others: one roll to hit and, on a hit, one for quality (glancing, solid or critical). There is no separate spell roll — the engine resolves it, never the resolver",
+            Visibility = "public: everyone present sees the bolt of fire",
+            SuccessBehaviour = "on a hit, fire damage is applied IGNORING the target's armour, and one use is spent; solid cover can still turn the bolt aside, and a critical or heavy hit moves morale as any blow does",
+            FailureBehaviour = "a miss, or a bolt turned aside by cover, deals nothing but still spends the turn and the use. Refused, WITHOUT spending the use, if the ability is not held, has no uses left, or the target is an ally, dead, surrendered or fled",
+            Exclusions = ["aiming it at an ally or oneself", "using it more than once in an encounter", "setting scenery alight, lingering fire, or any effect beyond the one bolt", "drawing a spent firebolt back to recover it — that is inventory.use (attuning to the focus), not casting it"]
+        },
+        new RuleCard
+        {
+            RuleId = "ability.stun",
+            Summary = "The mighty blow that wounds a foe and leaves them reeling, losing their next turn — once in an encounter.",
+            RelatedRuleIds = ["combat.attack", "combat.morale"],
+            // A crushing blow reads like an ordinary attack; declaring the boundary surfaces this card when
+            // routing to attack, and the resolver picks the ability when the intent names a stun or a daze.
+            DistinguishedFrom = [DungeonMasterTools.AttackCharacterName],
+            ActionName = DungeonMasterTools.UseAbilityName,
+            Description = "Ability 'stun' (Stunning Blow), a technique usable ONCE per encounter: one tremendous weapon blow that, on landing, wounds the enemy AND leaves them so dazed they lose their whole next turn. Recognise it in a stunning, crushing or hammering blow, a shield-bash, ringing a foe's helm, dazing or staggering them. Naming 'a stunning blow', or an intent to stun or daze a foe into losing a turn, is THIS card even when the maul or weapon blow that carries it is described in the same breath: the blow is how it lands, so cite this alongside combat.attack rather than dropping it to a plain attack.",
+            RequiredBindings = ["the acting character", "the ability id 'stun'", "the opposing character struck"],
+            Preconditions = ["the actor is the current actor, active, armed, holds stun, and has a use left", "the target is a living, present, active OPPOSING character"],
+            TurnCost = "consumes the turn",
+            RngRequirement = "exactly the ORDINARY attack rolls and no others: one roll to hit and, on a hit, one for quality. There is no separate roll for the stun — the engine resolves it",
+            Visibility = "public: everyone present sees the crushing blow land and the foe reel",
+            SuccessBehaviour = "ordinary weapon damage is applied, and on a hit that does not kill, the target is left stunned and loses their entire next turn — they are still alive, present and a valid target throughout. The use is spent whether the blow lands or misses",
+            FailureBehaviour = "a miss deals nothing, applies no stun, and still spends the turn and the use. Refused, WITHOUT spending the use, if the ability is not held, has no uses left, the actor is unarmed, or the target is an ally, dead, surrendered or fled",
+            Exclusions = ["stunning an ally, or using it more than once", "disarming, knockdown or forced movement — only the wound and one lost turn", "a killing blow needs no stun"]
         },
         new RuleCard
         {

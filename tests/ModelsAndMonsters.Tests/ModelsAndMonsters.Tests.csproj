@@ -32,10 +32,13 @@
           Link="Prompts\Templates\%(Filename)%(Extension)"
           CopyToOutputDirectory="PreserveNewest" />
 
-    <!-- The shipped scenario is linked so tests can assert on the real seeded chest and its contents,
-         rather than a copy that could drift from what actually ships. -->
+    <!-- The shipped scenarios are linked so tests can assert on the real seeded content, rather than a
+         copy that could drift from what actually ships. -->
     <None Include="..\..\src\ModelsAndMonsters\scenario.json"
           Link="scenario.json"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\ModelsAndMonsters\scenario_3_v_2.json"
+          Link="scenario_3_v_2.json"
           CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

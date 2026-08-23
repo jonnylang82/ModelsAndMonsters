@@ -200,7 +200,40 @@ public sealed class TurnCoordinator
         // Start-of-turn upkeep before anything is rendered or asked: a status whose rule fires now must be gone
         // before this character sees their own state, or they would be told they still have a guard that has
         // in fact just fallen away.
-        ApplyUpkeep(_engine.BeginActorTurn(character.CharacterId, round, turn), "turn-start", character.Name);
+        var startUpkeep = _engine.BeginActorTurn(character.CharacterId, round, turn);
+        ApplyUpkeep(startUpkeep, "turn-start", character.Name);
+
+        // A character stunned on an earlier turn loses this one entirely (v0.11). The engine has already
+        // consumed the Stunned status in the upkeep above; the turn now passes with no model call, exactly like
+        // a dead or surrendered actor's — except the character is alive, present and a valid target, and will
+        // act again once the daze has cleared. End-of-turn upkeep still runs, so any Rallied/OffBalance they
+        // were carrying lapses and an offer they were the named recipient of passes unanswered, just as it
+        // would on a turn they had actually taken.
+        if (startUpkeep.ActorIncapacitated)
+        {
+            _trace.Emit(TraceEventType.TurnSkipped, new TurnSkippedPayload
+            {
+                CharacterId = character.CharacterId,
+                CharacterName = character.Name,
+                Team = self.Team,
+                Reason = $"{character.Name} is stunned and reeling, and loses the turn.",
+                Disposition = self.Disposition.ToString()
+            });
+
+            _console.Notice($"{character.Name} is stunned and reeling, and can do nothing this turn.");
+
+            ApplyUpkeep(_engine.EndActorTurn(character.CharacterId, round, turn), "turn-end", character.Name);
+
+            return new TurnResult
+            {
+                CharacterId = character.CharacterId,
+                CharacterName = character.Name,
+                Outcome = TurnOutcome.Skipped,
+                QuestionsAsked = 0,
+                ActionAttempts = 0,
+                ModelCalls = 0
+            };
+        }
 
         _speechThisTurn = null;
         _speechAddressedToThisTurn = null;

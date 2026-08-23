@@ -13,6 +13,8 @@ Corpus: **45** labelled cases across **11** families.
 | CompactIndex (Ollama:qwen3.5:9b) | 96.7% | 42/45 | 44/45 (98%) | 0 | 1 | 7.5 | 2802 | 2372 | 2.0 | 0/45 |
 | ActionRouting (Ollama:qwen3.5:9b) | 98.9% | 44/45 | 45/45 (100%) | 0 | 0 | 7.2 | 2713 | 975 | 2.0 | 0/45 |
 
+> **Why StructuredRouting equals WholeRulebook (25.0 cards, 0% saving).** StructuredRouting only narrows the book when the *caller* declares an action family for the request. Ordinary consultation supplies a free-text intent with no action decided yet — deciding it is the resolver's job — so no family is ever declared and the selector falls back to the whole rulebook on every case (hence 45/45 fallbacks). It is included to make the point explicit: routing on declared metadata alone is inapplicable to a free-text intent. **ActionRouting is StructuredRouting *with* a classifier** — it spends one model call (975 selection tokens) to derive the family, and that is what takes it from 25.0 cards down to 7.2.
+
 
 ## Reduction against the baseline
 

@@ -35,9 +35,18 @@ public sealed record InventoryItem(
     string Description,
     int? HealingAmount = null,
     string? Qualifier = null,
-    bool IsWeaponTrophy = false)
+    bool IsWeaponTrophy = false,
+    bool RestoresAbilityCharge = false)
 {
     public bool IsHealingItem => HealingAmount is > 0;
+
+    /// <summary>
+    /// True when spending a turn focusing through this item restores one spent charge of the user's own
+    /// limited ability (v0.11) — the Attunement Crystal that lets a mage recover a used firebolt. Unlike a
+    /// healing potion, a focus item is NOT consumed by use: focusing is a repeatable turn, its cost being the
+    /// turn itself.
+    /// </summary>
+    public bool IsFocusItem => RestoresAbilityCharge;
 
     /// <summary>
     /// The name to show a character: the plain name, plus the qualifier when the scenario gave it one.

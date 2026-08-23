@@ -589,12 +589,28 @@ public sealed class GameEngine : IGameEngine
 
         var events = new List<StatusEvent>();
         var state = ExpireStatuses(_state, due, "reached its expiry at the start of the holder's next turn", events);
+
+        // A character stunned on an earlier turn loses this one entirely. The Stunned status never expires on
+        // the turn clock (WhileConditionHolds, so it is not in `due` above); it is consumed HERE, in the same
+        // breath that it costs the turn, so a stun is worth exactly one skipped turn and no more. The character
+        // stays alive, present and a valid target — only the turn is taken.
+        var incapacitated = false;
+        var stun = state.StatusesOn(actorId).FirstOrDefault(s => s.Kind == StatusEffectKind.Stunned && s.AppliedTurn < turn);
+        if (stun is not null)
+        {
+            var name = state.FindById(actorId)?.Name ?? actorId;
+            state = state.WithoutStatuses([stun.Id]);
+            events.Add(new StatusEvent(StatusEventKind.Consumed, stun with { Consumed = true },
+                $"{name} lost the turn to being stunned, and the daze cleared"));
+            incapacitated = true;
+        }
+
         if (events.Count > 0)
         {
             _state = state with { Version = state.Version + 1 };
         }
 
-        return new TurnUpkeep { StatusEvents = events };
+        return new TurnUpkeep { StatusEvents = events, ActorIncapacitated = incapacitated };
     }
 
     /// <summary>
@@ -719,7 +735,8 @@ public sealed class GameEngine : IGameEngine
         Character attacker,
         Character intendedTarget,
         Weapon weapon,
-        AbilityDefinition? ability)
+        AbilityDefinition? ability,
+        bool ignoresArmour = false)
     {
         var statusEvents = new List<StatusEvent>();
         var offerTransitions = new List<OfferTransition>();
@@ -901,7 +918,8 @@ public sealed class GameEngine : IGameEngine
                 SequenceAfter = _rng.DrawCount
             });
 
-            baseDamage = Math.Max(0, weapon.Damage - target.Armour);
+            // Magical fire ignores armour entirely (Firebolt); every other blow is reduced by it as usual.
+            baseDamage = ignoresArmour ? weapon.Damage : Math.Max(0, weapon.Damage - target.Armour);
             damage = CombatRules.DamageFor(quality, baseDamage);
 
             // Defending applies last: after armour and after glancing, never below zero, and consumed by any
@@ -922,6 +940,10 @@ public sealed class GameEngine : IGameEngine
             if (!died && ability?.EffectKind == AbilityEffectKind.StrikeAndOffBalance)
             {
                 statusApplied = StatusEffectKind.OffBalance.ToString();
+            }
+            else if (!died && ability?.EffectKind == AbilityEffectKind.StrikeAndStun)
+            {
+                statusApplied = StatusEffectKind.Stunned.ToString();
             }
         }
 
@@ -1009,15 +1031,33 @@ public sealed class GameEngine : IGameEngine
             }
         }
 
-        // A landed blow may leave the target off balance. Never stacked: an existing instance stands.
-        if (statusApplied is not null && after.StatusOn(target.Id, StatusEffectKind.OffBalance) is null)
+        // A landed blow may leave a lasting status on the target, depending on the ability that delivered it.
+        // Never stacked: an existing instance of the same status stands. `statusApplied` is only set on a hit
+        // that did not kill, so reaching either branch already implies both.
+        if (statusApplied is not null && ability is not null)
         {
-            var offBalance = NewStatus(StatusEffectKind.OffBalance, attacker.Id, target.Id,
-                -ability!.EffectValue, StatusExpiryRule.EndOfTargetNextTurn, ability.Id);
-            after = after.WithStatus(offBalance);
-            statusEvents.Add(new StatusEvent(StatusEventKind.Applied, offBalance,
-                $"{attacker.Name} left {target.Name} off balance with {ability.Name}"));
-            changed = true;
+            if (ability.EffectKind == AbilityEffectKind.StrikeAndOffBalance
+                && after.StatusOn(target.Id, StatusEffectKind.OffBalance) is null)
+            {
+                var offBalance = NewStatus(StatusEffectKind.OffBalance, attacker.Id, target.Id,
+                    -ability.EffectValue, StatusExpiryRule.EndOfTargetNextTurn, ability.Id);
+                after = after.WithStatus(offBalance);
+                statusEvents.Add(new StatusEvent(StatusEventKind.Applied, offBalance,
+                    $"{attacker.Name} left {target.Name} off balance with {ability.Name}"));
+                changed = true;
+            }
+            else if (ability.EffectKind == AbilityEffectKind.StrikeAndStun
+                     && after.StatusOn(target.Id, StatusEffectKind.Stunned) is null)
+            {
+                // Stunned never expires on the turn clock (WhileConditionHolds): BeginActorTurn consumes it in
+                // the same breath that it forces the target's skipped turn, so a stun costs exactly one turn.
+                var stunned = NewStatus(StatusEffectKind.Stunned, attacker.Id, target.Id,
+                    0, StatusExpiryRule.WhileConditionHolds, ability.Id);
+                after = after.WithStatus(stunned);
+                statusEvents.Add(new StatusEvent(StatusEventKind.Applied, stunned,
+                    $"{attacker.Name} left {target.Name} reeling and stunned with {ability.Name}"));
+                changed = true;
+            }
         }
 
         // A struck offerer's offer is rejected when the blow came from the recipient's side; and an offerer
@@ -1092,7 +1132,16 @@ public sealed class GameEngine : IGameEngine
             DroppedItems = corpse is null ? [] : [.. corpse.Contents.Select(i => i.DisplayName)],
             ViaAbilityId = ability?.Id,
             ViaAbilityName = ability?.Name,
+            IgnoredArmour = ignoresArmour,
             StatusApplied = statusApplied,
+            StatusAppliedNote = statusApplied switch
+            {
+                nameof(StatusEffectKind.OffBalance) =>
+                    $"The blow left {target.Name} off balance — their next attack is markedly less likely to land.",
+                nameof(StatusEffectKind.Stunned) =>
+                    $"The blow left {target.Name} stunned and reeling — they will lose their entire next turn.",
+                _ => null
+            },
             IntendedTargetId = intendedTarget.Id,
             IntendedTargetName = intendedTarget.Name,
             Redirected = redirected,
@@ -1164,6 +1213,13 @@ public sealed class GameEngine : IGameEngine
                 $"{actor.Name} is not carrying '{action.ItemRef}'.");
         }
 
+        // A focus item recharges a spent ability rather than healing, and is NOT consumed — focusing is a
+        // repeatable turn whose only cost is the turn itself.
+        if (item.IsFocusItem)
+        {
+            return ResolveFocusItem(action, state, actor, item);
+        }
+
         if (!item.IsHealingItem)
         {
             return EngineResult.Reject(action, state, EngineRejectionReason.ItemHasNoSupportedEffect,
@@ -1198,6 +1254,43 @@ public sealed class GameEngine : IGameEngine
         };
 
         return EngineResult.Accept(action, state, after, outcome, offerTransitions: transitions);
+    }
+
+    /// <summary>
+    /// Resolves focusing through a focus item (v0.11): the actor spends the whole turn to restore one spent
+    /// charge of their own primary limited ability. No randomness. The item is not consumed, so it can be
+    /// used again on a later turn. Refused — with the turn NOT spent — when the actor has no limited ability
+    /// currently below its maximum, exactly as healing at full health is refused rather than wasted.
+    /// </summary>
+    private EngineResult ResolveFocusItem(UseItemAction action, GameState state, Character actor, InventoryItem item)
+    {
+        // "Primary" is the first limited ability, in the character's own authored order, that has a spent
+        // charge to restore. Unlimited abilities (Defend, Guard Ally) have nothing to recharge and are skipped.
+        var depleted = actor.Abilities.FirstOrDefault(a => a.MaxUses is { } max && a.RemainingUses < max);
+        if (depleted is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.NoDepletedAbilityToRestore,
+                $"{actor.Name} has no spent power for the {item.DisplayName} to rekindle right now.");
+        }
+
+        var before = depleted.RemainingUses ?? 0;
+        var restored = Math.Min(depleted.MaxUses!.Value, before + 1);
+        var after = state.WithCharacter(actor.WithAbilityCharges(depleted.AbilityId, restored))
+            with { Version = state.Version + 1 };
+
+        var outcome = new FocusOutcome
+        {
+            ActorId = actor.Id,
+            ActorName = actor.Name,
+            ItemName = item.DisplayName,
+            AbilityId = depleted.AbilityId,
+            AbilityName = depleted.Name,
+            UsesBefore = before,
+            UsesAfter = restored,
+            MaxUses = depleted.MaxUses.Value
+        };
+
+        return EngineResult.Accept(action, state, after, outcome);
     }
 
     // ===============================================================================================
@@ -1553,6 +1646,8 @@ public sealed class GameEngine : IGameEngine
             AbilityEffectKind.Rally => ResolveRally(action, state, actor, target, definition, held),
             AbilityEffectKind.Defend => ResolveDefend(action, state, actor, definition),
             AbilityEffectKind.StrikeAndOffBalance => ResolveAbilityStrike(action, state, actor, target, definition),
+            AbilityEffectKind.StrikeAndStun => ResolveAbilityStrike(action, state, actor, target, definition),
+            AbilityEffectKind.Firebolt => ResolveFirebolt(action, state, actor, target, definition),
             _ => EngineResult.Reject(action, state, EngineRejectionReason.UnsupportedAction,
                 $"The engine has no handler for the {definition.Name} effect.")
         };
@@ -1828,6 +1923,19 @@ public sealed class GameEngine : IGameEngine
         }
 
         return ResolveWeaponStrike(action, state, actor, target, actor.Weapon, definition);
+    }
+
+    /// <summary>
+    /// A firebolt: a magical ranged strike that needs no weapon in hand. It routes into the very same
+    /// weapon-strike resolution as every other blow — so it makes exactly the ordinary attack draws (one to
+    /// hit, one for quality on a hit) and interacts with cover, defending, criticals and morale identically —
+    /// but through a synthetic "weapon" carrying the spell's own fire damage, and with armour ignored.
+    /// </summary>
+    private EngineResult ResolveFirebolt(
+        UseAbilityAction action, GameState state, Character caster, Character target, AbilityDefinition definition)
+    {
+        var bolt = new Weapon(definition.Name, definition.EffectValue);
+        return ResolveWeaponStrike(action, state, caster, target, bolt, definition, ignoresArmour: true);
     }
 
     // ===============================================================================================

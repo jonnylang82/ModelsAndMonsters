@@ -157,6 +157,8 @@ public static class InWorldRefusal
                 "You have never learned to do that.",
             EngineRejectionReason.AbilityHasNoUsesLeft =>
                 "You have nothing left in you for that again.",
+            EngineRejectionReason.NoDepletedAbilityToRestore =>
+                "There is no spent power in you for it to rekindle right now.",
             EngineRejectionReason.AbilityTargetRequired =>
                 "You would have to say who that is for.",
             EngineRejectionReason.AbilityTargetNotAllowed or EngineRejectionReason.AbilityTargetNotAvailable =>

@@ -1,8 +1,8 @@
 namespace ModelsAndMonsters.Domain;
 
 /// <summary>
-/// The status effects the v0.8 engine understands. Deliberately closed: a status is only ever one of
-/// these six kinds, so narration can never invent one and no model can create a new kind.
+/// The status effects the engine understands. Deliberately closed: a status is only ever one of these
+/// kinds, so narration can never invent one and no model can create a new kind.
 /// </summary>
 public enum StatusEffectKind
 {
@@ -36,7 +36,17 @@ public enum StatusEffectKind
     /// shadows (<see cref="StatusExpiryRule.WhileConditionHolds"/>), ended only by an explicit leave, an
     /// exposing action, the cover's destruction, or the occupant leaving active play.
     /// </summary>
-    InCover
+    InCover,
+
+    /// <summary>
+    /// Held by a character reeling from a stunning blow: they lose their entire next turn (v0.11). It carries
+    /// no hit-chance or damage modifier of its own — its whole effect is the skipped turn — and it never
+    /// expires on the turn clock (<see cref="StatusExpiryRule.WhileConditionHolds"/>). The engine consumes it
+    /// at the start of the holder's next turn, in the same breath that it forces the skip, so a stun costs
+    /// exactly one turn and no more. The holder stays alive, present and a valid target throughout: being
+    /// stunned takes the turn, not the character.
+    /// </summary>
+    Stunned
 }
 
 /// <summary>
@@ -140,6 +150,7 @@ public sealed record StatusEffectInstance
         StatusEffectKind.Defending => "behind their guard",
         StatusEffectKind.Scared => "scared",
         StatusEffectKind.InCover => "behind cover",
+        StatusEffectKind.Stunned => "stunned",
         _ => Kind.ToString()
     };
 
@@ -153,6 +164,7 @@ public sealed record StatusEffectInstance
         StatusEffectKind.Defending => $"defending — the next blow that lands deals {Math.Abs(Modifier)} less damage",
         StatusEffectKind.Scared => "scared — shaken, and increasingly concerned with staying alive. It changes no odds by itself",
         StatusEffectKind.InCover => "behind cover — harder to hit while it stands, until it is left, broken by an exposing act, or destroyed",
+        StatusEffectKind.Stunned => "stunned — reeling from a stunning blow, and will lose their entire next turn before it wears off",
         _ => Kind.ToString()
     };
 }

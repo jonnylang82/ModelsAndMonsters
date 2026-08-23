@@ -43,7 +43,20 @@ public enum AbilityEffectKind
     StrikeAndOffBalance,
 
     /// <summary>Applies <see cref="StatusEffectKind.Defending"/> to the actor.</summary>
-    Defend
+    Defend,
+
+    /// <summary>
+    /// Hurls a bolt of fire at one opponent (v0.11). It uses the ONE ordinary attack resolution — a single
+    /// hit draw and, on a hit, a single quality draw — but with a magical damage value of its own rather than
+    /// a carried weapon, and its fire ignores armour. Once per encounter.
+    /// </summary>
+    Firebolt,
+
+    /// <summary>
+    /// Performs one ordinary weapon attack and, on a hit, applies <see cref="StatusEffectKind.Stunned"/> —
+    /// damaging the target and costing them their entire next turn (v0.11). Once per encounter.
+    /// </summary>
+    StrikeAndStun
 }
 
 /// <summary>Who an ability may be used on. Validated authoritatively by the engine.</summary>
@@ -168,6 +181,8 @@ public static class AbilityCatalog
     public const string RallyGruntId = "rally-grunt";
     public const string DirtyStrikeId = "dirty-strike";
     public const string DefendId = "defend";
+    public const string FireboltId = "firebolt";
+    public const string StunId = "stun";
 
     /// <summary>The hit-chance swing Rally Grunt grants and Dirty Strike inflicts.</summary>
     public const int HitChanceSwing = 15;
@@ -177,6 +192,13 @@ public static class AbilityCatalog
 
     /// <summary>The damage a Defending character turns aside from the next blow that lands.</summary>
     public const int DefendReduction = 1;
+
+    /// <summary>
+    /// The armour-ignoring fire damage a Firebolt deals on a solid hit (halved glancing, doubled critical).
+    /// Trimmed from 6 to 5 once the Attunement Crystal made firebolt semi-repeatable (v0.11) — a bolt every
+    /// other turn at 6 (crit 12), ignoring armour, was too much sustained pressure on a tank.
+    /// </summary>
+    public const int FireboltDamage = 5;
 
     public static readonly AbilityDefinition GuardAlly = new()
     {
@@ -254,6 +276,48 @@ public static class AbilityCatalog
         RuleId = "ability.dirty-strike"
     };
 
+    public static readonly AbilityDefinition Firebolt = new()
+    {
+        Id = FireboltId,
+        Name = "Firebolt",
+        InWorldName = "hurling a bolt of fire at a foe",
+        Category = AbilityCategory.Spell,
+        // Number-free on purpose, like Healing Prayer: this goes into the mage's own prompt, and a figure named
+        // here would be read out mid-fight. The rule card carries the mechanics.
+        Description =
+            "A snapped word and a hurled bolt of fire that scorches one enemy — magic, so it burns straight " +
+            "through armour as if it were not there, and lands hard enough to stagger all but the hardiest. It " +
+            "can be loosed once in an encounter and no more, so choosing the moment is the whole of the art. It " +
+            "reaches only an enemy still in the fight and, like any thrown blow, it can be turned aside by solid " +
+            "cover or simply go wide.",
+        TargetRule = AbilityTargetRule.Opponent,
+        MaxUsesPerEncounter = 1,
+        EffectKind = AbilityEffectKind.Firebolt,
+        EffectValue = FireboltDamage,
+        UsesAttackRng = true,
+        RuleId = "ability.firebolt"
+    };
+
+    public static readonly AbilityDefinition Stun = new()
+    {
+        Id = StunId,
+        Name = "Stunning Blow",
+        InWorldName = "a stunning blow that leaves a foe reeling",
+        Category = AbilityCategory.Technique,
+        Description =
+            "One tremendous, deliberate blow with the weapon in hand — a shield-smash or a hammering strike to " +
+            "the head — that, when it connects, both wounds the enemy and leaves them so dazed they lose their " +
+            "whole next turn, unable to strike, move or act until it clears. It can be attempted once in an " +
+            "encounter, and the chance is spent whether the blow lands or misses. It reaches only an enemy still " +
+            "in the fight, and a killing blow needs no stun.",
+        TargetRule = AbilityTargetRule.Opponent,
+        MaxUsesPerEncounter = 1,
+        EffectKind = AbilityEffectKind.StrikeAndStun,
+        EffectValue = 0,
+        UsesAttackRng = true,
+        RuleId = "ability.stun"
+    };
+
     public static readonly AbilityDefinition Defend = new()
     {
         Id = DefendId,
@@ -275,7 +339,7 @@ public static class AbilityCatalog
 
     /// <summary>Every ability the engine can resolve, in a stable order.</summary>
     public static readonly ImmutableArray<AbilityDefinition> All =
-        [GuardAlly, HealingPrayer, RallyGrunt, DirtyStrike, Defend];
+        [GuardAlly, HealingPrayer, RallyGrunt, DirtyStrike, Firebolt, Stun, Defend];
 
     private static readonly Dictionary<string, AbilityDefinition> ById =
         All.ToDictionary(a => a.Id, StringComparer.OrdinalIgnoreCase);

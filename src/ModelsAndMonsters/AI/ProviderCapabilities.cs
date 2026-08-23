@@ -142,6 +142,30 @@ public sealed record ProviderCapabilities
             SilentlyTruncatesHistory = false
         },
 
+        // OpenRouter is reached through the OpenAI chat-completions client, so its capability shape mirrors
+        // OpenAI's, with two deliberate narrowings for the fact that one key fronts a whole zoo of models:
+        // reasoning/effort support is uneven across them (handled by dropping effort in ChatOptionsFactory,
+        // not here), and strict schema-constrained decoding is not guaranteed for every backend, so a
+        // schema-constrained request degrades to prompt-plus-parse with the whole-rulebook fallback as backstop.
+        // OpenRouter normalizes sampling across providers and rejects (rather than silently truncating) an
+        // over-long request, like OpenAI.
+        ModelProvider.OpenRouter => new ProviderCapabilities
+        {
+            SupportsTemperature = true,
+            SupportsTopP = true,
+            SupportsTopK = false,
+            SupportsMaxOutputTokens = true,
+            SupportsSeed = true,
+            SupportsContextWindow = false,
+            SupportsThinkingToggle = false,
+            SupportsForcedToolChoice = true,
+            AllowsTemperatureAndTopPTogether = true,
+            SupportsPenalties = true,
+            SupportsRepeatPenalty = false,
+            SupportsStructuredOutputSchema = false,
+            SilentlyTruncatesHistory = false
+        },
+
         _ => throw new ArgumentOutOfRangeException(nameof(provider), provider, "Unknown provider.")
     };
 }

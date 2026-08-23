@@ -87,10 +87,22 @@ public sealed record AttackOutcome : ActionOutcome
     public string? ViaAbilityName { get; init; }
 
     /// <summary>
-    /// The status this blow applied on landing, when the ability applies one (OffBalance). Null when none was
-    /// applied, including when the blow missed.
+    /// The status this blow applied on landing, when the ability applies one (OffBalance, Stunned) — carried
+    /// as the exact <see cref="StatusEffectKind"/> name. Null when none was applied, including on a miss.
     /// </summary>
     public string? StatusApplied { get; init; }
+
+    /// <summary>
+    /// A ready-to-narrate sentence describing what <see cref="StatusApplied"/> does, since different statuses
+    /// mean different things ("off balance" vs "stunned"). Null when no status was applied.
+    /// </summary>
+    public string? StatusAppliedNote { get; init; }
+
+    /// <summary>
+    /// True when this blow ignored the target's armour entirely — a magical strike (Firebolt) whose damage is
+    /// the raw value with no armour subtracted. False for every ordinary weapon blow.
+    /// </summary>
+    public bool IgnoredArmour { get; init; }
 
     /// <summary>
     /// Who the attacker actually aimed at. Differs from <see cref="TargetId"/> only when a guardian's Guard
@@ -198,7 +210,7 @@ public sealed record AttackOutcome : ActionOutcome
                 : "";
             var applied = StatusApplied is null
                 ? ""
-                : $" The blow left {TargetName} {StatusApplied} — their next attack is less likely to land.";
+                : $" {StatusAppliedNote ?? $"The blow left {TargetName} {StatusApplied}."}";
             var morale = FearChanges.Count == 0
                 ? ""
                 : " " + string.Join(" ", FearChanges.Select(f => f.Delta > 0
@@ -211,8 +223,11 @@ public sealed record AttackOutcome : ActionOutcome
             var coverBypassed = CoverId is not null
                 ? $" The blow found {TargetName} despite {CoverName} (covered chance {HitChance})."
                 : "";
+            var damageBreakdown = IgnoredArmour
+                ? $"Fire damage {WeaponDamage}, ignoring armour = {BaseDamage}, "
+                : $"Weapon damage {WeaponDamage} minus armour {TargetArmour} = {BaseDamage}, ";
             return $"{AttackerName} hit {TargetName}{via} with {WeaponName} — {quality} (rolled {HitRoll} against {chance}). " +
-                   $"Weapon damage {WeaponDamage} minus armour {TargetArmour} = {BaseDamage}, " +
+                   $"{damageBreakdown}" +
                    $"{DamageDealt} damage dealt. " +
                    $"{TargetName} health {TargetHealthBefore} -> {TargetHealthAfter}. {status}{defended}{applied}{injury}{morale}{loot}{coverBypassed}{redirect}";
         }
@@ -234,6 +249,30 @@ public sealed record HealOutcome : ActionOutcome
     public override string Summary =>
         $"{ActorName} used {ItemName} (heals {HealingAmount}). " +
         $"{ActorName} health {HealthBefore} -> {HealthAfter} of {MaxHealth}. The item was consumed.";
+}
+
+/// <summary>
+/// The result of focusing through a focus item to recharge a spent ability (v0.11). Public and observable, no
+/// randomness. One spent charge of the actor's own limited ability is restored, and the item is NOT consumed —
+/// it may be used again on a later turn.
+/// </summary>
+public sealed record FocusOutcome : ActionOutcome
+{
+    public required string ActorId { get; init; }
+    public required string ActorName { get; init; }
+    public required string ItemName { get; init; }
+    public required string AbilityId { get; init; }
+    public required string AbilityName { get; init; }
+    public required int UsesBefore { get; init; }
+    public required int UsesAfter { get; init; }
+    public required int MaxUses { get; init; }
+
+    public override string OutcomeType => "focus";
+
+    public override string Summary =>
+        $"{ActorName} spent the whole turn attuning to the {ItemName}, rekindling {AbilityName}: " +
+        $"{UsesBefore} -> {UsesAfter} of {MaxUses} use(s) restored. No dice were rolled, and the {ItemName} " +
+        $"is not used up — it can be attuned to again on a later turn. Nothing else changed.";
 }
 
 public sealed record OpenContainerOutcome : ActionOutcome

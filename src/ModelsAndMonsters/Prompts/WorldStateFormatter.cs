@@ -414,7 +414,7 @@ public sealed class WorldStateFormatter
                 ? "None"
                 : $"{character.Weapon.Name}\nDamage: {character.Weapon.Damage}",
             ["inventory"] = FormatBulletList(character.Inventory.Select(FormatItem)),
-            ["abilities"] = FormatAbilitiesForSelf(character.Abilities),
+            ["abilities"] = FormatAbilitiesForSelf(character),
             ["morale"] = FormatMoraleForSelf(character),
             ["statuses"] = FormatStatusesForSelf(character, state),
             ["offers"] = FormatOffersForSelf(character, state),
@@ -481,19 +481,40 @@ public sealed class WorldStateFormatter
     /// they never have to guess whether a limited ability is spent — a model that guesses wrong burns its turn
     /// on an attempt the engine refuses.
     /// </summary>
-    private static string FormatAbilitiesForSelf(IReadOnlyList<CharacterAbility> abilities)
+    private static string FormatAbilitiesForSelf(Character character)
     {
-        if (abilities.Count == 0)
+        var abilities = character.Abilities;
+        if (abilities.IsEmpty)
         {
             return "- None beyond what anyone can do with a weapon in hand.";
         }
 
+        // A focus item the character is carrying turns a "spent" limited ability from a dead end into a reload.
+        // When one is present we point them straight at it, by name, on the very ability that is spent — the
+        // one moment and place the nudge is worth anything. Without it, spent stays spent.
+        var focus = character.Inventory.FirstOrDefault(i => i.IsFocusItem);
+
         return string.Join("\n", abilities.Select(a =>
         {
             var definition = AbilityCatalog.Find(a.AbilityId);
-            var spent = a.HasChargeLeft ? "" : " — SPENT, you cannot use it again in this fight";
             var uses = a.RemainingUses is null ? "as often as you like" : a.DescribeUses();
             var what = definition is null ? "" : $" {definition.Description}";
+
+            string spent;
+            if (a.HasChargeLeft)
+            {
+                spent = "";
+            }
+            else if (focus is not null && a.MaxUses is not null)
+            {
+                spent = $" — SPENT for now, but it is NOT gone: spend a whole turn attuning to your " +
+                        $"{focus.DisplayName} to draw {a.Name} back into you, and you can loose it again next turn";
+            }
+            else
+            {
+                spent = " — SPENT, you cannot use it again in this fight";
+            }
+
             return $"- {a.Name} ({uses}{spent}).{what}";
         }));
     }
@@ -557,6 +578,9 @@ public sealed class WorldStateFormatter
                 // thing twice in one prompt and invite the character to narrate a status rather than a feeling.
                 StatusEffectKind.Scared =>
                     "- Your nerve has gone, and it shows. Anyone here can see you are afraid.",
+                StatusEffectKind.Stunned =>
+                    "- You are stunned and reeling from a heavy blow, and will lose your next turn entirely before " +
+                    "the daze clears.",
                 _ => $"- {status.Describe()}"
             });
         }
@@ -711,6 +735,11 @@ public sealed class WorldStateFormatter
         if (item.IsWeaponTrophy)
         {
             return $"{item.DisplayName} (taken as a trophy — carried, not equipped; cannot be fought with)";
+        }
+
+        if (item.IsFocusItem)
+        {
+            return $"{item.DisplayName} (a focus crystal: ONCE one of your own powers is spent, a whole turn spent attuning to it draws that power back; not used up, and useless while your powers are still ready)";
         }
 
         return item.HealingAmount is { } healing ? $"{item.DisplayName} (restores {healing} health)" : item.DisplayName;

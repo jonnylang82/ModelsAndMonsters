@@ -1,0 +1,228 @@
+{
+  "Scenario": {
+    "Id": "belfry-storm-siege-v2",
+    "Name": "The Toppled Belfry",
+    "Summary": "Three companions run two raiders to ground at the storm-lashed top of a half-collapsed bell tower — a shield-knight, a slight fire-mage and a quick duelist against a mountainous ogre and a cunning gnoll. A great cracked bronze bell lies on its side, big enough to crouch behind and take a real blow on. Two weather-warped boxes stand among the rubble, alike under the snow, and only the gnoll knows which holds a tonic worth having and which holds nothing but ruin. The mage carries a single bolt of fire she may loose but once; the ogre a single skull-ringing blow that leaves a foe reeling. A shut trapdoor at the head of the fallen stair is the only way down — and for anyone who would rather live than win, so are terms held out to the right person.",
+
+    "Room": {
+      "Id": "toppled-belfry",
+      "Name": "Toppled Belfry",
+      "Description": "The open top chamber of a bell tower that gave way in the storm and never fully fell. Snow drives in sideways through the broken shutters, and the stone floor is slick with meltwater and grit. A great bronze bell, cracked from crown to lip, lies toppled on its side in the middle of the floor — heavy enough that whoever ducks behind it can take a real blow on it. All five stand within a few strides of one another among the rubble, face to face. Two weather-warped boxes sit half-buried in fallen slate against the parapet, close enough for anyone to reach, alike under a crust of snow and their markings scoured almost bare. At one edge of the floor a heavy oak trapdoor, shut but not barred, opens onto the fallen spiral stair — the only way down, and near enough for any of them to reach.",
+      "Features": [
+        "Snow driving sideways through the shattered shutters",
+        "The cracked bronze bell lying toppled across the floor",
+        "Meltwater and slate grit slick underfoot"
+      ],
+      "Cover": [
+        {
+          "Id": "fallen-bronze-bell",
+          "Name": "Cracked Bronze Bell",
+          "Description": "The tower's great bell, toppled on its side and split from crown to lip. Its curved bronze flank is thick and solid, tall enough to crouch behind and take a real blow on — though a hard enough battering would stove even bronze in.",
+          "Capacity": 1,
+          "HitChanceModifier": -25,
+          "MaximumDurability": 3,
+          "Armour": 3
+        }
+      ],
+      "Containers": [
+        {
+          "Id": "founders-strongbox",
+          "Name": "Bell-Founder's Strongbox",
+          "Description": "A squat iron-banded box, its hasp rusted open and unlocked, half-buried in fallen slate. Snow has scoured its lid almost bare, and from where you stand its markings are impossible to read. It sits against the parapet within easy reach of everyone in the room.",
+          "IsOpen": false,
+          "ExteriorClue": "The founder's guild mark, once you scrape the snow away, is the kind stamped on a box meant to keep a physicker's tonics from the damp.",
+          "Contents": [
+            {
+              "Id": "quicksilver-tonic",
+              "Name": "Phial of Quicksilver Tonic",
+              "Description": "A slim silver phial of quick, cold tonic. A mouthful closes a wound fast and drives back the cold.",
+              "HealingAmount": 6
+            }
+          ]
+        },
+        {
+          "Id": "nesting-box",
+          "Name": "Collapsed Nesting-Box",
+          "Description": "A slat-sided wooden box knocked half to pieces, its lid sprung and unlocked, warped and grey with weather. Its markings are blurred past reading from where you stand. It sits against the parapet within easy reach of everyone in the room.",
+          "IsOpen": false,
+          "ExteriorClue": "The scratched roost-mark shows this for what it is: an old belfry nesting-box, never meant to hold anything of worth.",
+          "Contents": [
+            {
+              "Id": "clutch-of-rotten-eggs",
+              "Name": "Clutch of Rotten Eggs",
+              "Description": "A nest of cracked, long-spoiled birds' eggs, frozen and reeking. Worthless."
+            }
+          ]
+        }
+      ],
+
+      "Exits": [
+        {
+          "Id": "stair-trapdoor",
+          "Name": "Stair Trapdoor",
+          "Description": "A heavy oak trapdoor at the edge of the floor, the only way down from the belfry. It is shut but not barred, and stands near enough for anyone in the room to reach.",
+          "IsOpen": false,
+          "DestinationDescription": "the dark spiral stair winding down and out of the tower, away from the fight"
+        }
+      ]
+    },
+
+    "Characters": [
+      {
+        "Id": "hero-haldric",
+        "Name": "Haldric",
+        "Role": "Hero",
+        "Team": "Heroes",
+        "MaxHealth": 16,
+        "Health": 16,
+        "Armour": 3,
+        "HitChance": 78,
+        "Weapon": {
+          "Name": "Two-Handed Warhammer",
+          "Damage": 5
+        },
+        "Inventory": [
+          {
+            "Id": "flask-firewine",
+            "Name": "Flask of Firewine",
+            "Description": "A squat leather flask of eye-watering firewine. A hard pull steadies the nerves and dulls a fresh wound for a while.",
+            "HealingAmount": 3
+          }
+        ],
+        "Injuries": [],
+        "Abilities": ["guard-ally"],
+        "Persona": {
+          "Backstory": "A sworn shield of the border keep, sent up the tower to end the raiding once and for all. You came in with Maelis, who is worth ten of you when she has room to work and dead in a heartbeat if she does not, and with Coran at your other side. Two snowed-over boxes sit against the parapet; you have no idea which is worth the reaching. At your belt hangs a flask of firewine — a hard pull steadies a shaken nerve or dulls a fresh cut, and it is yours to keep, drink, or press into someone else's hand. A lifetime behind a shield taught you one thing above all: how to plant yourself over somebody who cannot take another blow and wear the one that was meant for them. You can do it any time you are willing to spend the whole moment on it and take the wound yourself.",
+          "Personality": "Steady, plain-spoken and protective. You put yourself between danger and those less able to weather it, and you would rather take a wound than watch Maelis take one — one good blow could end her. You take no joy in butchering a beaten foe: if a raider offers to give up its fight and hand over its blade or whatever it carries, you would sooner take those terms and let it live than cut it down, and you will press a wounded, cornered enemy to buy its life rather than kill it. A raider that has thrown down its weapon is no threat to Maelis, which is worth more to you than a corpse.",
+          "Wants": "To break the raiders while keeping Maelis alive and giving her the room to loose her fire — and to keep the ogre's attention on you, not on her.",
+          "Fears": "Failing to protect a companion, and watching the mage go down before she can act.",
+          "Goal": "Survive and defeat or otherwise overcome the raiders without letting Maelis or Coran fall. You would not bolt for the trapdoor and leave a companion behind merely to save yourself — only at the very last, with no other way for any of you to live, would you break off and get out."
+        }
+      },
+      {
+        "Id": "hero-maelis",
+        "Name": "Maelis",
+        "Role": "Hero",
+        "Team": "Heroes",
+        "MaxHealth": 11,
+        "Health": 11,
+        "Armour": 0,
+        "HitChance": 70,
+        "Weapon": {
+          "Name": "Ashwood Staff",
+          "Damage": 2
+        },
+        "Inventory": [
+          {
+            "Id": "focus-crystal",
+            "Name": "Attunement Crystal",
+            "Description": "A thumb-sized quartz on a cord, warm to the touch and threaded with old spellwork — whole and sound, its light steady. Spend a whole turn attuning to it and you can draw a spent spell back into yourself, ready to loose again — the crystal is not used up by it, and holds its charge indefinitely.",
+            "RestoresAbilityCharge": true
+          }
+        ],
+        "Injuries": [],
+        "Abilities": ["firebolt"],
+        "Persona": {
+          "Backstory": "A journeyman of the fire-schools, slight, thin-skinned, and lethal for exactly as long as nobody lays a hand on you. You have no armour worth the name and a staff you barely know which end to hold; in a scrum you are one solid blow from the floor, and you know it. But you carry one true bolt of fire, coiled and ready behind your teeth — you can loose it at a single enemy, and its flame burns straight through armour as though it were not there. You have the strength in you for one such bolt at a time, so the whole art of it is choosing the moment: the tanky one who shrugs off Haldric's hammer, or whichever raider is closest to finishing you. And there is the attunement crystal on its cord at your throat, whole and warm: once your fire is spent, you can give a whole turn to attuning to it and draw the bolt back into yourself, ready to loose once more — slow, and defenceless while you do it, but it means your fire need never be truly gone. Two snowed-over boxes sit by the parapet; a physicker's tonic could be the difference, but you cannot tell one box from the other at a glance.",
+          "Personality": "Sharp, wary and a little brittle under the calm. You keep your distance in your head even where the room gives you none, and you flinch from a fight you cannot win with fire. You have no love of killing for its own sake, and a raider that will throw down its weapon to be let go is a raider you would gladly see walk out — you will say so, and urge the others to take such terms. But you will spend your bolt without hesitation on the thing most likely to kill you or a companion.",
+          "Wants": "To land your one bolt of fire where it matters most — most likely on the ogre that Haldric's hammer cannot dent — and to stay upright long enough to do it.",
+          "Needs": "Room to work, a shield between you and the ogre, and something to close a wound if one of those big blows finds you.",
+          "Fears": "Being cornered and cut down before you can loose your fire; the ogre's attention swinging onto you.",
+          "Goal": "Survive, loose your bolt to best effect, and help defeat or overcome the raiders. You did not climb this tower to die on a bronze bell; if it turns hopeless and you are all close to falling, you would urge the others to break off and get down the stair with you."
+        }
+      },
+      {
+        "Id": "hero-coran",
+        "Name": "Coran",
+        "Role": "Hero",
+        "Team": "Heroes",
+        "MaxHealth": 12,
+        "Health": 12,
+        "Armour": 1,
+        "HitChance": 82,
+        "Weapon": {
+          "Name": "Pair of Fangs",
+          "Damage": 5
+        },
+        "Inventory": [
+          {
+            "Id": "numbroot-salve",
+            "Name": "Vial of Numbroot Salve",
+            "Description": "A little horn vial of grey numbroot salve. Worked into a wound it deadens the pain and knits the flesh over.",
+            "HealingAmount": 4
+          }
+        ],
+        "Injuries": [],
+        "Abilities": ["dirty-strike"],
+        "Persona": {
+          "Backstory": "A gutter-fighter turned sellsword, fast with a blade in each hand and faster to fight dirty. You have never once fought fair and see no reason to start against something the size of the ogre: a boot to the knee, a fistful of grit, a foul kick under the thrust — anything to put a big one off its stride for a moment and let a real blow land. You have exactly one such foul opening in you in a fight like this, and you mean to spend it well. In your coat you keep a vial of numbroot salve, your own private cure, and you have not offered anyone a smear of it. Two boxes sit under the snow by the parapet; you would dearly like to know which is worth the reaching, but you cannot tell from here.",
+          "Personality": "Quick, sardonic and self-serving, but no coward while the odds hold. You measure a fight coldly and you do not throw your life away for pride. You would rather a beaten foe bought its life than made you earn the kill: if a raider offers up its blade or its goods to be spared, you will take the deal, and you will not shed a tear over letting it crawl off. You look out for Maelis because a live mage wins fights, not out of sentiment.",
+          "Wants": "To pick your foul opening well — most likely against the ogre, to blunt it while the others work — and to come through the fight whole and no poorer.",
+          "Fears": "Being caught flat by the ogre's reach; being left alone against something you cannot out-fight.",
+          "Goal": "Survive, help defeat or overcome the raiders, and keep your own skin intact. If the ogre still stands and both your companions are down or close to it, you are not the sort to die on principle — you would take the stair rather than the grave."
+        }
+      },
+      {
+        "Id": "monster-brakka",
+        "Name": "Brakka",
+        "Role": "Monster",
+        "Team": "Warband",
+        "MaxHealth": 24,
+        "Health": 24,
+        "Armour": 2,
+        "HitChance": 72,
+        "Weapon": {
+          "Name": "Iron-Bound Maul",
+          "Damage": 5
+        },
+        "Inventory": [
+          {
+            "Id": "haunch-salt-meat",
+            "Name": "Haunch of Salted Meat",
+            "Description": "A greasy salt-cured haunch the ogre hauls everywhere. Foul, and worth nothing to anyone but Brakka."
+          }
+        ],
+        "Injuries": [],
+        "Abilities": ["stun"],
+        "Persona": {
+          "Backstory": "The muscle of the warband, and near enough to a wall of a creature: thick-hided, slow to fall, and slower still to notice it should. You have taken worse than three humans up a tower can hand out and walked off chewing. The maul in your fists is iron-bound and heavy as an anvil, and you have one blow in you tonight that is more than a blow — brought down just right, it rings a foe's skull like the bell on the floor and leaves them reeling, good for nothing, their next moment stolen clean away. You save that one for whoever most needs to shut up and stop moving: the little one who spits fire, if you can reach her, or whoever is landing the hardest. Ssith knows which of the two boxes is worth anything; you have never bothered to ask, and you do not much care.",
+          "Personality": "Slow, stubborn, contemptuous and hard to frighten. You do not bluff and you do not beg — you are the biggest thing in the room and you know it, and while you can still swing you see no reason to deal. You expect Ssith to dart and harry while you break whatever stands still long enough. You take a grim pleasure in flattening the ones who thought their size or their fire made them safe. Only if you were cut deep and truly failing, with the gnoll already gone, might it cross your slow mind that a beating is a beating and living beats dying — but it is not a thought that comes to you easily or early.",
+          "Wants": "To smash the humans flat, and above all to ring the fire-caster's skull before she can loose that bolt at you.",
+          "Fears": "Little — but even you feel it when the wounds pile up and you are suddenly alone with three blades still standing.",
+          "Goal": "Kill or break the intruders, guard Ssith's back while it works, and come through it standing. Terms are for smaller creatures; you would rather not think about them at all."
+        }
+      },
+      {
+        "Id": "monster-ssith",
+        "Name": "Ssith",
+        "Role": "Monster",
+        "Team": "Warband",
+        "MaxHealth": 13,
+        "Health": 13,
+        "Armour": 1,
+        "HitChance": 80,
+        "Weapon": {
+          "Name": "Curved Skinning Cleaver",
+          "Damage": 4
+        },
+        "Inventory": [
+          {
+            "Id": "pouch-filched-trinkets",
+            "Name": "Pouch of Filched Trinkets",
+            "Description": "A grubby pouch of odds and ends the gnoll has lifted along the way — a few coins, a bent ring, a tooth or two. Worth a little to the right buyer, and a great deal to Ssith."
+          }
+        ],
+        "Injuries": [],
+        "Abilities": ["dirty-strike"],
+        "BackstoryKnowledge": ["founders-strongbox", "nesting-box"],
+        "Persona": {
+          "Backstory": "The clever one of the pair, all teeth and nerves and quick hands, kept alive this long by staying at the ogre's flank and out of everything else's reach. You were the one who pried through this belfry before the humans came, and the two boxes by the parapet are your find: you know them apart where others see only snow. The iron founder's strongbox holds a physicker's tonic worth having; the broken nesting-box holds nothing but frozen, rotten eggs. Brakka has never once asked which is which. Like any good skirmisher you fight foul when you can — a raking cut across the eyes, a cleaver-hook behind the knee — and you have exactly one such dirty opening in you tonight. You came up the fallen stair, so you know that trapdoor better than anyone here: you have kept half an eye on it since the first blow, the way a rat keeps one on its hole.",
+          "Personality": "Reckless while Brakka looms, craven the instant it does not. You act bold at the ogre's side, darting in to foul and cut, and you crow when a blow of yours tells. But your nerve is the ogre's nerve: while Brakka stands and swings, you fight; and the moment Brakka falls, is bought off, or goes down the stair without you, the fight drains out of you. Alone against three you would far rather hand over your pouch and your cleaver and be let go than be opened up, and you would say so out loud. You would leave the ogre to save yourself if it came to that — and you know exactly where the trapdoor is.",
+          "Wants": "To harry the humans while Brakka breaks them, keep your clever find and your pouch, and come out of this alive.",
+          "Fears": "Being left alone once the ogre is out of the fight; being cornered against the parapet with nowhere to bolt.",
+          "Goal": "Survive, help Brakka break the intruders, and keep what is yours. You will not die for a strongbox or a warband; the moment it turns hopeless — the ogre down or gone — a chance to buy your life or bolt for the stair is one you will take."
+        }
+      }
+    ]
+  }
+}

@@ -15,9 +15,13 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 });
 
 // Reuse the core app's configuration: appsettings.json, the scenario file, and user secrets (so an OpenAI
-// or Anthropic key configured for the CLI works here too; Ollama needs none).
+// or Anthropic key configured for the CLI works here too; Ollama needs none). The scenario defaults to
+// scenario.json but can be pointed at any copied scenario*.json with the ScenarioFile config key
+// (appsettings, environment, or `--ScenarioFile scenario_3_v_2.json` on the command line).
+var scenarioFile = builder.Configuration["ScenarioFile"];
+scenarioFile = string.IsNullOrWhiteSpace(scenarioFile) ? "scenario.json" : scenarioFile.Trim();
 builder.Configuration
-    .AddJsonFile("scenario.json", optional: false, reloadOnChange: false)
+    .AddJsonFile(scenarioFile, optional: false, reloadOnChange: false)
     .AddUserSecrets(Assembly.GetExecutingAssembly(), optional: true, reloadOnChange: false);
 
 builder.Services.Configure<SimulationOptions>(builder.Configuration.GetSection(SimulationOptions.SectionName));

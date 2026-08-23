@@ -45,6 +45,36 @@ public sealed class TransientRetryTests
         public void Dispose() { }
     }
 
+    /// <summary>
+    /// A client that throws <see cref="ArgumentOutOfRangeException"/> for its first N calls, then returns a
+    /// fixed reply. Mirrors the OpenAI SDK choking on a degenerate/empty provider completion (observed at
+    /// OpenAI.Chat.ChatCompletion.get_Role indexing an empty response), as seen from a free OpenRouter model.
+    /// </summary>
+    private sealed class EmptyResponseChatClient(int failuresBeforeSuccess, ChatResponse success) : IChatClient
+    {
+        public int CallCount { get; private set; }
+
+        public Task<ChatResponse> GetResponseAsync(
+            IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+            if (CallCount <= failuresBeforeSuccess)
+            {
+                throw new ArgumentOutOfRangeException("index");
+            }
+
+            return Task.FromResult(success);
+        }
+
+        public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+        public void Dispose() { }
+    }
+
     /// <summary>A minimal concrete agent exposing one traced model call for the retry path.</summary>
     private sealed class PokeAgent(AgentModelProfile profile, TracingChatClient client)
         : ModelAgent("Poke", profile, client, "system")
@@ -178,6 +208,35 @@ public sealed class TransientRetryTests
         await Assert.ThrowsAsync<HttpRequestException>(agent.Send);
 
         // Three attempts total (the original plus two retries), then the failure is allowed to surface.
+        Assert.Equal(3, flaky.CallCount);
+    }
+
+    [Fact]
+    public async Task A_degenerate_empty_provider_response_is_retried_rather_than_ending_the_run()
+    {
+        // A free OpenRouter model returned a 200 with an empty completion; the OpenAI SDK threw
+        // ArgumentOutOfRangeException parsing it, which sailed past the 5xx-only retry and killed the run at
+        // round 1. It must be retried like any other flaky reply.
+        var flaky = new EmptyResponseChatClient(failuresBeforeSuccess: 1, ScriptedChatClient.Text("recovered"));
+        var profile = OllamaProfile(temperature: 0f, seed: 100);
+        var agent = new PokeAgent(profile, new TracingChatClient(flaky, profile, new ExperimentTrace("test-run", new RecordingTraceSink())));
+
+        var response = await agent.Send();
+
+        Assert.Equal("recovered", ModelText.Clean(response));
+        Assert.Equal(2, flaky.CallCount);
+    }
+
+    [Fact]
+    public async Task A_persistent_empty_response_still_surfaces_after_the_attempt_limit()
+    {
+        // A model returning nothing but empties is genuinely broken; after the retry budget it is surfaced
+        // rather than looped on forever.
+        var flaky = new EmptyResponseChatClient(failuresBeforeSuccess: 99, ScriptedChatClient.Text("unreached"));
+        var profile = OllamaProfile(temperature: 0f, seed: 1);
+        var agent = new PokeAgent(profile, new TracingChatClient(flaky, profile, new ExperimentTrace("test-run", new RecordingTraceSink())));
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(agent.Send);
         Assert.Equal(3, flaky.CallCount);
     }
 }

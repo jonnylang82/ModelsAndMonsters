@@ -215,6 +215,13 @@ public sealed class ItemDefinition
     public int? HealingAmount { get; set; }
 
     /// <summary>
+    /// When true, this is a focus item: spending a turn using it restores one spent charge of the owner's
+    /// own limited ability, and it is not consumed. Gives a once-per-encounter caster something to do after
+    /// spending their one big spell.
+    /// </summary>
+    public bool RestoresAbilityCharge { get; set; }
+
+    /// <summary>
     /// Optional short in-world tag distinguishing this item from others that share its name — "Rowan's".
     /// Set it on any item the scenario deliberately duplicates, or characters holding two cannot tell
     /// them apart.

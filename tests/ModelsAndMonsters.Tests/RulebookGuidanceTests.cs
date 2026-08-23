@@ -81,6 +81,50 @@ public sealed class RulebookGuidanceTests
     }
 
     // ------------------------------------------------------------------------------------------
+    // Weak-model near-misses that are repaired rather than rejected (v0.11)
+    // ------------------------------------------------------------------------------------------
+
+    [Fact]
+    public void A_rule_id_written_where_the_action_name_belongs_is_recovered_to_its_action()
+    {
+        // The single largest cause of thrown-away guidance on llama3.1: candidateActions carried the RULE ID
+        // ("ability.guard-ally") instead of the action name ("use_ability"). The right rule was chosen; only the
+        // field was mislabelled, so it is resolved through the catalog to its action rather than rejected.
+        var guard = Catalog.Find("ability.guard-ally")!;
+
+        var validation = Validator.Validate(Supported("ability.guard-ally", "ability.guard-ally", guard.Version));
+
+        Assert.True(validation.IsValid);
+        Assert.Equal(["use_ability"], validation.Guidance.CandidateActions);
+    }
+
+    [Fact]
+    public void A_rule_id_transcribed_with_underscores_for_hyphens_still_matches_its_card()
+    {
+        // llama3.1 routinely wrote "environment.take_cover" for "environment.take-cover" — a formatting slip on
+        // an exact identifier, recovered the same way a version typo is. Here it appears in BOTH fields at once,
+        // exactly as observed live, and both are normalised back to the real card and its action.
+        var cover = Catalog.Find("environment.take-cover")!;
+        var supplied = new[] { cover, Catalog.RejectCard };
+
+        var validation = Validator.Validate(
+            Supported("environment.take_cover", "environment.take_cover", cover.Version), supplied);
+
+        Assert.True(validation.IsValid);
+        Assert.Equal(["take_cover"], validation.Guidance.CandidateActions);
+        Assert.Equal(["environment.take-cover"], validation.Guidance.CitedRules.Select(c => c.RuleId).ToArray());
+    }
+
+    [Fact]
+    public void Catalog_lookup_tolerates_underscore_for_hyphen_but_never_shadows_an_exact_id()
+    {
+        Assert.Same(Catalog.Find("environment.take-cover"), Catalog.Find("environment.take_cover"));
+        Assert.Same(Catalog.Find("ability.guard-ally"), Catalog.Find("ability.guard_ally"));
+        // An id that matches nothing under normalisation is still not invented.
+        Assert.Null(Catalog.Find("nonsense.made_up_rule"));
+    }
+
+    // ------------------------------------------------------------------------------------------
     // A citation must be of a card that was actually supplied (v0.8)
     // ------------------------------------------------------------------------------------------
 

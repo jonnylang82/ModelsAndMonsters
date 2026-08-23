@@ -11,7 +11,7 @@
       "request": "launch",
       "preLaunchTask": "build-web",
       "program": "${workspaceFolder}/src/ModelsAndMonsters.Web/bin/Debug/net10.0/ModelsAndMonsters.Web.dll",
-      "args": [],
+      "args": ["--ScenarioFile", "scenario_3_v_2.json"],
       // Content root is AppContext.BaseDirectory, so cwd only decides where the runs/ folder lands —
       // keep it at the web project so runs sit next to the ones the CLI/dotnet-run produce.
       "cwd": "${workspaceFolder}/src/ModelsAndMonsters.Web",

@@ -16,6 +16,9 @@ public enum EngineRejectionReason
     ItemHasNoSupportedEffect,
     ItemTargetNotSupported,
 
+    // Focus items that restore a spent ability charge (v0.11).
+    NoDepletedAbilityToRestore,
+
     // Object and container interaction (v0.3).
     UnknownContainer,
     ContainerReferenceAmbiguous,
@@ -189,5 +192,12 @@ public sealed record TurnUpkeep
 
     public IReadOnlyList<OfferTransition> OfferTransitions { get; init; } = [];
 
-    public bool IsEmpty => StatusEvents.Count == 0 && OfferTransitions.Count == 0;
+    /// <summary>
+    /// True when start-of-turn upkeep found the acting character stunned from an earlier turn and consumed the
+    /// <see cref="Domain.StatusEffectKind.Stunned"/> status: the character loses this whole turn and takes no
+    /// action, but stays alive, present and targetable. Only ever set by <see cref="GameEngine.BeginActorTurn"/>.
+    /// </summary>
+    public bool ActorIncapacitated { get; init; }
+
+    public bool IsEmpty => StatusEvents.Count == 0 && OfferTransitions.Count == 0 && !ActorIncapacitated;
 }

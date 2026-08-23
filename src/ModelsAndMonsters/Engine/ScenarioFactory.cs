@@ -301,5 +301,6 @@ public static class ScenarioFactory
         item.Name,
         item.Description,
         item.HealingAmount,
-        string.IsNullOrWhiteSpace(item.Qualifier) ? null : item.Qualifier.Trim());
+        string.IsNullOrWhiteSpace(item.Qualifier) ? null : item.Qualifier.Trim(),
+        RestoresAbilityCharge: item.RestoresAbilityCharge);
 }

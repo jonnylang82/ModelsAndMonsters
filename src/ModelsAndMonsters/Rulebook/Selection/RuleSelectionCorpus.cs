@@ -156,6 +156,36 @@ public static class RuleSelectionCorpus
             Clarity = IntentClarity.Clear,
             Note = "Bracing reads as inaction and is an action. The attack card explicitly excludes it."
         },
+        new()
+        {
+            Id = "use-item-focus-recharge",
+            Category = "attack vs ability",
+            Intent = "I close my eyes and attune to my crystal, drawing my spent firebolt back into me.",
+            RequiredRuleIds = ["inventory.use"],
+            ExpectedAction = "use_item",
+            Clarity = IntentClarity.Ambiguous,
+            Note = "Attuning to a focus item to rekindle a spent ability is use_item (the item does the work), NOT use_ability — the ability is being restored, not cast. Naming the spell being recovered ('my spent firebolt') is the trap: the firebolt card now excludes drawing it back, and inventory.use claims the recover-even-when-named case."
+        },
+        new()
+        {
+            Id = "ability-firebolt",
+            Category = "attack vs ability",
+            Intent = "I snap out the word of power and hurl a bolt of fire at the ogre.",
+            RequiredRuleIds = ["ability.firebolt"],
+            ExpectedAction = "use_ability",
+            Clarity = IntentClarity.Clear,
+            Note = "A spell named in its own terms — fire, a hurled bolt — with no weapon in hand. Distinctive enough that the fire language alone should route it to the ability, not a plain attack."
+        },
+        new()
+        {
+            Id = "attack-vs-stun",
+            Category = "attack vs ability",
+            Intent = "I swing my warhammer with everything I have at the wizard's head, trying to lay him out senseless for a moment.",
+            RequiredRuleIds = ["ability.stun", "combat.attack"],
+            ExpectedAction = "use_ability",
+            Clarity = IntentClarity.Ambiguous,
+            Note = "A crushing blow meant to daze and cost a turn, described in its own terms. The plain attack card must be there too, because the stun resolves through it — the same shape as the dirty-strike case."
+        },
 
         // ---- Inspect versus open versus take ------------------------------------------------------
         new()
@@ -594,7 +624,7 @@ public static class RuleSelectionCorpus
     /// v0.9/v0.10 cards and this refresh moved it here (25 cards; the DistinguishedFrom routing metadata added
     /// in the same refresh is part of the hash but changes no required-card or expected-action label).
     /// </summary>
-    public const string LabelledAgainstRulebookVersion = "rulebook-a77b3336d2";
+    public const string LabelledAgainstRulebookVersion = "rulebook-ac61595df5";
 
     /// <summary>
     /// Cards that no case requires, on purpose, each with the reason it genuinely cannot be exercised as a

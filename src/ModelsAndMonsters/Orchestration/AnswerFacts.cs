@@ -769,8 +769,9 @@ public sealed class AnswerFactsProjector : IAnswerFactsProjector
         "Nothing in it can be climbed, moved, thrown, tipped over, hidden behind, extinguished or used in any way.",
 
         "The only conditions that exist are the ones the world itself applies and lists: standing over a " +
-        "companion, being stood over, being steadied, being off balance, and having your guard up. There is no " +
-        "stunning, no knocking down, no tripping, no disarming a foe, no grappling and no shoving.",
+        "companion, being stood over, being steadied, being off balance, having your guard up, and — for those " +
+        "with the ability to inflict it — being stunned and reeling. There is no knocking down, no tripping, " +
+        "no disarming a foe, no grappling and no shoving.",
 
         "Nobody can be forced into anything by words. A threat, a demand or a promise changes nothing until " +
         "somebody chooses to act on it on their own turn."

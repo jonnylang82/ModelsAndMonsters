@@ -73,9 +73,31 @@ public sealed class RuleGuidanceValidator
 
         // Candidate actions must be real engine tools AND supported by something cited. Unknown names and
         // unsupported ones are dropped rather than trusted.
+        //
+        // One systematic near-miss is repaired first, for the same reason the version typo above is: a weak
+        // model routinely writes the RULE ID where the ACTION NAME belongs — candidateActions ["ability.guard-ally"]
+        // instead of ["use_ability"] — which is a mislabelled field, not a different decision (measured live on
+        // llama3.1: it was the single largest cause of otherwise-correct guidance being thrown away). When an
+        // entry is not an engine tool but names a known rule, it is resolved through the catalog to that rule's
+        // own action. This is an identifier lookup, never inference from prose, and the correspondence filter
+        // below still requires a surviving citation to back whatever action results.
+        static string? AsEngineAction(string candidate, IRuleRepository repository)
+        {
+            var trimmed = candidate.Trim();
+            if (DungeonMasterTools.EngineActionsByName.ContainsKey(trimmed))
+            {
+                return trimmed;
+            }
+
+            var action = repository.Find(trimmed)?.ActionName;
+            return action is not null && DungeonMasterTools.EngineActionsByName.ContainsKey(action) ? action : null;
+        }
+
         var named = guidance.CandidateActions
-            .Where(a => !string.IsNullOrWhiteSpace(a) && DungeonMasterTools.EngineActionsByName.ContainsKey(a.Trim()))
-            .Select(a => a.Trim())
+            .Where(a => !string.IsNullOrWhiteSpace(a))
+            .Select(a => AsEngineAction(a, _repository))
+            .Where(a => a is not null)
+            .Select(a => a!)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
