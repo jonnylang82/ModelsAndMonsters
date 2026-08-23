@@ -27,6 +27,8 @@ public sealed class WebGameConsole : IGameConsole
 
     public void DungeonMaster(string text) => _publish(UiEvent.Narration(text));
 
+    public void RoundSummary(int round, string text) => _publish(UiEvent.RoundSummary(round, text));
+
     public void PrivateObservation(string characterName, string observation) =>
         _publish(UiEvent.PrivateObservation(characterName, observation));
 

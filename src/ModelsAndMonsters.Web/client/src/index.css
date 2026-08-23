@@ -19,7 +19,28 @@ body {
   font: 15px/1.5 -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
 }
 
-.app { max-width: 1100px; margin: 0 auto; padding: 16px; }
+.app { max-width: 1100px; margin: 0 auto; padding: 16px; padding-bottom: 52px; }
+
+/* Fixed status bar: default model on the left, a running token tally on the right. Pinned to the viewport
+   so it stays visible while the transcript scrolls; the .app padding-bottom keeps the last line clear of it. */
+.statusbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 7px 16px;
+  background: var(--panel2);
+  background: color-mix(in srgb, var(--panel2) 92%, transparent);
+  border-top: 1px solid var(--line);
+  backdrop-filter: blur(6px);
+  font-size: 12px; color: var(--muted);
+}
+.sb-model { font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sb-provider { color: var(--muted); font-weight: 400; }
+.sb-tokens { display: flex; align-items: baseline; gap: 14px; white-space: nowrap; }
+.sb-tok { font-variant-numeric: tabular-nums; }
+.sb-tok .sb-k { color: var(--muted); margin-right: 4px; text-transform: uppercase; letter-spacing: 0.5px; font-size: 10px; }
+.sb-total { color: var(--accent); font-weight: 700; }
+.sb-calls { color: var(--muted); }
+.sb-idle { color: var(--muted); font-style: italic; }
 
 .top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
 .top h1 { font-size: 18px; margin: 0; letter-spacing: 0.3px; }
@@ -95,6 +116,20 @@ button.ghost { background: transparent; color: var(--muted); border: 1px solid v
 .line.sys { color: var(--muted); font-size: 12px; }
 .line.divider { color: var(--muted); text-align: center; letter-spacing: 1px; margin: 14px 0 8px; }
 .line.divider.end { color: var(--accent); }
+
+/* The DM's one-line round recap: set apart from the turn-by-turn transcript as a quiet, italic aside with an
+   accent rule down its left edge, so it reads as the storyteller stepping back rather than another beat. */
+.line.roundsummary {
+  display: flex; align-items: baseline; gap: 10px;
+  margin: 10px 0 14px; padding: 6px 0 6px 12px;
+  border-left: 2px solid var(--accent);
+  font-style: italic; color: #f0e6cf;
+}
+.roundsummary .rs-tag {
+  font-style: normal; font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px;
+  color: var(--accent); white-space: nowrap; flex-shrink: 0;
+}
+.roundsummary .rs-text { line-height: 1.45; }
 .line.outcome { color: var(--accent); font-size: 13px; }
 
 /* The encounter's story: a popover, not a log line — see StoryPopover in App.jsx. */

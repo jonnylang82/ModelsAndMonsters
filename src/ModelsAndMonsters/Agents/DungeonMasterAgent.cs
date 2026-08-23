@@ -331,6 +331,30 @@ public sealed class DungeonMasterAgent : ModelAgent
             cancellationToken);
 
     /// <summary>
+    /// Speaks a single artistic-but-truthful line recapping a round, grounded strictly in <paramref
+    /// name="roundEvents"/> — the round's own public narrations, already resolved by the engine. Runs on a
+    /// fresh, isolated narration projection: it deliberately does NOT go through
+    /// <see cref="NarrateProjectedAsync"/>, because that path prefixes a "narrate only the new development"
+    /// instruction meant for per-turn beats, whereas a recap must be free to draw on the whole round. It also
+    /// leaves <c>_hasNarrated</c> untouched and never joins the shared conversation, so a recap can never bleed
+    /// into the next turn's narration. The material is the only thing it is given, so an invented flourish has
+    /// nothing to stand on.
+    /// </summary>
+    public async Task<string> SummariseRoundAsync(int round, string roundEvents, CancellationToken cancellationToken)
+    {
+        var conversation = NewProjection(_narrateSystem);
+        conversation.AppendUser(_prompts.Render("dungeon-master.round-summary", new Dictionary<string, string?>
+        {
+            ["round"] = round.ToString(),
+            ["events"] = roundEvents
+        }));
+
+        var response = await CallModelAsync(conversation, "dm.narrate.round-summary", tools: null, cancellationToken)
+            .ConfigureAwait(false);
+        return ModelText.Clean(response);
+    }
+
+    /// <summary>
     /// Asks the DM to translate a character's natural-language intent into exactly one tool call, binding the
     /// supplied rulebook guidance to the current authoritative state. The response is returned raw:
     /// interpreting and dispatching it is the orchestrator's job.

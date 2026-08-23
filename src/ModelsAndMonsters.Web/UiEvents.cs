@@ -12,8 +12,22 @@ public sealed record UiEvent(string Type, object? Payload)
 {
     // Text-stream events (from the game console).
     public static UiEvent RunHeader(string runId, string scenario) => new("runHeader", new { runId, scenario });
+
+    /// <summary>Run-level metadata for the status bar: the default agent model and its provider.</summary>
+    public static UiEvent Config(string model, string provider) => new("config", new { model, provider });
+
+    /// <summary>
+    /// A running token tally for the status bar, republished after every model response with the cumulative
+    /// totals so far. The client only ever shows the latest, so a viewer that reconnects mid-run sees the
+    /// correct total without replaying arithmetic.
+    /// </summary>
+    public static UiEvent Usage(long input, long output, long total, int calls) =>
+        new("usage", new { input, output, total, calls });
     public static UiEvent Round(int round) => new("round", new { round });
     public static UiEvent Narration(string text) => new("narration", new { text });
+
+    /// <summary>The DM's one-line artistic recap spoken at the close of a round.</summary>
+    public static UiEvent RoundSummary(int round, string text) => new("roundSummary", new { round, text });
     public static UiEvent PrivateObservation(string character, string text) => new("privateObservation", new { character, text });
     public static UiEvent Asks(string character, string text) => new("asks", new { character, text });
     public static UiEvent Acts(string character, string text) => new("acts", new { character, text });

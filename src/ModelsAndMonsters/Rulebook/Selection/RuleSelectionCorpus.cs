@@ -360,6 +360,17 @@ public static class RuleSelectionCorpus
         },
         new()
         {
+            Id = "conditional-truce",
+            Category = "offer vs accept",
+            Intent = "I hold out my fangs and offer to lay them down if Brakka and Ssith both throw down their weapons and let us walk.",
+            RequiredRuleIds = ["encounter.offer-surrender"],
+            ExpectedAction = null,
+            ExpectedRoutingAction = "offer_surrender",
+            Clarity = IntentClarity.Unsupported,
+            Note = "The grok trap: the actor's own-concession language ('I lay mine down') reads as self-surrender, but it is CONDITIONAL on the enemy also disarming — a mutual truce, i.e. a demand. Must be refused, not recorded as the winner surrendering."
+        },
+        new()
+        {
             Id = "accept-with-extra-demand",
             Category = "compound",
             Intent = "I take his terms, and tell him he lives only if he yields the salve as well.",
@@ -624,7 +635,7 @@ public static class RuleSelectionCorpus
     /// v0.9/v0.10 cards and this refresh moved it here (25 cards; the DistinguishedFrom routing metadata added
     /// in the same refresh is part of the hash but changes no required-card or expected-action label).
     /// </summary>
-    public const string LabelledAgainstRulebookVersion = "rulebook-ac61595df5";
+    public const string LabelledAgainstRulebookVersion = "rulebook-9fd8303984";
 
     /// <summary>
     /// Cards that no case requires, on purpose, each with the reason it genuinely cannot be exercised as a

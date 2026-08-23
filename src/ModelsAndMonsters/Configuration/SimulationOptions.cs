@@ -399,6 +399,15 @@ public sealed class HarnessOptions
     public int MaxConsecutiveIdleRounds { get; set; } = 2;
 
     /// <summary>
+    /// When true, the Dungeon Master speaks a single artistic-but-truthful line recapping each round once its
+    /// turns are done. The summary is grounded strictly in that round's public narrations — it is audience-only
+    /// (never delivered into any character's knowledge) and adds one bounded DM call per round, so it can be
+    /// turned off for token-tight local runs. A round that ends the encounter is left to the ending and the
+    /// story rather than also getting a recap.
+    /// </summary>
+    public bool NarrateRoundSummaries { get; set; } = true;
+
+    /// <summary>
     /// When true, a character reply that carries no structured tool call is checked for one written as
     /// prose (e.g. <c>take_action(I strike the goblin)</c>) and, if found, that call is dispatched as if
     /// the model had made it. Off by default so the raw tool-calling behaviour stays observable; turn it

@@ -38,6 +38,8 @@ internal sealed class RecordingConsole : IGameConsole
 
     public void DungeonMaster(string text) => Lines.Add($"dm:{text}");
 
+    public void RoundSummary(int round, string text) => Lines.Add($"round-summary:{round}:{text}");
+
     public void PrivateObservation(string characterName, string observation) => Lines.Add($"private:{characterName}:{observation}");
 
     public void CharacterAsks(string characterName, string question) => Lines.Add($"asks:{characterName}:{question}");

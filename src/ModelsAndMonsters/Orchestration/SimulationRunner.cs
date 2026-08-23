@@ -620,6 +620,7 @@ public sealed class SimulationRunner
             trace.SetPosition(round, turnNumber, "harness");
             trace.Emit(TraceEventType.RoundStarted, new RoundStartedPayload { Round = round, State = engine.State });
             _console.RoundHeader(round);
+            coordinator.BeginRound();
 
             // Fixed order, repeated each round. A dead actor is skipped inside the turn (no model call);
             // the terminal condition is checked after every turn, and the encounter stops the instant a
@@ -668,8 +669,27 @@ public sealed class SimulationRunner
                 break;
             }
 
-            // No round-end recap: each turn already narrates its own outcome, so a "where things stand"
-            // narration here only restates the blow that was just described.
+            // Round-end recap: one artistic-but-truthful line from the DM, grounded strictly in this round's
+            // public narrations (audience-only — never delivered to any character). Off by default only if the
+            // operator disables it; best-effort, so a recap failure never disturbs the run itself. This is the
+            // deliberate reversal of the old "no round-end recap" stance — the per-turn narrations describe each
+            // blow, and this distils the round as a whole. A round that ended the encounter never reaches here
+            // (the loop broke above), so the finale is left to the ending line and the story.
+            if (harness.NarrateRoundSummaries)
+            {
+                try
+                {
+                    await coordinator.SummariseRoundAsync(round, cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch
+                {
+                    // A recap is a flourish, not the record — never let one failing end the run.
+                }
+            }
         }
 
         trace.SetPosition(roundsPlayed, turnNumber, "harness");

@@ -15,6 +15,9 @@ public interface IGameConsole
 
     void DungeonMaster(string text);
 
+    /// <summary>The Dungeon Master's single artistic-but-truthful line recapping a finished round.</summary>
+    void RoundSummary(int round, string text);
+
     /// <summary>A private observation only one character receives — an inspection result, or contents seen on opening.</summary>
     void PrivateObservation(string characterName, string observation);
 

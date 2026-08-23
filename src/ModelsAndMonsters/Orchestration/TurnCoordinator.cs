@@ -148,6 +148,58 @@ public sealed class TurnCoordinator
         return entry;
     }
 
+    /// <summary>
+    /// The index into <see cref="NarrationLog.Entries"/> marking where the current round's public narration
+    /// begins, so <see cref="SummariseRoundAsync"/> can recap exactly that round and nothing before it.
+    /// </summary>
+    private int _roundNarrationStart;
+
+    /// <summary>Marks the start of a round for the round-summary recap. Call once, when the round begins.</summary>
+    public void BeginRound() => _roundNarrationStart = _narrationLog.Entries.Count;
+
+    /// <summary>
+    /// Has the Dungeon Master speak one artistic-but-truthful line recapping the round that just finished,
+    /// grounded strictly in that round's public event narrations (the exact lines the room witnessed). The
+    /// recap is audience-only: it is emitted to the console and the trace, but deliberately NOT recorded on the
+    /// narration log, so it is never delivered into any character's knowledge and cannot bloat their context or
+    /// be mistaken for something they perceived. A round with no resolved events to recap is skipped silently —
+    /// there is nothing to summarise and nothing to invent.
+    /// </summary>
+    public async Task SummariseRoundAsync(int round, CancellationToken cancellationToken)
+    {
+        var events = _narrationLog.Entries
+            .Skip(_roundNarrationStart)
+            .Where(e => e.Kind == PublicChannelKind.Narration && !string.IsNullOrWhiteSpace(e.Text))
+            .Select(e => e.Text.Trim())
+            .ToList();
+
+        if (events.Count == 0)
+        {
+            return;
+        }
+
+        var material = string.Join("\n\n", events.Select(e => $"- {e}"));
+        var summary = await _dungeonMaster.SummariseRoundAsync(round, material, cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(summary))
+        {
+            return;
+        }
+
+        _trace.Emit(TraceEventType.Narration, new NarrationPayload
+        {
+            Purpose = "round.summary",
+            StateSuppliedToDungeonMaster = string.Empty,
+            ContextSuppliedToDungeonMaster = material,
+            Narration = summary,
+            NarrationId = 0,
+            // Audience-only: a meta recap belongs to the record and the watcher, not to any character's
+            // knowledge, so it is delivered to nobody.
+            IntendedRecipients = []
+        }, DungeonMasterAgent.AgentIdentifier);
+
+        _console.RoundSummary(round, summary);
+    }
+
     // -----------------------------------------------------------------------------------------
     // Turn loop
     // -----------------------------------------------------------------------------------------

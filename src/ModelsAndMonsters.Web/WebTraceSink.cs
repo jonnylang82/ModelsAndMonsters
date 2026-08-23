@@ -14,6 +14,13 @@ public sealed class WebTraceSink : ITraceSink
 {
     private readonly Action<UiEvent> _publish;
 
+    // Cumulative token tally for the status bar. Every model response across every agent adds to it, and the
+    // running totals are republished each time so the client only ever displays the latest figure.
+    private long _inputTokens;
+    private long _outputTokens;
+    private long _totalTokens;
+    private int _modelCalls;
+
     public WebTraceSink(Action<UiEvent> publish) => _publish = publish;
 
     public void Write(TraceEvent traceEvent)
@@ -22,6 +29,18 @@ public sealed class WebTraceSink : ITraceSink
         {
             switch (traceEvent.EventType)
             {
+                // Token accounting: sum in/out across every agent's calls. Total prefers the provider's own
+                // figure (which can include reasoning tokens the in+out pair does not) and falls back to in+out
+                // when a provider omits it.
+                case TraceEventType.ModelResponse when traceEvent.Data is ModelResponsePayload { Usage: { } usage }:
+                    _inputTokens += usage.InputTokenCount ?? 0;
+                    _outputTokens += usage.OutputTokenCount ?? 0;
+                    _totalTokens += usage.TotalTokenCount
+                        ?? ((usage.InputTokenCount ?? 0) + (usage.OutputTokenCount ?? 0));
+                    _modelCalls++;
+                    _publish(UiEvent.Usage(_inputTokens, _outputTokens, _totalTokens, _modelCalls));
+                    break;
+
                 case TraceEventType.ScenarioSeeded when traceEvent.Data is GameState initial:
                     _publish(UiEvent.State(StateDto.From(initial)));
                     break;

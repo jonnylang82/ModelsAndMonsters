@@ -31,6 +31,9 @@ public sealed class ConsolePresenter : IGameConsole
 
     public void DungeonMaster(string text) => Block(ConsoleColor.Cyan, "DM:", ConsoleColor.Gray, text);
 
+    public void RoundSummary(int round, string text) =>
+        Block(ConsoleColor.DarkCyan, $"Round {round} —", ConsoleColor.DarkGray, text);
+
     public void PrivateObservation(string characterName, string observation) =>
         Block(ConsoleColor.Magenta, $"DM (only {characterName} notices):", ConsoleColor.Gray, observation);
 

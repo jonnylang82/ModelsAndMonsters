@@ -5,7 +5,7 @@ const API = 'http://localhost:5170'
 // How each streamed event renders in the transcript. Structured events (state/turnStarted) are handled
 // separately and drive the cards, not the log.
 const LOG_KINDS = new Set([
-  'runHeader', 'notice', 'round', 'narration', 'asks', 'acts', 'speaks',
+  'runHeader', 'notice', 'round', 'roundSummary', 'narration', 'asks', 'acts', 'speaks',
   'passes', 'refused', 'privateObservation', 'attack',
   'surrendered', 'escaped', 'exitOpened', 'gave', 'dropped', 'stole', 'completed', 'ending',
   // v0.7: negotiation, abilities, statuses. Deliberately distinct kinds — an offer and an accepted
@@ -36,6 +36,9 @@ export default function App() {
   const [log, setLog] = useState([])
   const [story, setStory] = useState(null)
   const [showStory, setShowStory] = useState(false)
+  const [model, setModel] = useState(null)
+  const [provider, setProvider] = useState(null)
+  const [usage, setUsage] = useState(null)
   const esRef = useRef(null)
   const bottomRef = useRef(null)
 
@@ -56,6 +59,8 @@ export default function App() {
       return
     }
     if (evt.type === 'turnStarted') { setTurn(p.character); return }
+    if (evt.type === 'config') { setModel(p.model); setProvider(p.provider); return }
+    if (evt.type === 'usage') { setUsage(p); return }
     // The full text lives in the popover, not the scrolling transcript — LOG_KINDS deliberately never
     // lists 'story' itself; a short marker line stands in for it (a first pass at this popped the story
     // straight into the log and it silently vanished, because handling it here never happened at all).
@@ -75,7 +80,7 @@ export default function App() {
     setCharacters([]); setObjects([]); setExits([]); setGround([]); setCover([])
     setPendingOffers([]); setSettledOffers([]); setAgreements([])
     setTurn(null); setRound(null); setLog([]); setStatus('running')
-    setStory(null); setShowStory(false)
+    setStory(null); setShowStory(false); setUsage(null)
     const res = await fetch(`${API}/api/runs`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
     })
@@ -178,8 +183,31 @@ export default function App() {
       </section>
 
       {showStory && story && <StoryPopover text={story} onClose={() => setShowStory(false)} />}
+
+      <footer className="statusbar">
+        <span className="sb-model" title="Default agent model">
+          🧠 {model || '—'}{provider ? <span className="sb-provider"> · {provider}</span> : null}
+        </span>
+        <span className="sb-tokens">
+          {usage ? (
+            <>
+              <span className="sb-tok"><span className="sb-k">in</span> {fmtTokens(usage.input)}</span>
+              <span className="sb-tok"><span className="sb-k">out</span> {fmtTokens(usage.output)}</span>
+              <span className="sb-tok sb-total"><span className="sb-k">total</span> {fmtTokens(usage.total)}</span>
+              <span className="sb-calls">{usage.calls} call{usage.calls === 1 ? '' : 's'}</span>
+            </>
+          ) : (
+            <span className="sb-tok sb-idle">no tokens yet</span>
+          )}
+        </span>
+      </footer>
     </div>
   )
+}
+
+// Thousands-separated token counts, so a six-figure total stays readable at a glance.
+function fmtTokens(n) {
+  return (n ?? 0).toLocaleString()
 }
 
 // The encounter's story, once it is written: a popover rather than another line in the scrolling
@@ -336,6 +364,12 @@ function LogLine({ evt }) {
   const p = evt.payload || {}
   switch (evt.type) {
     case 'round': return <div className="line divider">── Round {p.round} ──</div>
+    case 'roundSummary': return (
+      <div className="line roundsummary">
+        <span className="rs-tag">Round {p.round}</span>
+        <span className="rs-text">{p.text}</span>
+      </div>
+    )
     case 'runHeader': return <div className="line sys">{p.scenario} · run {p.runId}</div>
     case 'notice': return <div className="line sys">{p.text}</div>
     case 'narration': return <Line label="DM" cls="dm" text={p.text} />

@@ -153,6 +153,14 @@ public sealed class RunManager
         var sink = new WebTraceSink(session.Publish);
         var runner = new SimulationRunner(_options, scenario, _chatClientFactory, _prompts, console, sink);
 
+        // Surface the default agent model to the status bar up front, so it shows the moment a viewer connects
+        // rather than waiting for the first model response. Individual agents may override it, but the Default
+        // profile is what "the model" means at a glance.
+        var defaults = _options.Agents.Default;
+        session.Publish(UiEvent.Config(
+            string.IsNullOrWhiteSpace(defaults.ModelId) ? "(unset)" : defaults.ModelId,
+            string.IsNullOrWhiteSpace(defaults.Provider) ? "" : defaults.Provider));
+
         _runs[session.RunId] = session;
 
         _ = Task.Run(async () =>

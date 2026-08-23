@@ -147,6 +147,9 @@ public sealed class MultiActorRunTests : IDisposable
                 // The end-of-run storyteller is exercised by its own tests; switch it off here rather than
                 // script an EncounterSummariser client this run has no use for.
                 GenerateEncounterStory = false,
+                // Same reasoning for the per-round recap: it is an extra DM call at each round's end, which this
+                // fixed scripted sequence has no reply for. Its own behaviour is covered elsewhere.
+                NarrateRoundSummaries = false,
                 RunOutputDirectory = _directory
             },
             // Deterministic damage: both bands of the quality draw are silenced, so every landed blow is a

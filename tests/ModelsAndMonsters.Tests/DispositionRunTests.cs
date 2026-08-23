@@ -105,6 +105,8 @@ public sealed class DispositionRunTests : IDisposable
                 // The end-of-run storyteller is exercised by its own tests; switch it off here rather than
                 // script an EncounterSummariser client this run has no use for.
                 GenerateEncounterStory = false,
+                // The per-round recap is an extra DM call this fixed scripted sequence has no reply for.
+                NarrateRoundSummaries = false,
                 RunOutputDirectory = _directory
             },
             Combat = new CombatOptions { GlancingBlowChance = 0 }
