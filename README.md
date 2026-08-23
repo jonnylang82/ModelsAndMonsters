@@ -1,4 +1,4 @@
-# Models & Monsters — v0.10
+# Models & Monsters — v0.11
 
 A small experimental harness for autonomous LLM characters interacting inside a deterministic fantasy
 world through an LLM Dungeon Master.
@@ -71,6 +71,24 @@ The project has grown release by release from a single 1v1 duel (v0.1) into the 
   room model is stated to the character directly instead of only enforced silently by refusal. See
   [What the action set supports](#what-the-action-set-supports) and
   [Negotiated surrender](#negotiated-surrender-terms-not-declarations).
+- **v0.11** — **reach beyond the local box, and a second scenario to stress it**: three more providers join
+  local Ollama — **OpenAI**, **Anthropic** and **OpenRouter** (an OpenAI-compatible aggregator whose
+  `reasoning` object is injected into the request body by a pipeline policy) plus **Ollama Cloud** (the same
+  Ollama client with a bearer token) — all behind the one provider-agnostic `IChatClient`, chosen per agent.
+  A second scenario, **The Toppled Belfry** (`scenario_3_v_2.json`, selected with `--scenario-file`), adds a
+  fire-mage and a tanky ogre and, with them, two data-driven abilities: **Firebolt** (a once-per-encounter
+  bolt that burns through armour) and **Stunning Blow** (a hit that also costs the target its next turn), plus
+  a rechargeable **Attunement Crystal** — a focus item the mage spends a whole turn attuning to, drawing a
+  spent spell back into themselves. The Dungeon Master now speaks a single artistic-but-truthful line at the
+  close of each round (`NarrateRoundSummaries`), grounded only in that round's public events and shown to the
+  audience, never delivered to a character. The web viewer gained a bottom status bar: the default model, and
+  a live in/out/total token tally. And a run of correctness fixes that only surfaced by testing across a dozen
+  models — the resolver's firebolt-vs-attune boundary, the surrender card's self-vs-demand boundary, and
+  retries for the degenerate/empty replies cheap hosted models occasionally return. See
+  [Providers: local and hosted](#providers-local-and-hosted-v011),
+  [Abilities and status effects](#abilities-and-status-effects),
+  [The Dungeon Master's round summaries](#the-dungeon-masters-round-summaries-v011) and
+  [Negotiated surrender](#negotiated-surrender-terms-not-declarations).
 
 **New in v0.8: [`docs/architecture.md`](docs/architecture.md)** — the structural companion to this file.
 It maps the components and the five model-driven agents, walks a character's turn end to end through every
@@ -100,7 +118,9 @@ It must never determine game semantics or mutate authoritative state. Any unavoi
 
 The project froze its action set at the end of v0.10, a closure batch aimed at the most misleading gaps in
 [`reports/action-set-gaps.md`](reports/action-set-gaps.md) without turning the demo into a general RPG
-system. This is the boundary a character's turn is played against:
+system. (v0.11's firebolt, stun and the attunement crystal add no new *action*: they are ability/item **data**
+riding the existing `use_ability` and `use_item` tools.) This is the boundary a character's turn is played
+against:
 
 **Supported:**
 
@@ -494,6 +514,14 @@ request after such a 500 could wedge the server outright on a poisoned prompt ca
 [ollama#17883](https://github.com/ollama/ollama/pull/17883), and only ever reproducible **with thinking
 enabled**, which is why this harness (reasoning off everywhere) has never seen it.
 
+**v0.11 — degenerate/empty replies get the same retry.** The retry originally caught only HTTP failures (5xx).
+Cheap hosted models occasionally return a `200` with an *empty/degenerate* completion, which the OpenAI SDK
+surfaces as `ArgumentOutOfRangeException` while parsing it (indexing a missing role) — a client-side exception
+that sailed past the 5xx-only retry and killed a run at round 1 on a DM narration call (a free OpenRouter
+model). It is now treated as the same class of transient failure: re-sampled up to the same attempt budget, so
+a one-off empty reply recovers instead of ending the run, while a genuinely broken model still surfaces after
+the budget.
+
 ### Reasoning written beside a tool call is dropped, not forbidden (v0.8)
 
 With reasoning off, a model thinks on the page: it reaches its tool call through a paragraph of
@@ -717,6 +745,42 @@ reads and cache-creation writes are surfaced in `report.md` under **Run details*
 automatic cached input), so the effect is visible. Caching the *growing character histories* is a
 further lever not yet wired.
 
+### Providers: local and hosted (v0.11)
+
+Two more providers join Ollama/OpenAI/Anthropic, and all provider SDK types stay confined to
+`ChatClientFactory` — the rest of the app is provider-agnostic.
+
+- **OpenRouter** (the fourth `ModelProvider`) is reached through the OpenAI SDK's **chat-completions**
+  client (`GetChatClient(model).AsIChatClient()`, base URL `https://openrouter.ai/api/v1`) — *not* the
+  Responses API, which OpenRouter does not serve. Set `"Provider": "OpenRouter"` and an org-prefixed model
+  id (`anthropic/claude-sonnet-4.6`, `qwen/qwen3.8-max`). Key from `OPENROUTER_API_KEY` or user secrets.
+  Capabilities mirror OpenAI minus top-k, context-window and structured-schema. OpenRouter's own `reasoning`
+  request object can't be expressed as a `ChatOption`, so it is **injected into the request JSON body by a
+  per-call pipeline policy** (`OpenRouterReasoningPolicy`): `BuildOpenRouterReasoning` maps `Effort.None →
+  {"enabled": false}`, the graduated levels → `{"effort": …}` (ExtraHigh → `"max"`), and null → nothing
+  injected.
+- **Ollama Cloud** is *not* a new provider — it is the same Ollama client with a bearer token. Set
+  `Providers:Ollama:Endpoint = https://ollama.com` and a key (`OLLAMA_API_KEY`); when a key resolves, the
+  client is built over an `HttpClient` carrying `Authorization: Bearer`. Keyless local Ollama is unchanged.
+
+**"Hosted", for `EnforceContextWindowOnHostedModels` / `UnboundedHistoryOnHostedModels`, means
+`ProviderCapabilities.SupportsContextWindow == false` — NOT "runs remotely".** It's capability-driven, no
+hostname checks. So OpenRouter *is* hosted (both flags apply, like OpenAI/Anthropic), but **Ollama Cloud is
+not** — it goes through the Ollama provider, which honours per-request `num_ctx`, so `ContextWindow` governs
+it directly exactly as it does a local model (a cloud model inherits the 8192 default unless you raise it).
+
+**Mandatory-reasoning models reject a disable, and `Effort=None` sends one.** Some OpenRouter models
+(Alibaba's `qwen/qwen3.8-max`, the stealth `stealth/ox-alpha`) make reasoning mandatory and answer
+`{"enabled": false}` with `HTTP 400: "Reasoning is mandatory for this endpoint and cannot be disabled."`
+This bit a whole run at round 1: the DM/characters were `Effort=Low` (→ `{"effort":"low"}`, accepted) but the
+four helper agents default to `Effort=None` — the resolver and encounter-summariser inherit `None` unless
+their own config sets it, and the **intent-parser and history-summariser are hardcoded `None` with no config
+hook** — so they 400'd. The proactive fix is detection, not a reactive retry: OpenRouter's
+`GET /api/v1/model/{author}/{slug}` (note the *singular* `model`; it resolves aliases and `:free` variants)
+returns a `reasoning` block — `{mandatory, default_effort, supported_efforts, …}`. Read `reasoning.mandatory`
+and, when true, don't inject the disable. (Model-detail-by-id exists on all four providers; OpenRouter's list
+`GET /api/v1/models` is a full catalog, the others list only what your key can reach.)
+
 The scenario lives in `src/ModelsAndMonsters/scenario.json`, and prompts are plain markdown in
 `src/ModelsAndMonsters/Prompts/Templates/`. Each prompt is content-hashed into `run.json` so a run
 can be tied to the exact prompt text that produced it.
@@ -922,6 +986,37 @@ unbounded there — it would mean a request the API rejects. Set `Agents:Encount
 explicitly only if you want a different figure than the shared default; leaving it null (the shipped
 default) just inherits `Harness:EncounterStoryOutputTokens`.
 
+## The Dungeon Master's round summaries (v0.11)
+
+At the close of each **non-terminal** round the Dungeon Master speaks a single artistic-but-truthful line
+recapping it — the deliberate reversal of the old "no round-end recap" stance, now that per-turn narration
+describes each blow and this distils the round as a whole. It is gated by `Harness:NarrateRoundSummaries`
+(default `true`) — one extra bounded DM call per round, so switch it off for token-tight local runs. The
+round that *ends* the encounter never gets one (the ending line and the story cover it); an empty round (no
+resolved events) is skipped silently rather than made to invent drama.
+
+It is grounded strictly in **that round's own public event narrations** (`TurnCoordinator.BeginRound` marks
+the start, `SummariseRoundAsync` gathers the narration-log entries since) and is **audience-only**: emitted to
+the console (`UiEvent.RoundSummary`) and the trace, but never recorded on the narration log, so it is never
+delivered into a character's knowledge — no context bloat, and nothing a character can act on as if perceived.
+
+**Truthfulness is model-bound, and the grounding — not the model — is what stays honest.** Reading runs
+against the engine log: capable models (deepseek, grok) recap truthfully, with attribution sharp enough to
+render glancing/critical/dirty-strike nuances correctly. A weak quantised local model (`qwen3.5:9b` IQ4_XS)
+scrambles the one-sentence compression — misattributing which character struck whom, inventing a disarm that
+never happened — even though the per-turn source narrations it was given were all correct. That is a
+weak-model ceiling in the compression step, not a grounding failure. A distinct class is the **cross-round
+claim**: because the recap sees only its own round, it will otherwise assert "first blood" (blood drawn a
+round earlier) or "a single mortal strike" (a glancing finisher on an already-near-dead target). The
+round-summary prompt guards against it directly — *"this round is all you can see … never call something the
+first/last/only … don't say what happened before now"* — which helps every model, not just the weak ones.
+
+**The web viewer's status bar (v0.11).** The React viewer gained a fixed bottom bar showing the default agent
+model (and provider) on the left and a live token tally — input / output / total, plus the model-call count —
+on the right. The tally is accumulated in `WebTraceSink` from every `ModelResponse`'s `Usage` and republished
+after each call as a cumulative total (a mid-run reconnect sees the right figure without replaying arithmetic);
+total prefers the provider's own `TotalTokenCount`, which can include reasoning tokens the in+out pair omits.
+
 ## Characters, teams and turns
 
 A character sees only `ask_dm`, `say`, `take_action` and `end_turn`, and never learns that a game
@@ -1008,6 +1103,17 @@ for somebody *else's* surrender is only speech, and the one-mechanical-deed-per-
 this action at all. The only remaining engine-side requirement is that *something* is promised:
 `items = []` and `forfeit_weapon = false` together is still refused (`OfferHasNoConcession`) as a bare plea.
 
+**v0.11 — the conditional-truce inversion.** The v0.10 guidance answered a bare *demand* ("hand over your
+purse and I'll spare you"), but not a **conditional/reciprocal** offer — and a grok run found the gap: winning
+heroes shouting "throw down your maul and we'll let you walk" were recorded as *surrendering to* the ogre and
+forfeiting their weapons, twice, because each phrased its demand in self-concession language ("I offer to lay
+**my** fangs down *if* he and Ssith throw down theirs") whose first half matched the offer card while the
+reciprocal condition was dropped. The card's exclusions now name that shape too: a concession *conditional on
+the enemy also disarming or yielding* is a demand or a truce, never the actor's own surrender. The deeper gap
+is unfixed by design — `offer_surrender` is strictly **self**-surrender, and there is **no primitive for
+offering the enemy terms, demanding their surrender, or a conditional mutual truce**. The fiction keeps
+reaching for it; a card boundary can only route it to intimidation or refusal, not represent it.
+
 ```text
 Active
   → offer_surrender(recipient, offered items, forfeit weapon?)   ← consumes the offerer's turn
@@ -1069,6 +1175,8 @@ boundary problem this release closes.
 | `healing-prayer` | Elara | Spell | 1/encounter | Restores a fixed 4 health to the caster or an ally, capped at maximum, no RNG. Refused — *with the charge intact* — on an unwounded, dead or escaped target. |
 | `rally-grunt` | Vark | Command | 1/encounter | Applies `Rallied` (+15 hit chance) to one ally. Consumed by that ally's next attack whether it lands or misses; expires at the end of their next turn if unused. |
 | `dirty-strike` | Skrit | Trick | 1/encounter | One **ordinary** weapon attack — the same two draws, no more — that on a hit applies `OffBalance` (−15 hit chance). The charge is spent on hit or miss. |
+| `firebolt` (v0.11) | Maelis | Spell | 1/encounter | A hurled bolt of fire at one opponent, resolved through the ordinary attack draws (one to hit, one for quality) but dealing its fire damage **ignoring the target's armour**. Solid cover can still turn it aside. Scenario 2 (*The Toppled Belfry*). |
+| `stun` (v0.11) | Brakka | Technique | 1/encounter | One tremendous weapon blow that, on a hit, wounds **and** applies `Stunned` — the target loses its whole next turn (`BeginActorTurn` consumes it, skipping the turn). Scenario 2. |
 | `defend` | everyone | BasicAction | unlimited | Spends the turn bracing; `Defending` reduces the next **successful** incoming attack's final damage by 1, applied after armour and glancing, floored at zero. Survives a miss; expires at the start of the defender's next turn. |
 
 `StatusEffectInstance` lives on `GameState`, not on a character, because a linked relationship
@@ -1078,8 +1186,19 @@ only. Every instance has a stable id, a named source, a signed modifier, one exa
 `BeginActorTurn` and `EndActorTurn` sweep exactly the statuses whose rule fires at that boundary
 (`StartOfSourceNextTurn`, `StartOfTargetNextTurn`, `EndOfTargetNextTurn`), and a status can never expire
 on the turn it was applied. Statuses are removed whenever the character sustaining them dies, surrenders
-or escapes. Nothing else exists: no poison, no bleed, no stun, no paralysis, no stacking, no cleansing,
-no area effects — and no status a model can invent.
+or escapes. `Stunned` (v0.11) is the one turn-skipping status — applied only by the `stun` ability, consumed
+by the target's own `BeginActorTurn`, and, like every status, unable to expire on the turn it lands. Nothing
+else exists: no poison, no bleed, no paralysis, no stacking, no cleansing, no area effects — and no status a
+model can invent.
+
+**Recharging a spent ability — the focus item (v0.11).** An `InventoryItem` may carry `RestoresAbilityCharge`,
+making it a *focus item* (the Attunement Crystal). Using it (`use_item`) is not consumed the way a potion is:
+the actor spends the whole turn attuning, and the engine restores one spent charge of their own first depleted
+limited ability, then leaves the item in hand for next time. It is refused (`NoDepletedAbilityToRestore`) when
+nothing is spent. This is what lets the fire-mage loose Firebolt, spend a turn drawing it back, and loose it
+again — a genuine spend→attune→re-fire cycle rather than a one-shot. Routing "draw my spent firebolt back" to
+`use_item` rather than re-casting `firebolt` is a resolver boundary the firebolt and `inventory.use` cards
+spell out; see [The resolver decides independently of the router](#the-resolver-decides-independently-of-the-router-v011).
 
 **Modifiers feed the existing RNG pipeline rather than a parallel one.** There is one weapon-strike
 resolution, shared by `attack_character` and by any ability that strikes, so an ability-driven blow can
@@ -1088,6 +1207,28 @@ never become a second combat path with its own dice. `RngDraw` now records `Base
 value, application order, whether it was consumed) as well as a readable note — so an effective chance
 can be recomputed exactly rather than parsed out of prose. Modifier order is *fixed*, not discovered
 (`Rallied`, then `OffBalance`), so two runs with the same statuses reach the same recorded order.
+
+### The resolver decides independently of the router (v0.11)
+
+Under the shipped `ActionRouting` selection mode there are two model calls per intent, and they decide
+**independently**: the router (`rulebook.route-action`) names an engine action and which to rule out — that
+selects which *cards* the resolver sees — and then the resolver (`rulebook.resolve`) re-reads those cards and
+cites the rule it thinks governs the intent. A correct route does **not** guarantee a correct resolution. A
+live case: for "grip the crystal, draw my spent firebolt back into myself" the router correctly returned
+`use_item`, and *both* the `inventory.use` and `ability.firebolt` cards were surfaced — yet the resolver still
+cited `ability.firebolt`, so the engine tried to recast a spent spell and refused it. The word "firebolt" in
+the intent matched the firebolt card's recognition, and nothing steered the resolver off.
+
+The lever that fixes this is the **card text the resolver actually reads** — `Description`, `Preconditions`
+and `Exclusions` (what `ToResolverBlock` renders). `DistinguishedFrom` does **not** appear there; it only
+drives card *surfacing* and the router's action index. So to change a resolver decision you edit the
+exclusions, as the firebolt card ("drawing a spent firebolt back … is inventory.use, not casting it") and the
+offer-surrender card ("a truce conditional on the enemy also giving up … is a demand, not the actor's own
+surrender") now do. Two gotchas when doing this: `RuleSelectionCorpus.LabelledAgainstRulebookVersion` is a
+`const`, so a changed pin is inlined into the *test* assembly and a `--no-build` run can't see it until the
+test project recompiles; and the whole-book request must stay under the strict `>1000`-token headroom guard on
+the local-8k fallback, so new card text has to be funded by trimming redundancy elsewhere. Re-derive the
+version with `--rulebook-version` after every card edit and re-pin the corpus.
 
 ## Morale: fear, threats and steadying
 
@@ -2070,7 +2211,7 @@ A few things worth knowing that aren't obvious from reading any single file:
   while it tried to accept a surrender, because a card that described accepting perfectly never described what
   accepting *looks like* — reaching out and taking the promised thing, which reads exactly like a grab. Write
   the recognition vocabulary from the outside; see
-  [What a live v0.7 run showed](#what-a-live-v07-run-showed-and-what-it-changed) for that and four more
+  [Ten live runs, and what they changed](#ten-live-runs-and-what-they-changed) for that and four more
   findings from the same run, all fixed.
 - **Stale tool descriptions are live instructions.** `reject_action` still told the DM to use it "whenever the
   intent is not a direct weapon strike or an item use" — true in v0.2, wrong for eleven of the fourteen
