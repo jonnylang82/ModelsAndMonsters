@@ -12,11 +12,11 @@ Firstly, Models & Monsters is an experimental harness, not an attempt to create 
 
 I also decided to make things harder for myself by requiring it to run well on a local LLM using only 8 GB of VRAM. As my previous blog post showed, that first requires finding a model that can reliably call tools; running an ongoing simulation where context built up quickly, all while keeping it inside an 8k token window, was a real challenge.
 
-Simply putting several agents into a conversation and letting them decide what was happening would be chaotic. They could invent new locations, actions and outcomes whenever it suited them. The experiment needed a persistent, rules-based engine that could act as the single source of truth.
+Dropping several agents into a conversation and letting them decide what was happening would be chaos. They could invent new locations, actions and outcomes as it suited them. The experiment needed a persistent world and a rules-based engine that could act as the single source of truth.
 
-The agents could decide what they _wanted_ to do. They could not decide what was _true_.
+The agents could decide what they _wanted_ to do but they could not decide what was _true_.
 
-I mirrored the basic structure of a tabletop game by placing a Dungeon Master between the characters and the engine. A character describes its intent to the Dungeon Master in natural language. The Dungeon Master interprets that intent and selects an appropriate engine action. The deterministic game engine then validates it, rolls any dice, updates the world and reports what actually happened.
+I mirrored the basic structure of a tabletop game by placing a Dungeon Master between the characters and the engine. A character describes its intent to the Dungeon Master in natural language. The Dungeon Master interprets that intent and selects an appropriate engine action. The game engine then validates it, rolls any dice, updates the game state and reports back what happened. The Dungeon Master then adds his flourish to turn a mechanical answer into an answer fitting the game style.
 
 In short:
 
@@ -25,7 +25,9 @@ Character chooses intent
         ↓
 Dungeon Master interprets it
         ↓
-Game engine decides reality
+Game engine decides result
+        ↓
+Dungeon Master describes the result
 ```
 
 The initial world was deliberately tiny: one room, heroes against monsters, and a very basic combat system.
@@ -51,7 +53,7 @@ I wanted them behaving like inhabitants of the world:
 
 The Dungeon Master’s job was to translate between those two worlds without being allowed to determine the outcome itself.
 
-The first version supported little more than attacking someone with the weapon in your hand or using an item on yourself. That limitation was intentional. I wanted to begin with the smallest world that could prove the architecture worked, then observe what the agents tried to do when the world could not yet accommodate them.
+The first version supported little more than attacking someone with the weapon in your hand. I wanted to begin with the smallest world that could prove the idea worked, then observe what the agents tried to do.
 
 It did not take long for the goblin to start filing feature requests.
 
@@ -59,7 +61,7 @@ It did not take long for the goblin to start filing feature requests.
 
 The most interesting part of building Models & Monsters was watching the characters attempt actions the engine did not yet support.
 
-Those rejected intentions became useful research. Rather than guessing which mechanics an autonomous character might need, I could observe what the models repeatedly tried to do and decide whether supporting it would enable meaningful or interesting behavior.
+Those rejected intentions became useful research. Rather than guessing which mechanics an autonomous character might need, I could observe what the models repeatedly tried to do and decide whether supporting it would enable meaningful or interesting behaviour.
 
 The first example was unexpectedly bleak. A goblin, mortally wounded but not yet dead, repeatedly tried to give up. Before `end_turn` existed, the harness treated “lie down and stop” as a failed action and asked it to try something else:
 
@@ -101,7 +103,7 @@ One of the best examples was a deal the engine had no direct way to represent.
 
 Elara, badly wounded, attempted to buy safe passage for both herself and Rowan:
 
-> “Vark—my purse, every coin, if you stand down and let us go. You’re bleeding. Take the gold and live.”
+> “Vark - my purse, every coin, if you stand down and let us go. You’re bleeding. Take the gold and live.”
 
 Vark did not accept those terms. Instead, he made a counter-offer:
 
@@ -121,7 +123,7 @@ Another interesting result came from the character knowledge system.
 
 Vark knew from his backstory that the shrine-marked supply case contained a healing draught. During the fight, he shouted:
 
-> “The shrine-marked case holds the healing draught—that is what we must protect at all costs!”
+> “The shrine-marked case holds the healing draught - that is what we must protect at all costs!”
 
 The other characters heard him, but the system did not immediately record the contents of the case as something they knew to be true. They only knew that Vark had made the claim.
 
@@ -235,7 +237,7 @@ It worked much better than embeddings, but occasionally still omitted a rule on 
 
 The most successful approach routed through the engine’s action surface instead of selecting rule cards directly.
 
-The model read approximately 19 action descriptions—one per engine action—and returned:
+The model read approximately 19 action descriptions - one per engine action - and returned:
 
 - The primary action it thought the character was attempting.
 - A short list of actions it had considered and ruled out.
@@ -261,6 +263,8 @@ It gave me a live, god-view of the experiment: every character’s condition, po
 
 The interface did not control the characters or alter the world. It was simply a looking glass into the authoritative state behind the story.
 
+![Game in action](models-and-monsters-1.png) ![End of game](models-and-monsters-2.png)
+
 In order to debug, chase context overflows and judge parameter changes, _everything_ that goes to and from a model and all the decisions and rolls made by the game engine are logged to JSONL files.
 
 Chasing down the foibles of each model, and deciding what information was missing from their context, or was conversely too much information, would have been very difficult without this excessive logging.
@@ -269,7 +273,7 @@ Chasing down the foibles of each model, and deciding what information was missin
 
 This article is not intended to be a model benchmark, but running the same system across different models produced differences worth mentioning.
 
-I built an abstraction over the model calls so I could switch between local models running through Ollama, hosted frontier models from OpenAI and Anthropic, and larger open-weight models—beyond the reach of my 8 GB GPU—through OpenRouter and Ollama Cloud.
+I built an abstraction over the model calls so I could switch between local models running through Ollama, hosted frontier models from OpenAI and Anthropic, and larger open-weight models - beyond the reach of my 8 GB GPU - through OpenRouter and Ollama Cloud.
 
 These results should be treated as field notes rather than rankings. The sample sizes were small, game events included seeded randomness, and provider infrastructure, quantisation and inference speed all affected the experience.
 
@@ -277,7 +281,7 @@ These results should be treated as field notes rather than rankings. The sample 
 
 - **Qwen3.8 Max**, through OpenRouter>Alibaba, failed in the first round with `HTTP 400: reasoning cannot be disabled`. This was a provider-contract mismatch rather than a model-capability failure: the harness requested `Effort=None`, while the model required reasoning to remain enabled. It was fixable through provider detection, but long agent runs with mandatory reasoning would be slower and more expensive, so I did not pursue it.
 - **Nemotron 3.5 Lightning**, through OpenRouter, remained technically functional but stalled in an interrogation loop. One character made 65 `ask_dm` calls and hit the questions-per-turn limit 17 times before I cancelled the encounter.
-- **The smaller local group**—Llama 3.2 3B, uncensored Llama 3.1 8B variants, Granite 4.1 8B and Qwen3.8 27B at the extremely compressed IQ2_XXS quantisation—struggled with malformed rule guidance, tactical blindness and protocol errors. Some could technically progress, but none was reliable enough for the full scenario.
+- **The smaller local group** - Llama 3.2 3B, uncensored Llama 3.1 8B variants, Granite 4.1 8B and Qwen3.8 27B at the extremely compressed IQ2_XXS quantisation - struggled with malformed rule guidance, tactical blindness and protocol errors. Some could technically progress, but none was reliable enough for the full scenario.
 
 The Qwen3.8 result is a useful warning against judging a model by parameter count alone: the heavily compressed local 27B version struggled, while a better-quality hosted version of the same model performed extremely well.
 
@@ -291,11 +295,11 @@ The Qwen3.8 result is a useful warning against judging a model by parameter coun
 | Model                 | What I observed                                                                                                                                                                      |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **GPT-5.6 Terra**     | The most effective overall. Fast, decisive and mechanically flawless, with excellent tactics but functional rather than atmospheric prose.                                           |
-| **Grok 4.20**         | Very close to Terra, with immaculate tool discipline. It also exposed a gap in the engine’s surrender vocabulary rather than failing on it.                                          |
+| **Grok 4.20**         | Very close to Terra, with perfect tool discipline. The best story telling of all models.                                                                                             |
 | **Qwen3.8 27B**       | The value result: an open-weight 27B model producing a clean sheet comparable to the frontier models at a much lower cost.                                                           |
 | **Claude Sonnet 4.6** | The best overall balance of coherent decisions, reliable tool use and good prose.                                                                                                    |
 | **Claude Sonnet 5**   | Capable but slower and chattier. It was also the only strong model to narrate an event that had not occurred, referring to “another firebolt” when the character had cast its first. |
-| **DeepSeek V4 Flash** | Produced the richest prose and used the mechanics extensively, but took much longer and suffered one decoding-degeneration incident.                                                 |
+| **DeepSeek V4 Flash** | Produced the rich prose and used the mechanics extensively, but took much longer and suffered one decoding-degeneration incident.                                                    |
 | **Gemma 4 Cloud**     | Handled the complete scenario cleanly through Ollama Cloud, including tactics that required planning across multiple turns.                                                          |
 
 For the constraint that started the project, the most important result remained **Qwen3.5 9B using an Unsloth IQ4_XS quantisation**. It was not the strongest model tested, but it was the best model I found that could run the complete experiment locally on an 8 GB GPU.
@@ -312,18 +316,23 @@ A lot more could have been added given time, though I don't think it has legs to
 - A complete D&D ruleset.
 - Multiple rooms and persistent campaigns.
 - A human-controlled character using exactly the same pathway as an AI character.
-- More systematic experiments with mixed-model parties, personas and memory strategies.
 
 ## A new scenario
 
-To prove the viability of the engine itself, and that nothing was hard-coded, I swapped out the scenario (controlled via JSON) for a whole new one — different setting, different heroes, different enemies (3 vs 2), different containers and furniture — and it dropped in and played through first time.
+To prove the viability of the engine itself, and that nothing was hard-coded, I swapped out the scenario (controlled via JSON) for a whole new one - different setting, different heroes, different enemies (3 vs 2), different containers and furniture - and it dropped in and played through first time.
 
 This proves that the agents really were operating freely but in a world constrained by the rules I had coded.
 
 ## Conclusion
 
-Models & Monsters began with a simple question: if models supplied the creativity, personality and intent, could a deterministic engine keep their shared world coherent? The answer was yes—provided no model was allowed to decide what was true.
+Models & Monsters began with a simple question: if models supplied the creativity, personality and intent, could a the engine keep their shared world coherent? The answer was yes - provided no model was allowed to decide what was true.
 
-The interesting result was not merely that the agents could imitate a game of Dungeons & Dragons. It was that a relatively small mechanical vocabulary was enough to support bargains, retreats, rumours, tactical cooperation and spectacularly poor decisions.
+The interesting result was not merely that the agents could imitate a game of Dungeons & Dragons. It was that a relatively small action set was enough to support bargains, retreats, rumours, tactical cooperation and spectacularly poor decisions.
 
->Context engineering determined what each character could know. The harness constrained what each could attempt. The models made the choices, while the engine remained the single source of truth for the world.
+>Context engineering determined what each character could know.
+>
+>The harness constrained what each could attempt.
+>
+>The models made the choices
+>
+>The engine remained the single source of truth for the world.
