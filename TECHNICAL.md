@@ -762,6 +762,13 @@ Two more providers join Ollama/OpenAI/Anthropic, and all provider SDK types stay
 - **Ollama Cloud** is *not* a new provider — it is the same Ollama client with a bearer token. Set
   `Providers:Ollama:Endpoint = https://ollama.com` and a key (`OLLAMA_API_KEY`); when a key resolves, the
   client is built over an `HttpClient` carrying `Authorization: Bearer`. Keyless local Ollama is unchanged.
+- **Unsloth Studio** (the fifth `ModelProvider`) is a local model server (default `http://localhost:8888`)
+  that serves both an OpenAI-compatible and an Anthropic-compatible API; the harness reaches it through the
+  OpenAI SDK's chat-completions client, same pattern as OpenRouter, base URL
+  `http://localhost:8888/v1`. Set `"Provider": "UnslothStudio"`. Unlike a local Ollama it always requires a
+  bearer token — key from `UNSLOTH_STUDIO_API_KEY` or user secrets. Capabilities mirror OpenRouter's (no
+  top-k, no context-window, no structured-schema); there is no per-model `reasoning` object to inject the way
+  OpenRouter has, so a configured `Effort` is simply dropped-and-reported rather than sent.
 
 **"Hosted", for `EnforceContextWindowOnHostedModels` / `UnboundedHistoryOnHostedModels`, means
 `ProviderCapabilities.SupportsContextWindow == false` — NOT "runs remotely".** It's capability-driven, no

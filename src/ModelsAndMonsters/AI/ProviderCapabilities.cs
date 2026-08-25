@@ -166,6 +166,30 @@ public sealed record ProviderCapabilities
             SilentlyTruncatesHistory = false
         },
 
+        // Unsloth Studio is reached through the OpenAI chat-completions client, exactly like OpenRouter, so
+        // its capability shape mirrors OpenRouter's. It is a single local server rather than a zoo of
+        // backends, but nothing here can tell which model is actually loaded, so the same conservative
+        // narrowings apply: no top_k (not part of the OpenAI request shape the SDK builds), no guaranteed
+        // decoder-enforced schema, and effort/reasoning is not applied as a ChatOption (see
+        // ChatOptionsFactory) since there is no equivalent to OpenRouter's client-side `reasoning` object —
+        // it is dropped-and-reported instead of silently sent and possibly rejected.
+        ModelProvider.UnslothStudio => new ProviderCapabilities
+        {
+            SupportsTemperature = true,
+            SupportsTopP = true,
+            SupportsTopK = true,
+            SupportsMaxOutputTokens = true,
+            SupportsSeed = true,
+            SupportsContextWindow = true,
+            SupportsThinkingToggle = true,
+            SupportsForcedToolChoice = true,
+            AllowsTemperatureAndTopPTogether = true,
+            SupportsPenalties = true,
+            SupportsRepeatPenalty = true,
+            SupportsStructuredOutputSchema = true,
+            SilentlyTruncatesHistory = false
+        },
+
         _ => throw new ArgumentOutOfRangeException(nameof(provider), provider, "Unknown provider.")
     };
 }

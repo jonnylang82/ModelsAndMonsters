@@ -133,7 +133,10 @@ public sealed class SimulationRunner
 
         // The intent parser reuses the Dungeon Master's model, with reasoning off and a small output budget
         // — it only ever emits a few tool calls. It is context-free, so the window is ample; a derived seed
-        // keeps the whole run replayable.
+        // keeps the whole run replayable. The budget is configurable (Agents:IntentParser:MaxOutputTokens,
+        // falling back to Harness.IntentParserOutputTokens) rather than fixed, because a model whose
+        // reasoning cannot actually be switched off by Effort/Thinking spends this budget thinking instead
+        // of calling a tool, and needs headroom raised to have room for both.
         //
         // It reads at a LOW temperature rather than a greedy zero, which is a deliberate change from v0.7.
         // Greedy decoding on qwen3.5 is fragile in a way this project measured: a run died at round 5 when
@@ -142,25 +145,29 @@ public sealed class SimulationRunner
         // same trace a character sampling at 0.8 took two 500s and shook them off. Qwen's own published
         // sampling guidance never recommends below 0.6 for any task or mode; zero was our number, not
         // theirs, and it bought a determinism a fixed seed already provides.
+        var intentParserConfig = _options.Agents.IntentParser;
         var intentParserProfile = dungeonMasterProfile with
         {
             AgentName = IntentParser.AgentIdentifier,
             Temperature = IntentParserTemperature,
             Effort = ReasoningEffort.None,
             Thinking = false,
-            MaxOutputTokens = 500,
+            MaxOutputTokens = intentParserConfig.MaxOutputTokens ?? harness.IntentParserOutputTokens,
             Seed = RunSeeds.Derive(masterSeed, "agent:intent-parser")
         };
 
         // The history summariser also reuses the DM's model, at a low temperature for a steady recap and a
-        // small output budget. Context-free like the parser; a derived seed keeps the run replayable.
+        // small output budget. Context-free like the parser; a derived seed keeps the run replayable. The
+        // budget is configurable the same way (Agents:HistorySummariser:MaxOutputTokens, falling back to
+        // Harness.HistorySummariserOutputTokens) — see the intent parser's comment above for why.
+        var historySummariserConfig = _options.Agents.HistorySummariser;
         var historySummariserProfile = dungeonMasterProfile with
         {
             AgentName = HistorySummariser.AgentIdentifier,
             Temperature = 0.3f,
             Effort = ReasoningEffort.None,
             Thinking = false,
-            MaxOutputTokens = 400,
+            MaxOutputTokens = historySummariserConfig.MaxOutputTokens ?? harness.HistorySummariserOutputTokens,
             Seed = RunSeeds.Derive(masterSeed, "agent:history-summariser")
         };
 
@@ -244,7 +251,8 @@ public sealed class SimulationRunner
                 dungeonMasterProfile,
                 CreateTracingClient(dungeonMasterProfile, trace, clients),
                 _prompts,
-                harness.ProjectDungeonMasterContext);
+                harness.ProjectDungeonMasterContext,
+                harness.AdjudicationOutputTokens);
 
             // The prose-fallback intent parser gets its own stateless client; null when the flag is off, in
             // which case the coordinator keeps the older speech-retry / recovery / nudge path.

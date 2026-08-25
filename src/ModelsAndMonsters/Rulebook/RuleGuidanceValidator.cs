@@ -81,6 +81,16 @@ public sealed class RuleGuidanceValidator
         // entry is not an engine tool but names a known rule, it is resolved through the catalog to that rule's
         // own action. This is an identifier lookup, never inference from prose, and the correspondence filter
         // below still requires a surviving citation to back whatever action results.
+        //
+        // A second near-miss, distinct from the first: candidateActions ["firebolt"] instead of either
+        // "use_ability" or the full rule id "ability.firebolt" — the model names the ABILITY, dropping the rule
+        // id's namespace prefix, even while citedRules correctly names "ability.firebolt" in full (measured
+        // live on unsloth/gemma-4-E2B-it-GGUF: the citation was exactly right and only this field was short).
+        // Resolved by matching the bare candidate against the suffix of a card id ("ability." + candidate),
+        // and only when that resolves to exactly one card — an ambiguous short name is left unresolved rather
+        // than guessed. Silent when this happens without the fix: MalformedGuidance narrows the Dungeon Master
+        // to reject_action alone, so a model whose own adjudication reasoning correctly named use_ability still
+        // has no tool left to call it with, and the character hears a false "you do not possess that ability."
         static string? AsEngineAction(string candidate, IRuleRepository repository)
         {
             var trimmed = candidate.Trim();
@@ -90,7 +100,19 @@ public sealed class RuleGuidanceValidator
             }
 
             var action = repository.Find(trimmed)?.ActionName;
-            return action is not null && DungeonMasterTools.EngineActionsByName.ContainsKey(action) ? action : null;
+            if (action is not null && DungeonMasterTools.EngineActionsByName.ContainsKey(action))
+            {
+                return action;
+            }
+
+            var bySuffix = repository.AllCards
+                .Where(c => c.RuleId.Split('.') is [_, var slug] && string.Equals(slug, trimmed, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            return bySuffix is [{ ActionName: var suffixAction }]
+                   && DungeonMasterTools.EngineActionsByName.ContainsKey(suffixAction)
+                ? suffixAction
+                : null;
         }
 
         var named = guidance.CandidateActions

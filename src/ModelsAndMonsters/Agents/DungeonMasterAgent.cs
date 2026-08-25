@@ -64,8 +64,17 @@ public sealed class DungeonMasterAgent : ModelAgent
     /// its largest observed adjudication reply is 122 tokens — so for most hosted models this changes
     /// nothing either way.
     /// </para>
+    /// <para>
+    /// The default below is a fallback only — the constructor's <c>adjudicationOutputTokens</c> parameter
+    /// (wired from <see cref="ModelsAndMonsters.Configuration.HarnessOptions.AdjudicationOutputTokens"/>)
+    /// overrides it. A fixed 400 assumes deliberation is a bounded amount of prose the model chooses to
+    /// emit before a tool call; it is not sized for a model whose reasoning cannot be switched off by
+    /// <see cref="AI.AgentModelProfile.Effort"/>/<see cref="AI.AgentModelProfile.Thinking"/> and spends this
+    /// whole budget on a hidden reasoning block regardless of task size — that model needs the cap raised
+    /// even though its window is still shared and the arithmetic above still applies.
+    /// </para>
     /// </remarks>
-    private const int AdjudicationOutputTokens = 400;
+    private const int DefaultAdjudicationOutputTokens = 400;
 
     /// <summary>
     /// The output budget this adjudication actually runs under: the tight cap where the model's context
@@ -97,7 +106,7 @@ public sealed class DungeonMasterAgent : ModelAgent
     /// </para>
     /// </remarks>
     private int? AdjudicationOutputBudget =>
-        Profile.BindingContextWindow is null ? null : AdjudicationOutputTokens;
+        Profile.BindingContextWindow is null ? null : _adjudicationOutputTokens;
 
     /// <summary>
     /// Whether a reply from <see cref="ProposeActionAsync"/> or <see cref="RetryProposeActionAsync"/> was cut
@@ -112,6 +121,7 @@ public sealed class DungeonMasterAgent : ModelAgent
 
     private readonly PromptLibrary _prompts;
     private readonly bool _useProjections;
+    private readonly int _adjudicationOutputTokens;
 
     // The Dungeon Master's rules are modular: one shared CORE (identity, authoritative state, the shape of
     // the world) plus a rules block per job. When projecting, each task runs on a fresh projection seeded
@@ -140,11 +150,13 @@ public sealed class DungeonMasterAgent : ModelAgent
         AgentModelProfile profile,
         TracingChatClient client,
         PromptLibrary prompts,
-        bool projectContext = true)
+        bool projectContext = true,
+        int? adjudicationOutputTokens = null)
         : base(AgentIdentifier, profile, client, ComposeFull(prompts))
     {
         _prompts = prompts;
         _useProjections = projectContext;
+        _adjudicationOutputTokens = adjudicationOutputTokens ?? DefaultAdjudicationOutputTokens;
 
         var core = prompts.Render("dungeon-master.core");
         _narrateSystem = Join(core, prompts.Render("dungeon-master.rules-narrate"));

@@ -55,6 +55,8 @@ public sealed class ProvidersOptions
     public AnthropicProviderOptions Anthropic { get; set; } = new();
 
     public OpenRouterProviderOptions OpenRouter { get; set; } = new();
+
+    public UnslothStudioProviderOptions UnslothStudio { get; set; } = new();
 }
 
 public sealed class OllamaProviderOptions
@@ -89,6 +91,25 @@ public sealed class OpenRouterProviderOptions
 
     /// <summary>OpenRouter's OpenAI-compatible base URL. The chat-completions path is appended by the client.</summary>
     public string Endpoint { get; set; } = "https://openrouter.ai/api/v1";
+}
+
+public sealed class UnslothStudioProviderOptions
+{
+    /// <summary>Environment variable consulted for the bearer token. Never place the key itself here.</summary>
+    public string ApiKeyEnvironmentVariable { get; set; } = "UNSLOTH_STUDIO_API_KEY";
+
+    /// <summary>
+    /// Optional key supplied through user secrets. Configuration files in the repository must not set
+    /// this; it exists so <c>dotnet user-secrets</c> works without an environment variable.
+    /// </summary>
+    public string? ApiKey { get; set; }
+
+    /// <summary>
+    /// Unsloth Studio's OpenAI-compatible base URL (it also serves an Anthropic-compatible one, unused
+    /// here — see <see cref="AI.ModelProvider.UnslothStudio"/>). The chat-completions path is appended by
+    /// the client, so this stops at the <c>/v1</c> mount point, the same shape as OpenRouter's endpoint.
+    /// </summary>
+    public string Endpoint { get; set; } = "http://localhost:8888/v1";
 }
 
 public sealed class OpenAIProviderOptions
@@ -147,6 +168,24 @@ public sealed class AgentsOptions
     /// nothing it produces is read by the game or by any other agent. See <see cref="Agents.EncounterSummariser"/>.
     /// </summary>
     public AgentProfileOptions EncounterSummariser { get; set; } = new();
+
+    /// <summary>
+    /// The prose-fallback Intent Parser's independently configurable model profile. Overlaid on
+    /// <see cref="Default"/> like any agent. Only <see cref="AgentProfileOptions.MaxOutputTokens"/> is
+    /// read from this today — the rest of the profile (provider, model, sampling) is fixed to the
+    /// Dungeon Master's own by <see cref="ModelsAndMonsters.Orchestration.SimulationRunner"/> — but the
+    /// output-token cap needed a config surface because a fixed literal could not be raised for a
+    /// reasoning-enforced model whose thinking eats into a small budget before any tool call appears. See
+    /// <see cref="HarnessOptions.IntentParserOutputTokens"/> for the fallback when this is left null.
+    /// </summary>
+    public AgentProfileOptions IntentParser { get; set; } = new();
+
+    /// <summary>
+    /// The History Summariser's independently configurable model profile. Overlaid on <see cref="Default"/>
+    /// like any agent. As with <see cref="IntentParser"/>, only <see cref="AgentProfileOptions.MaxOutputTokens"/>
+    /// is read here today; see <see cref="HarnessOptions.HistorySummariserOutputTokens"/> for the fallback.
+    /// </summary>
+    public AgentProfileOptions HistorySummariser { get; set; } = new();
 
     /// <summary>
     /// Per-character overrides, keyed by character id. Any character absent here runs on
@@ -492,6 +531,40 @@ public sealed class HarnessOptions
     /// free — it is that much less room for the rulebook.
     /// </remarks>
     public int RulebookOutputTokens { get; set; } = 300;
+
+    /// <summary>
+    /// The output-token cap for the Intent Parser's reply, used when <see cref="AgentsOptions.IntentParser"/>
+    /// leaves <see cref="AgentProfileOptions.MaxOutputTokens"/> unset. 500 matches the fixed value this
+    /// harness used before the cap became configurable — sized for the handful of tool calls the parser
+    /// emits. That sizing assumes reasoning is off (<see cref="AgentModelProfile.Effort"/> is forced to
+    /// <c>None</c> for this agent); a model whose reasoning cannot actually be disabled will spend this
+    /// whole budget thinking and emit nothing, which is exactly the failure that made the cap need a config
+    /// surface — raise it in <c>appsettings.json</c> under <c>Agents:IntentParser:MaxOutputTokens</c> rather
+    /// than editing this default.
+    /// </summary>
+    public int IntentParserOutputTokens { get; set; } = 500;
+
+    /// <summary>
+    /// The output-token cap for the History Summariser's reply, used when
+    /// <see cref="AgentsOptions.HistorySummariser"/> leaves <see cref="AgentProfileOptions.MaxOutputTokens"/>
+    /// unset. 400 matches the fixed value this harness used before the cap became configurable. See
+    /// <see cref="IntentParserOutputTokens"/> for why a reasoning-enforced model needs this raised via
+    /// <c>Agents:HistorySummariser:MaxOutputTokens</c> rather than the default here.
+    /// </summary>
+    public int HistorySummariserOutputTokens { get; set; } = 400;
+
+    /// <summary>
+    /// The output-token cap applied to the Dungeon Master's adjudication call specifically — narrower than
+    /// its own <c>MaxOutputTokens</c>, and only in force at all when the DM's <c>ContextWindow</c> is
+    /// binding (see <see cref="Agents.DungeonMasterAgent.WasAdjudicationReplyCutShort"/> and the class
+    /// remarks there for the full arithmetic). 400 matches the fixed value this harness used before the cap
+    /// became configurable. Raise it for a model whose reasoning cannot be switched off and spends this
+    /// budget on a hidden reasoning block before ever reaching the tool call — the symptom is a
+    /// <c>FinishReason: Length</c> adjudication with completion tokens pinned at whatever this is set to,
+    /// regardless of how much larger <c>Agents:DungeonMaster:MaxOutputTokens</c> is set to, because that
+    /// figure is sized for narration prose and is not what adjudication runs under.
+    /// </summary>
+    public int AdjudicationOutputTokens { get; set; } = 400;
 
     /// <summary>When true, abstract rule guidance is cached and reused across identical consultations.</summary>
     public bool RulebookCacheEnabled { get; set; } = true;

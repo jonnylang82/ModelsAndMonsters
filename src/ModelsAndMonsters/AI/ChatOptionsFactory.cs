@@ -198,6 +198,13 @@ public static class ChatOptionsFactory
         // handled elsewhere, and genuinely takes effect.
         var openRouterHandlesEffortClientSide = profile.Provider == ModelProvider.OpenRouter;
 
+        // Unsloth Studio is reached through the same OpenAI chat-completions client as OpenRouter, which
+        // cannot express reasoning effort on that path either (see the OpenRouter comment above) — and
+        // unlike OpenRouter there is no per-provider `reasoning` object to inject client-side, since it
+        // fronts one local server rather than a mix of backends. So effort is dropped-and-reported rather
+        // than sent as a ChatOption that the model may reject.
+        var unslothStudioCannotTakeEffort = profile.Provider == ModelProvider.UnslothStudio;
+
         // Reasoning effort is the unified cross-provider knob and supersedes the legacy Thinking toggle.
         // Ollama takes a native think level; OpenAI and Anthropic take it through ChatOptions.Reasoning,
         // which their Microsoft.Extensions.AI adapters translate to the provider's reasoning-effort field.
@@ -227,6 +234,15 @@ public static class ChatOptionsFactory
             else if (openRouterHandlesEffortClientSide)
             {
                 // no-op
+            }
+            // Unsloth Studio has no such policy, so a raised effort is dropped-and-reported; None needs
+            // nothing sent, so it is omitted.
+            else if (unslothStudioCannotTakeEffort)
+            {
+                if (effort != ReasoningEffort.None)
+                {
+                    dropped.Add(nameof(AgentModelProfile.Effort));
+                }
             }
             else
             {

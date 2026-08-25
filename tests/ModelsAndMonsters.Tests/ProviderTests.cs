@@ -158,6 +158,93 @@ public sealed class ProviderTests
         Assert.IsAssignableFrom<IChatClient>(client);
     }
 
+    // ------------------------------------------------------------------------------------------
+    // Unsloth Studio: an OpenAI-compatible local server reached the same way as OpenRouter, minus
+    // OpenRouter's client-side reasoning injection (no per-model reasoning object to inject against).
+    // ------------------------------------------------------------------------------------------
+
+    [Fact]
+    public void UnslothStudio_mirrors_OpenRouter_capabilities()
+    {
+        var caps = ProviderCapabilities.For(ModelProvider.UnslothStudio);
+
+        Assert.True(caps.SupportsTemperature);
+        Assert.True(caps.SupportsTopP);
+        Assert.True(caps.SupportsSeed);
+        Assert.True(caps.SupportsForcedToolChoice);
+        Assert.True(caps.SupportsPenalties);
+        Assert.True(caps.AllowsTemperatureAndTopPTogether);
+
+        Assert.False(caps.SupportsTopK);
+        Assert.False(caps.SupportsContextWindow);
+        Assert.False(caps.SupportsStructuredOutputSchema);
+        Assert.False(caps.SilentlyTruncatesHistory);
+    }
+
+    [Fact]
+    public void UnslothStudio_keeps_sampling_but_drops_top_k()
+    {
+        var profile = Profile(ModelProvider.UnslothStudio) with { Temperature = 0.7f, TopP = 0.9f, TopK = 40 };
+
+        var resolved = ChatOptionsFactory.Create(profile);
+
+        Assert.Equal(0.7f, resolved.Options.Temperature);
+        Assert.Equal(0.9f, resolved.Options.TopP);
+        Assert.Contains(nameof(AgentModelProfile.TopK), resolved.UnsupportedOptionsDropped);
+        Assert.DoesNotContain(nameof(AgentModelProfile.Temperature), resolved.UnsupportedOptionsDropped);
+    }
+
+    [Fact]
+    public void UnslothStudio_effort_none_is_neither_sent_nor_dropped()
+    {
+        var resolved = ChatOptionsFactory.Create(
+            Profile(ModelProvider.UnslothStudio) with { Effort = ReasoningEffort.None });
+
+        Assert.Null(resolved.Options.Reasoning);
+        Assert.DoesNotContain(nameof(AgentModelProfile.Effort), resolved.UnsupportedOptionsDropped);
+    }
+
+    [Fact]
+    public void UnslothStudio_raised_effort_is_dropped_rather_than_sent()
+    {
+        // There is no per-model reasoning object to inject the way OpenRouter has, so a raised effort
+        // cannot be honoured and must be reported dropped rather than silently sent as a ChatOption that
+        // an arbitrary local model may reject.
+        var resolved = ChatOptionsFactory.Create(
+            Profile(ModelProvider.UnslothStudio) with { Effort = ReasoningEffort.High });
+
+        Assert.Null(resolved.Options.Reasoning);
+        Assert.Contains(nameof(AgentModelProfile.Effort), resolved.UnsupportedOptionsDropped);
+    }
+
+    [Fact]
+    public void UnslothStudio_without_a_key_fails_with_a_helpful_message()
+    {
+        var providers = new ProvidersOptions
+        {
+            UnslothStudio = new UnslothStudioProviderOptions { ApiKeyEnvironmentVariable = "UNSLOTH_KEY_ABSENT_FOR_TEST" }
+        };
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => FactoryWith(providers).Create(Profile(ModelProvider.UnslothStudio)));
+
+        Assert.Contains("UnslothStudio", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("UNSLOTH_KEY_ABSENT_FOR_TEST", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UnslothStudio_with_a_key_constructs_a_client()
+    {
+        var providers = new ProvidersOptions
+        {
+            UnslothStudio = new UnslothStudioProviderOptions { ApiKey = "test-key" }
+        };
+
+        using var client = FactoryWith(providers).Create(Profile(ModelProvider.UnslothStudio, "some-local-model"));
+
+        Assert.IsAssignableFrom<IChatClient>(client);
+    }
+
     [Fact]
     public void A_local_Ollama_needs_no_key_and_a_cloud_key_turns_it_into_a_cloud_client()
     {

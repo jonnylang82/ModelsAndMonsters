@@ -40,6 +40,7 @@ public sealed class ChatClientFactory : IChatClientFactory
             ModelProvider.OpenAI => CreateOpenAIClient(profile),
             ModelProvider.Anthropic => CreateAnthropicClient(profile),
             ModelProvider.OpenRouter => CreateOpenRouterClient(profile),
+            ModelProvider.UnslothStudio => CreateUnslothStudioClient(profile),
             _ => throw new InvalidOperationException($"Unsupported provider '{profile.Provider}'.")
         };
     }
@@ -194,6 +195,38 @@ public sealed class ChatClientFactory : IChatClientFactory
         return true;
     }
 
+    /// <summary>
+    /// Unsloth Studio through the OpenAI SDK's CHAT-COMPLETIONS client — the same pattern as OpenRouter, since
+    /// Unsloth Studio (default <c>http://localhost:8888</c>) exposes an OpenAI-compatible endpoint alongside
+    /// its Anthropic-compatible one. A bearer token is required (there is no unauthenticated local path the
+    /// way a plain local Ollama has none); <see cref="ApiKeyCredential"/> is what puts it in the
+    /// Authorization header.
+    /// </summary>
+    private IChatClient CreateUnslothStudioClient(AgentModelProfile profile)
+    {
+        var apiKey = ResolveUnslothStudioApiKey();
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            throw new InvalidOperationException(
+                $"Agent '{profile.AgentName}' is configured for UnslothStudio but no API key was found. " +
+                $"Set the {_providers.UnslothStudio.ApiKeyEnvironmentVariable} environment variable, or run " +
+                "'dotnet user-secrets set ModelsAndMonsters:Providers:UnslothStudio:ApiKey <key>'.");
+        }
+
+        var endpoint = profile.Endpoint ?? _providers.UnslothStudio.Endpoint;
+        var clientOptions = new OpenAIClientOptions();
+        if (!string.IsNullOrWhiteSpace(endpoint))
+        {
+            clientOptions.Endpoint = new Uri(endpoint);
+        }
+
+        // Chat completions, not the Responses API: GetChatClient posts to {endpoint}/chat/completions, which
+        // is what Unsloth Studio's OpenAI-compatible surface serves. AsIChatClient erases the SDK type for
+        // the rest of the application.
+        var openAIClient = new OpenAIClient(new ApiKeyCredential(apiKey), clientOptions);
+        return openAIClient.GetChatClient(profile.ModelId).AsIChatClient();
+    }
+
     private IChatClient CreateOpenAIClient(AgentModelProfile profile)
     {
         var apiKey = ResolveOpenAIApiKey();
@@ -282,6 +315,18 @@ public sealed class ChatClientFactory : IChatClientFactory
         }
 
         var variable = _providers.OpenRouter.ApiKeyEnvironmentVariable;
+        return string.IsNullOrWhiteSpace(variable) ? null : Environment.GetEnvironmentVariable(variable);
+    }
+
+    /// <summary>User secrets first, then environment. Keys are never read from configuration files.</summary>
+    private string? ResolveUnslothStudioApiKey()
+    {
+        if (!string.IsNullOrWhiteSpace(_providers.UnslothStudio.ApiKey))
+        {
+            return _providers.UnslothStudio.ApiKey;
+        }
+
+        var variable = _providers.UnslothStudio.ApiKeyEnvironmentVariable;
         return string.IsNullOrWhiteSpace(variable) ? null : Environment.GetEnvironmentVariable(variable);
     }
 

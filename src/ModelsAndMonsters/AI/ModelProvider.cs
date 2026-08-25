@@ -16,5 +16,14 @@ public enum ModelProvider
     /// base URL (not the Responses API, which OpenRouter does not serve). Model ids carry an org prefix,
     /// e.g. <c>anthropic/claude-sonnet-4.6</c>, <c>openai/gpt-5.2</c>, <c>deepseek/deepseek-chat</c>.
     /// </summary>
-    OpenRouter
+    OpenRouter,
+
+    /// <summary>
+    /// Unsloth Studio — a local model server (default <c>http://localhost:8888</c>) that exposes both an
+    /// OpenAI-compatible and an Anthropic-compatible API. Reached through the OpenAI SDK's CHAT-COMPLETIONS
+    /// client, the same pattern as <see cref="OpenRouter"/>, pointed at its local base URL and carrying a
+    /// bearer token from an environment variable (or user secrets) the same way every other hosted provider
+    /// does.
+    /// </summary>
+    UnslothStudio
 }

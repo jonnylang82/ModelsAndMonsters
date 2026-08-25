@@ -116,6 +116,22 @@ public sealed class RulebookGuidanceTests
     }
 
     [Fact]
+    public void An_ability_named_by_its_bare_slug_is_recovered_through_its_one_matching_card()
+    {
+        // Measured live on unsloth/gemma-4-E2B-it-GGUF: candidateActions carried the bare ability name
+        // ("firebolt") rather than either the action name ("use_ability") or the full rule id
+        // ("ability.firebolt") — while citedRules named the rule id correctly. Rejecting this left the Dungeon
+        // Master with only reject_action, so a correct adjudication ("call use_ability on firebolt") produced
+        // an in-world "you do not possess that ability" instead.
+        var firebolt = Catalog.Find("ability.firebolt")!;
+
+        var validation = Validator.Validate(Supported("firebolt", "ability.firebolt", firebolt.Version));
+
+        Assert.True(validation.IsValid);
+        Assert.Equal(["use_ability"], validation.Guidance.CandidateActions);
+    }
+
+    [Fact]
     public void Catalog_lookup_tolerates_underscore_for_hyphen_but_never_shadows_an_exact_id()
     {
         Assert.Same(Catalog.Find("environment.take-cover"), Catalog.Find("environment.take_cover"));
