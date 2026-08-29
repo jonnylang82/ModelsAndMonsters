@@ -128,3 +128,72 @@ public sealed record OfferTransition(
     SurrenderOfferState Previous,
     SurrenderOfferState New,
     string Cause);
+
+/// <summary>Where a surrender DEMAND stands — a winner telling an opponent to yield.</summary>
+public enum SurrenderDemandState
+{
+    /// <summary>Made, and surfaced to the target until they take their next turn.</summary>
+    Pending,
+
+    /// <summary>The target answered it by yielding — offering their own surrender to the demander.</summary>
+    Answered,
+
+    /// <summary>The target finished a turn without yielding. The demand lapses; nothing was compelled.</summary>
+    Expired,
+
+    /// <summary>A party left active play (died, surrendered, or fled), so the demand can mean nothing more.</summary>
+    Invalidated
+}
+
+/// <summary>
+/// A pressure-only demand that one named opponent give up the fight.
+/// </summary>
+/// <remarks>
+/// Unlike a <see cref="SurrenderOffer"/> this carries NO terms and moves nothing. It is a formal ultimatum,
+/// correctly attributed to the DEMANDER — who stays armed, active and targetable — and surfaced to the TARGET
+/// on their next turn so they can choose to yield or fight on. Fear compels nothing here, exactly as
+/// everywhere else: the demand only makes the choice explicit. The actual surrender, if the target complies,
+/// still goes through <see cref="SurrenderOffer"/> (offer_surrender) on the target's own turn, on whatever
+/// terms they choose. A demand never sets terms it cannot enforce, because it enforces nothing.
+/// </remarks>
+public sealed record SurrenderDemand
+{
+    public required string Id { get; init; }
+
+    /// <summary>The character issuing the demand. Unchanged by it — still armed, active and a valid target.</summary>
+    public required string DemanderId { get; init; }
+
+    /// <summary>The one named opponent being told to yield. Only their own later choice can act on it.</summary>
+    public required string TargetId { get; init; }
+
+    public required int CreatedRound { get; init; }
+
+    /// <summary>The global turn number the demand was made on.</summary>
+    public required int CreatedTurn { get; init; }
+
+    /// <summary>The public-channel id of the demander's speech on the same turn, when they spoke. Never the terms — there are none.</summary>
+    public int? AssociatedSpeechEventId { get; init; }
+
+    public required SurrenderDemandState State { get; init; }
+
+    /// <summary>Why the demand left <see cref="SurrenderDemandState.Pending"/>. Null while it is still pending.</summary>
+    public string? ResolutionCause { get; init; }
+
+    /// <summary>The round the demand left Pending on. Null while pending.</summary>
+    public int? ResolvedRound { get; init; }
+
+    /// <summary>The global turn the demand left Pending on. Null while pending.</summary>
+    public int? ResolvedTurn { get; init; }
+
+    public bool IsPending => State == SurrenderDemandState.Pending;
+}
+
+/// <summary>
+/// One surrender-demand state transition, carried out of the engine so the orchestration layer can trace it
+/// and tell the room. Every departure from <see cref="SurrenderDemandState.Pending"/> produces exactly one.
+/// </summary>
+public sealed record DemandTransition(
+    SurrenderDemand Demand,
+    SurrenderDemandState Previous,
+    SurrenderDemandState New,
+    string Cause);

@@ -1124,7 +1124,8 @@ public sealed class TurnCoordinator
                 or DungeonMasterTools.OpenContainerName or DungeonMasterTools.TakeItemName
                 or DungeonMasterTools.InspectObjectName or DungeonMasterTools.OpenExitName
                 or DungeonMasterTools.EscapeEncounterName or DungeonMasterTools.OfferSurrenderName
-                or DungeonMasterTools.AcceptSurrenderName or DungeonMasterTools.UseAbilityName
+                or DungeonMasterTools.AcceptSurrenderName or DungeonMasterTools.DemandSurrenderName
+                or DungeonMasterTools.UseAbilityName
                 or DungeonMasterTools.DefendName
                 or DungeonMasterTools.GiveItemName or DungeonMasterTools.DropItemName
                 or DungeonMasterTools.StealItemName or DungeonMasterTools.IntimidateCharacterName
@@ -1446,6 +1447,7 @@ public sealed class TurnCoordinator
         // consequences so a modifier is never known only by its effect on a number.
         EmitStatusEvents(engineResult.StatusEvents, action.ActionType);
         EmitOfferTransitions(engineResult.OfferTransitions);
+        EmitDemandTransitions(engineResult.DemandTransitions);
 
         // Every fear change the action caused, whatever caused it — a critical blow, a heavy one, a threat
         // that told, an ally's word, or the odds turning. Emitted here, once, for every action type, so no
@@ -1509,6 +1511,7 @@ public sealed class TurnCoordinator
             OpenExitOutcome openExit => await DeliverExitOpenedAsync(character, openExit, cancellationToken).ConfigureAwait(false),
             EscapeOutcome escape => await DeliverEscapeAsync(character, escape, engineResult, cancellationToken).ConfigureAwait(false),
             OfferSurrenderOutcome offer => await DeliverOfferAsync(character, offer, cancellationToken).ConfigureAwait(false),
+            DemandSurrenderOutcome demand => await DeliverDemandAsync(character, demand, cancellationToken).ConfigureAwait(false),
             AcceptSurrenderOutcome accepted => await DeliverAcceptedSurrenderAsync(character, accepted, engineResult, cancellationToken).ConfigureAwait(false),
             GuardAllyOutcome guard => await DeliverAbilityOutcomeAsync(character, guard, "ability-guard-ally", cancellationToken).ConfigureAwait(false),
             HealingPrayerOutcome heal => await DeliverAbilityOutcomeAsync(character, heal, "ability-healing-prayer", cancellationToken).ConfigureAwait(false),
@@ -1783,6 +1786,46 @@ public sealed class TurnCoordinator
         }, character.Name);
 
         RecordPublicNarration("surrender-offered", stateAfterText, outcome.Summary, narration, character, [fact.Fact.Id]);
+        _console.DungeonMaster(narration);
+        return narration;
+    }
+
+    /// <summary>
+    /// A surrender was DEMANDED. Public: everyone present hears the ultimatum. Like an offer it changes
+    /// nothing — the demander stays armed and active — and it compels nothing: it only puts the choice to the
+    /// target, who is shown the demand on their own next turn (see <see cref="Prompts.WorldStateFormatter"/>)
+    /// and may yield with an offer of their own or fight on. It is delivered on the public channel and traced;
+    /// it carries no terms, so there is nothing to project as a persistent fact.
+    /// </summary>
+    private async Task<string> DeliverDemandAsync(
+        CharacterAgent character, DemandSurrenderOutcome outcome, CancellationToken cancellationToken)
+    {
+        var stateAfterText = WorldStateFormatter.FormatAuthoritativeState(_engine.State);
+        var narration = await _dungeonMaster
+            .NarratePublicEventAsync(character.Name, outcome.Summary, stateAfterText, cancellationToken)
+            .ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(narration))
+        {
+            narration = outcome.Summary;
+        }
+
+        var recipients = LivingRecipients();
+        _trace.Emit(TraceEventType.SurrenderDemandMade, new SurrenderDemandMadePayload
+        {
+            DemandId = outcome.DemandId,
+            DemanderId = outcome.DemanderId,
+            DemanderName = outcome.DemanderName,
+            TargetId = outcome.TargetId,
+            TargetName = outcome.TargetName,
+            AssociatedSpeechEventId = outcome.AssociatedSpeechEventId,
+            AssociatedSpeech = SpeechTextFor(outcome.AssociatedSpeechEventId),
+            Round = _trace.Round,
+            Turn = _trace.Turn,
+            BattleStateSummary = DescribeVisibleBattleState(),
+            PublicRecipients = recipients
+        }, character.Name);
+
+        RecordPublicNarration("surrender-demanded", stateAfterText, outcome.Summary, narration, character);
         _console.DungeonMaster(narration);
         return narration;
     }
@@ -2561,6 +2604,14 @@ public sealed class TurnCoordinator
                 return new AcceptSurrenderAction(
                     ResolveActingCharacter(call, DungeonMasterTools.RecipientParameter, character),
                     ResolveOfferReference(call, character));
+
+            case DungeonMasterTools.DemandSurrenderName:
+                return new DemandSurrenderAction(
+                    ResolveActingCharacter(call, DungeonMasterTools.ActorParameter, character),
+                    ToolArguments.GetRequiredString(call, DungeonMasterTools.TargetParameter),
+                    // Like an offer's, the ultimatum's words are the harness's own record of what this
+                    // character said aloud this turn, never something the Dungeon Master supplies.
+                    _speechThisTurn?.Id);
 
             case DungeonMasterTools.UseAbilityName:
                 return new UseAbilityAction(
@@ -3508,6 +3559,31 @@ public sealed class TurnCoordinator
 
         EmitStatusEvents(upkeep.StatusEvents, $"turn-upkeep ({phase})");
         EmitOfferTransitions(upkeep.OfferTransitions);
+        EmitDemandTransitions(upkeep.DemandTransitions);
+
+        // A demand everybody heard cannot silently vanish either: when the target finishes a turn without
+        // yielding, the room — the demander above all — sees the ultimatum lapse.
+        foreach (var transition in upkeep.DemandTransitions.Where(t => t.New == SurrenderDemandState.Expired))
+        {
+            var demander = _engine.State.FindById(transition.Demand.DemanderId)?.Name ?? transition.Demand.DemanderId;
+            var target = _engine.State.FindById(transition.Demand.TargetId)?.Name ?? transition.Demand.TargetId;
+            var text = $"{target} did not yield to {demander}'s demand. Nothing was compelled, and the fight goes on.";
+
+            var demandEntry = _narrationLog.Record("surrender-demand-lapsed", text);
+            _trace.Emit(TraceEventType.Narration, new NarrationPayload
+            {
+                Purpose = "surrender-demand-lapsed",
+                StateSuppliedToDungeonMaster = "(none — delivered verbatim by the harness, no model call)",
+                ContextSuppliedToDungeonMaster = transition.Cause,
+                Narration = text,
+                NarrationId = demandEntry.Id,
+                IntendedRecipients = LivingRecipients(),
+                Visibility = "public",
+                WorldVersion = _engine.State.Version
+            });
+
+            _console.Notice(text);
+        }
 
         foreach (var transition in upkeep.OfferTransitions)
         {
@@ -3638,6 +3714,42 @@ public sealed class TurnCoordinator
                 transition.New.ToString(), transition.Cause, worldVersion);
             TraceFactCreatedIfNew(fact, KnowledgeSource.PublicEvent, "surrender_offer_settled", "harness");
             DeliverPublicFact(fact.Fact, LivingRecipients(), worldVersion, "surrender_offer_settled");
+        }
+    }
+
+    /// <summary>
+    /// Traces every surrender-DEMAND transition out of Pending — a demand that lapsed after the target's turn,
+    /// or was invalidated because a party left active play. A freshly created demand is reported by its own
+    /// event, not here. Demands carry no terms, so there is nothing to move and no persistent fact to settle.
+    /// </summary>
+    private void EmitDemandTransitions(IReadOnlyList<DemandTransition> transitions)
+    {
+        foreach (var transition in transitions)
+        {
+            if (transition.New == SurrenderDemandState.Pending)
+            {
+                continue;
+            }
+
+            var demand = transition.Demand;
+            var demander = _engine.State.FindById(demand.DemanderId);
+            var target = _engine.State.FindById(demand.TargetId);
+
+            _trace.Emit(TraceEventType.SurrenderDemandResolved, new SurrenderDemandResolvedPayload
+            {
+                DemandId = demand.Id,
+                DemanderId = demand.DemanderId,
+                DemanderName = demander?.Name ?? demand.DemanderId,
+                TargetId = demand.TargetId,
+                TargetName = target?.Name ?? demand.TargetId,
+                PreviousState = transition.Previous.ToString(),
+                NewState = transition.New.ToString(),
+                Cause = transition.Cause,
+                CreatedRound = demand.CreatedRound,
+                CreatedTurn = demand.CreatedTurn,
+                ResolvedRound = demand.ResolvedRound ?? _trace.Round,
+                ResolvedTurn = demand.ResolvedTurn ?? _trace.Turn
+            });
         }
     }
 

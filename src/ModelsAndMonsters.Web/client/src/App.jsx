@@ -10,7 +10,7 @@ const LOG_KINDS = new Set([
   'surrendered', 'escaped', 'exitOpened', 'gave', 'dropped', 'stole', 'completed', 'ending',
   // v0.7: negotiation, abilities, statuses. Deliberately distinct kinds — an offer and an accepted
   // surrender must never read alike, because only one of them ends a fight.
-  'surrenderOffered', 'surrenderOfferSettled', 'surrenderAccepted',
+  'surrenderOffered', 'surrenderOfferSettled', 'surrenderAccepted', 'surrenderDemanded',
   'abilityUsed', 'statusChanged', 'attackRedirected', 'defendReduced',
   // v0.8: morale. A point of fear moving, a nerve breaking, a threat and a steadying word are four
   // different things and read as four different lines.
@@ -395,6 +395,12 @@ function LogLine({ evt }) {
       <div className="line offerline">
         🏳️ {p.character} offers {p.recipient} terms to end their fight — {p.terms}.
         <span className="sub"> Nothing has changed hands; {p.character} is still armed and still a target. Only {p.recipient} can accept.</span>
+      </div>
+    )
+    case 'surrenderDemanded': return (
+      <div className="line offerline">
+        ✊ {p.character} demands {p.target} give up the fight.
+        <span className="sub"> Nothing is compelled and nothing moves; {p.character} stays armed. {p.target} decides on their own turn — yield or fight on.</span>
       </div>
     )
     case 'surrenderOfferSettled': return (

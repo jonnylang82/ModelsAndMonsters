@@ -1595,6 +1595,73 @@ public sealed record SurrenderOfferResolvedPayload
     public required bool AssetsTransferred { get; init; }
 }
 
+/// <summary>
+/// A surrender was DEMANDED — a winner telling an opponent to yield. Termless and pressure-only: nothing
+/// moved, nobody is bound, and the demander stays armed and active. Records the ultimatum, its public words,
+/// and the odds it was issued under.
+/// </summary>
+public sealed record SurrenderDemandMadePayload
+{
+    public required string DemandId { get; init; }
+
+    public required string DemanderId { get; init; }
+
+    public required string DemanderName { get; init; }
+
+    public required string TargetId { get; init; }
+
+    public required string TargetName { get; init; }
+
+    /// <summary>The public-channel id of the ultimatum this turn, when the demander spoke.</summary>
+    public int? AssociatedSpeechEventId { get; init; }
+
+    /// <summary>The exact words of that ultimatum, for the report. Never contract state — a demand has none.</summary>
+    public string? AssociatedSpeech { get; init; }
+
+    public required int Round { get; init; }
+
+    public required int Turn { get; init; }
+
+    /// <summary>The visible battle state when the demand was made, so it can be read against the odds behind it.</summary>
+    public required string BattleStateSummary { get; init; }
+
+    /// <summary>Confirms the demand compelled nothing and moved nothing: always true.</summary>
+    public bool NothingCompelled { get; init; } = true;
+
+    public IReadOnlyList<string> PublicRecipients { get; init; } = [];
+}
+
+/// <summary>
+/// A surrender demand left Pending — lapsed after the target completed a turn without yielding, or
+/// invalidated because a party left active play — with the cause.
+/// </summary>
+public sealed record SurrenderDemandResolvedPayload
+{
+    public required string DemandId { get; init; }
+
+    public required string DemanderId { get; init; }
+
+    public required string DemanderName { get; init; }
+
+    public required string TargetId { get; init; }
+
+    public required string TargetName { get; init; }
+
+    public required string PreviousState { get; init; }
+
+    public required string NewState { get; init; }
+
+    public required string Cause { get; init; }
+
+    public required int CreatedRound { get; init; }
+
+    public required int CreatedTurn { get; init; }
+
+    public required int ResolvedRound { get; init; }
+
+    public required int ResolvedTurn { get; init; }
+}
+
 /// <summary>The durable record of an accepted surrender, as struck.</summary>
 public sealed record SurrenderAgreementPayload
 {

@@ -139,6 +139,12 @@ public sealed record EngineResult
     public IReadOnlyList<OfferTransition> OfferTransitions { get; init; } = [];
 
     /// <summary>
+    /// Every surrender-DEMAND state transition this action caused — a demand made, lapsed after the target's
+    /// turn, or invalidated because a party left active play. Empty when no demand was touched.
+    /// </summary>
+    public IReadOnlyList<DemandTransition> DemandTransitions { get; init; } = [];
+
+    /// <summary>
     /// Every change to a character's fear this action caused, in order — from a critical blow, a heavy one,
     /// a threat that landed, an ally's steadying word, or the moment the odds turned against them. Empty when
     /// morale did not move. Recorded even when no randomness was involved, so a deterministic change to
@@ -161,7 +167,8 @@ public sealed record EngineResult
         IReadOnlyList<RngDraw>? rngDraws = null,
         IReadOnlyList<StatusEvent>? statusEvents = null,
         IReadOnlyList<OfferTransition>? offerTransitions = null,
-        IReadOnlyList<FearChange>? fearChanges = null) =>
+        IReadOnlyList<FearChange>? fearChanges = null,
+        IReadOnlyList<DemandTransition>? demandTransitions = null) =>
         new()
         {
             Action = action,
@@ -172,7 +179,8 @@ public sealed record EngineResult
             RngDraws = rngDraws ?? [],
             StatusEvents = statusEvents ?? [],
             OfferTransitions = offerTransitions ?? [],
-            FearChanges = fearChanges ?? []
+            FearChanges = fearChanges ?? [],
+            DemandTransitions = demandTransitions ?? []
         };
 }
 
@@ -192,6 +200,9 @@ public sealed record TurnUpkeep
 
     public IReadOnlyList<OfferTransition> OfferTransitions { get; init; } = [];
 
+    /// <summary>Every surrender DEMAND that lapsed at the end of this actor's turn. Empty when none did.</summary>
+    public IReadOnlyList<DemandTransition> DemandTransitions { get; init; } = [];
+
     /// <summary>
     /// True when start-of-turn upkeep found the acting character stunned from an earlier turn and consumed the
     /// <see cref="Domain.StatusEffectKind.Stunned"/> status: the character loses this whole turn and takes no
@@ -199,5 +210,6 @@ public sealed record TurnUpkeep
     /// </summary>
     public bool ActorIncapacitated { get; init; }
 
-    public bool IsEmpty => StatusEvents.Count == 0 && OfferTransitions.Count == 0 && !ActorIncapacitated;
+    public bool IsEmpty => StatusEvents.Count == 0 && OfferTransitions.Count == 0
+        && DemandTransitions.Count == 0 && !ActorIncapacitated;
 }

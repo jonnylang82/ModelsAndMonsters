@@ -427,6 +427,34 @@ public sealed record OfferSurrenderOutcome : ActionOutcome
 }
 
 /// <summary>
+/// The result of DEMANDING an opponent's surrender. Public: everyone present hears the ultimatum. It is the
+/// mirror of an offer and shares its "nothing has changed" nature — but it is the DEMANDER who stays armed
+/// and active, and the TARGET who is being told to yield. Nothing is compelled: the demand only puts the
+/// choice to the target, who decides on their own turn whether to yield (via an offer of their own) or fight
+/// on.
+/// </summary>
+public sealed record DemandSurrenderOutcome : ActionOutcome
+{
+    public required string DemandId { get; init; }
+    public required string DemanderId { get; init; }
+    public required string DemanderName { get; init; }
+    public required string TargetId { get; init; }
+    public required string TargetName { get; init; }
+
+    /// <summary>The public-channel id of the ultimatum spoken on the same turn, when there was one.</summary>
+    public int? AssociatedSpeechEventId { get; init; }
+
+    public override string OutcomeType => "demand_surrender";
+
+    public override string Summary =>
+        $"{DemanderName} demanded that {TargetName} give up the fight. NOTHING is compelled and NOTHING has " +
+        $"changed: {DemanderName} stays armed and active, {TargetName} keeps their weapon and every belonging, " +
+        $"and no disposition changes. It only puts the choice to {TargetName}, who decides on {TargetName}'s own " +
+        $"turn whether to yield — by offering their surrender — or to fight on. If {TargetName} does not yield, " +
+        $"the demand simply lapses.";
+}
+
+/// <summary>
 /// The result of an accepted surrender. Public: everyone present sees the tribute change hands and the
 /// weapon, if promised, hit the floor. The offerer is now
 /// <see cref="Domain.CharacterDisposition.Surrendered"/> — alive, still present, out of the fight and no

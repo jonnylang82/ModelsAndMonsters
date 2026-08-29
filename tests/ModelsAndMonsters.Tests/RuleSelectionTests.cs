@@ -135,10 +135,15 @@ public sealed class RuleSelectionTests
         // bar was 1500 while WholeRulebook was the live path; since v0.10 the shipped run uses ActionRouting
         // (appsettings RulebookSelectionMode), which sends only the selected cards — a handful, not all of
         // them — so the WHOLE book is now only the fallback a low-confidence selection drops to, not the
-        // request every consultation pays for. v0.11's two new ability cards (firebolt, stun) spent part of
-        // the old margin; 1000 tokens of headroom on the fallback is still ~8x the ~127 that actually
-        // truncated replies in the v0.8 run above, and the live ActionRouting request has far more room again.
-        Assert.True(estimate.HeadroomTokens > 1000,
+        // request every consultation pays for. v0.11's ability cards (firebolt, stun) spent part of the old
+        // margin, and v0.11's demand_surrender card — the 28th action, added because a winner pressing an
+        // opponent to yield used to invert into the winner surrendering — spent the rest, taking the fallback
+        // below the old 1000 bar. That is the expected cost of growing the action set on an 8k budget, and the
+        // bar tracks it down deliberately: ~600 tokens of headroom on a FALLBACK that a live ActionRouting run
+        // almost never hits is still ~5x the ~127 that actually truncated replies in the v0.8 run above, and
+        // the live selected-card request has several times the room again. If a future card takes it lower,
+        // the honest fix is to prune the whole-book fallback or drop it on 8k, not to shave every card thin.
+        Assert.True(estimate.HeadroomTokens > 600,
             $"Only {estimate.HeadroomTokens} tokens of headroom — too tight even for the ActionRouting fallback to be safe.");
     }
 

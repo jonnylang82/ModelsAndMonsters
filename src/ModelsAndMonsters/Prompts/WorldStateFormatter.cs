@@ -97,7 +97,7 @@ public sealed class WorldStateFormatter
         {
             builder.AppendLine("- A container's listed contents, and any exterior marking marked FOR YOU ONLY, are yours alone. Open or closed is public; what is inside is not, and opening does not make it so. You are told exactly what the character you are serving knows — never hand them contents or a marking they have not discovered.");
         }
-        builder.AppendLine("- ACTIONS THE WORLD CAN RESOLVE: attack_character, use_item, use_ability, defend, open_container, take_item, inspect_object, open_exit, escape_encounter, offer_surrender, accept_surrender, give_item, drop_item, steal_item, intimidate_character, steady_ally, take_cover, leave_cover, damage_environmental_object. Nothing else exists.");
+        builder.AppendLine("- ACTIONS THE WORLD CAN RESOLVE: attack_character, use_item, use_ability, defend, open_container, take_item, inspect_object, open_exit, escape_encounter, offer_surrender, accept_surrender, demand_surrender, give_item, drop_item, steal_item, intimidate_character, steady_ally, take_cover, leave_cover, damage_environmental_object. Nothing else exists.");
         builder.AppendLine("- A Scared status is what a face shows, not a number. There is no morale figure here to reveal, and being Scared compels nobody: a frightened character still chooses, and yielding or leaving still take their own actions.");
         builder.AppendLine("- Two characters are allies exactly when their TEAM matches (shown in the TEAMS line and on every character), never inferred from role, species or which side of the fight they look like they are on. Two characters sharing a team are always allies of each other, whatever their role.");
 
@@ -142,6 +142,23 @@ public sealed class WorldStateFormatter
                     $"promising {DescribeTerms(state, offer)}. NOTHING has changed hands; {offerer} is still ACTIVE and " +
                     $"a valid target. Only {recipient} may accept it (accept_surrender, offer '{offer.Id}'), on their " +
                     "own turn; it lapses at the end of that turn otherwise.");
+            }
+        }
+
+        var demands = state.PendingDemands().ToList();
+        if (demands.Count > 0)
+        {
+            builder.AppendLine();
+            builder.AppendLine("SURRENDER DEMANDS STANDING (public — everyone present heard the ultimatum; these compel NOTHING):");
+            foreach (var demand in demands)
+            {
+                var demander = state.FindById(demand.DemanderId)?.Name ?? demand.DemanderId;
+                var target = state.FindById(demand.TargetId)?.Name ?? demand.TargetId;
+                builder.AppendLine(
+                    $"- (round {demand.CreatedRound}): {demander} has DEMANDED that {target} give up the fight. It carries " +
+                    $"no terms and moves nothing: {demander} stays armed and a valid target, and {target} keeps everything. " +
+                    $"It only puts the choice to {target}, who may yield on their own turn (offer_surrender) or fight on; it " +
+                    "lapses at the end of that turn otherwise.");
             }
         }
 
@@ -607,6 +624,18 @@ public sealed class WorldStateFormatter
                 "put them out of the fight. Do anything else and the offer lapses.");
         }
 
+        // A demand made AGAINST this character — the ultimatum, surfaced as the plain choice it puts to them.
+        // It compels nothing (fear never chooses here), but it makes the decision explicit THIS turn.
+        foreach (var demand in state.PendingDemandsAgainst(character.Id))
+        {
+            var demander = state.FindById(demand.DemanderId)?.Name ?? demand.DemanderId;
+            lines.Add(
+                $"- {demander} has DEMANDED that YOU give up the fight — you have been told to yield. It has taken " +
+                "nothing and compels nothing: you still hold your weapon and everything you carry, and you are free " +
+                "to fight on. But the choice is openly yours this turn — if you mean to yield, offer your surrender " +
+                "(naming what you hand over); otherwise act as you will, and the demand simply lapses.");
+        }
+
         if (state.PendingOfferFrom(character.Id) is { } mine)
         {
             var recipient = state.FindById(mine.RecipientId)?.Name ?? mine.RecipientId;
@@ -637,6 +666,16 @@ public sealed class WorldStateFormatter
                     "offer again on better terms, or do something else entirely.",
                 _ => $"- Your offer to {recipient} is no longer open."
             });
+        }
+
+        // A demand THIS character issued — so they do not wait on it or issue it twice. It settles itself.
+        if (state.PendingDemandFrom(character.Id) is { } myDemand)
+        {
+            var demanded = state.FindById(myDemand.TargetId)?.Name ?? myDemand.TargetId;
+            lines.Add(
+                $"- You have demanded that {demanded} give up the fight. It is not settled and compelled nothing: " +
+                $"{demanded} still holds their weapon and decides for themselves, on their own turn, whether to yield " +
+                "or fight on. Do not wait on it — act from where you stand.");
         }
 
         foreach (var agreement in state.SurrenderAgreements)

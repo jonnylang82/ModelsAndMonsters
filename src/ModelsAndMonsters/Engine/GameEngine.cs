@@ -41,6 +41,7 @@ public sealed class GameEngine : IGameEngine
     private int _statusCounter;
     private int _relationshipCounter;
     private int _offerCounter;
+    private int _demandCounter;
     private int _agreementCounter;
     private int _intimidationCounter;
 
@@ -81,6 +82,7 @@ public sealed class GameEngine : IGameEngine
             EscapeEncounterAction escape => ResolveEscapeEncounter(escape),
             OfferSurrenderAction offer => ResolveOfferSurrender(offer),
             AcceptSurrenderAction accept => ResolveAcceptSurrender(accept),
+            DemandSurrenderAction demand => ResolveDemandSurrender(demand),
             UseAbilityAction ability => ResolveUseAbility(ability),
             IntimidateCharacterAction intimidate => ResolveIntimidate(intimidate),
             SteadyAllyAction steady => ResolveSteadyAlly(steady),
@@ -646,12 +648,31 @@ public sealed class GameEngine : IGameEngine
                 "the named recipient completed a turn without accepting", round, turn, transitions);
         }
 
-        if (statusEvents.Count > 0 || transitions.Count > 0)
+        // A demand the target did not answer lapses the moment they finish a turn — exactly like an offer.
+        // It compelled nothing; the target simply chose not to yield, and the pressure is spent.
+        var demandTransitions = new List<DemandTransition>();
+        foreach (var demand in state.PendingDemandsAgainst(actorId).ToList())
+        {
+            if (demand.CreatedTurn >= turn)
+            {
+                continue;
+            }
+
+            state = TransitionDemand(state, demand, SurrenderDemandState.Expired,
+                "the target completed a turn without yielding", round, turn, demandTransitions);
+        }
+
+        if (statusEvents.Count > 0 || transitions.Count > 0 || demandTransitions.Count > 0)
         {
             _state = state with { Version = state.Version + 1 };
         }
 
-        return new TurnUpkeep { StatusEvents = statusEvents, OfferTransitions = transitions };
+        return new TurnUpkeep
+        {
+            StatusEvents = statusEvents,
+            OfferTransitions = transitions,
+            DemandTransitions = demandTransitions
+        };
     }
 
     // ===============================================================================================
@@ -740,6 +761,7 @@ public sealed class GameEngine : IGameEngine
     {
         var statusEvents = new List<StatusEvent>();
         var offerTransitions = new List<OfferTransition>();
+        var demandTransitions = new List<DemandTransition>();
         var draws = new List<RngDraw>(2);
         var consumedStatusIds = new List<string>();
 
@@ -1072,7 +1094,7 @@ public sealed class GameEngine : IGameEngine
         Container? corpse = null;
         if (died)
         {
-            var (purged, purgeChanged) = PurgeForInactive(after, target.Id, "was killed", statusEvents, offerTransitions);
+            var (purged, purgeChanged) = PurgeForInactive(after, target.Id, "was killed", statusEvents, offerTransitions, demandTransitions);
             after = purged;
             changed |= purgeChanged;
 
@@ -1158,7 +1180,8 @@ public sealed class GameEngine : IGameEngine
             CoverDestroyed = coverDestroyedNow
         };
 
-        return EngineResult.Accept(action, state, after, outcome, draws, statusEvents, offerTransitions, fearChanges);
+        return EngineResult.Accept(action, state, after, outcome, draws, statusEvents, offerTransitions, fearChanges,
+            demandTransitions: demandTransitions);
     }
 
     /// <summary>
@@ -1443,6 +1466,87 @@ public sealed class GameEngine : IGameEngine
     }
 
     /// <summary>
+    /// Records a pressure-only demand that one named opponent give up the fight — the mirror of an offer,
+    /// pointed the other way. It moves nothing, disarms nobody and changes no disposition: the DEMANDER stays
+    /// armed, active and targetable, and the TARGET keeps everything. The demand is surfaced to the target on
+    /// their next turn (see <see cref="Prompts.WorldStateFormatter"/>) and lapses at the end of it. No
+    /// randomness. A character may have only one demand pending at a time, exactly as with an offer.
+    /// </summary>
+    private EngineResult ResolveDemandSurrender(DemandSurrenderAction action)
+    {
+        var state = _state;
+
+        var demander = state.Resolve(action.DemanderRef);
+        if (demander is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.UnknownActor,
+                $"There is no character called '{action.DemanderRef}' in the room.");
+        }
+
+        if (!demander.CanAct)
+        {
+            return RejectInactiveActor(action, state, demander);
+        }
+
+        var target = state.Resolve(action.TargetRef);
+        if (target is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.UnknownRecipient,
+                $"There is no character called '{action.TargetRef}' in the room to demand surrender of.");
+        }
+
+        if (Same(target.Id, demander.Id))
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.RecipientIsSelf,
+                $"{demander.Name} cannot demand their own surrender.");
+        }
+
+        if (!target.CanAct)
+        {
+            return RejectUnavailableTarget(action, state, target, "demand surrender of");
+        }
+
+        if (demander.IsAllyOf(target))
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.RecipientIsNotAnOpponent,
+                $"{target.Name} fights on {demander.Name}'s own side. A surrender is demanded of an opponent, not an ally.");
+        }
+
+        if (state.PendingDemandFrom(demander.Id) is { } existing)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.DuplicatePendingOffer,
+                $"{demander.Name} has already demanded that {state.FindById(existing.TargetId)?.Name ?? existing.TargetId} " +
+                "yield, and that demand has not been answered yet.");
+        }
+
+        var demand = new SurrenderDemand
+        {
+            Id = $"demand-{++_demandCounter}",
+            DemanderId = demander.Id,
+            TargetId = target.Id,
+            CreatedRound = CurrentRound,
+            CreatedTurn = CurrentTurn,
+            AssociatedSpeechEventId = action.AssociatedSpeechEventId,
+            State = SurrenderDemandState.Pending
+        };
+
+        var after = state.WithDemand(demand) with { Version = state.Version + 1 };
+
+        var outcome = new DemandSurrenderOutcome
+        {
+            DemandId = demand.Id,
+            DemanderId = demander.Id,
+            DemanderName = demander.Name,
+            TargetId = target.Id,
+            TargetName = target.Name,
+            AssociatedSpeechEventId = action.AssociatedSpeechEventId
+        };
+
+        return EngineResult.Accept(action, state, after, outcome,
+            demandTransitions: [new DemandTransition(demand, SurrenderDemandState.Pending, SurrenderDemandState.Pending, "demand made")]);
+    }
+
+    /// <summary>
     /// Accepts a pending surrender offer addressed to the current actor, enforcing the whole agreement in one
     /// atomic state change: every promised item moves, the offerer is disarmed, the promised weapon lands on
     /// the room's floor, the offer becomes Accepted, a durable agreement is recorded, and the offerer's
@@ -1561,9 +1665,10 @@ public sealed class GameEngine : IGameEngine
             $"accepted by {recipient.Name}", CurrentRound, CurrentTurn, transitions);
         after = after.WithAgreement(agreement);
 
-        // Yielding ends this character's fight: their combat statuses fall away and any other offer they were
-        // party to can no longer be answered.
-        var (purged, _) = PurgeForInactive(after, offerer.Id, "surrendered", statusEvents, transitions, exceptOfferId: offer.Id);
+        // Yielding ends this character's fight: their combat statuses fall away and any other offer or demand
+        // they were party to can no longer be answered.
+        var demandTransitions = new List<DemandTransition>();
+        var (purged, _) = PurgeForInactive(after, offerer.Id, "surrendered", statusEvents, transitions, demandTransitions, exceptOfferId: offer.Id);
         after = purged with { Version = state.Version + 1 };
 
         var outcome = new AcceptSurrenderOutcome
@@ -1582,7 +1687,7 @@ public sealed class GameEngine : IGameEngine
         };
 
         return EngineResult.Accept(action, state, after, outcome,
-            statusEvents: statusEvents, offerTransitions: transitions);
+            statusEvents: statusEvents, offerTransitions: transitions, demandTransitions: demandTransitions);
     }
 
     // ===============================================================================================
@@ -2259,8 +2364,9 @@ public sealed class GameEngine : IGameEngine
 
         var statusEvents = new List<StatusEvent>();
         var transitions = new List<OfferTransition>();
+        var demandTransitions = new List<DemandTransition>();
         var after = state.WithCharacter(escaped);
-        (after, _) = PurgeForInactive(after, actor.Id, "escaped the encounter", statusEvents, transitions);
+        (after, _) = PurgeForInactive(after, actor.Id, "escaped the encounter", statusEvents, transitions, demandTransitions);
         after = after with { Version = state.Version + 1 };
 
         var outcome = new EscapeOutcome
@@ -2273,7 +2379,7 @@ public sealed class GameEngine : IGameEngine
         };
 
         return EngineResult.Accept(action, state, after, outcome,
-            statusEvents: statusEvents, offerTransitions: transitions);
+            statusEvents: statusEvents, offerTransitions: transitions, demandTransitions: demandTransitions);
     }
 
     // ===============================================================================================
@@ -2935,6 +3041,7 @@ public sealed class GameEngine : IGameEngine
         string cause,
         List<StatusEvent> statusEvents,
         List<OfferTransition> offerTransitions,
+        List<DemandTransition> demandTransitions,
         string? exceptOfferId = null)
     {
         var changed = false;
@@ -2986,6 +3093,20 @@ public sealed class GameEngine : IGameEngine
 
             state = TransitionOffer(state, offer, SurrenderOfferState.Invalidated,
                 $"a party to the offer {cause}", CurrentRound, CurrentTurn, offerTransitions);
+            changed = true;
+        }
+
+        // A demand can mean nothing once either the demander or the target leaves active play: the pressure
+        // has no one to answer it, or no one to answer to. It is quietly invalidated, exactly like an offer.
+        foreach (var demand in state.PendingDemands().ToList())
+        {
+            if (!Same(demand.DemanderId, characterId) && !Same(demand.TargetId, characterId))
+            {
+                continue;
+            }
+
+            state = TransitionDemand(state, demand, SurrenderDemandState.Invalidated,
+                $"a party to the demand {cause}", CurrentRound, CurrentTurn, demandTransitions);
             changed = true;
         }
 
@@ -3071,6 +3192,27 @@ public sealed class GameEngine : IGameEngine
 
         transitions.Add(new OfferTransition(updated, offer.State, newState, cause));
         return state.WithUpdatedOffer(updated);
+    }
+
+    private static GameState TransitionDemand(
+        GameState state,
+        SurrenderDemand demand,
+        SurrenderDemandState newState,
+        string cause,
+        int round,
+        int turn,
+        List<DemandTransition> transitions)
+    {
+        var updated = demand with
+        {
+            State = newState,
+            ResolutionCause = cause,
+            ResolvedRound = round,
+            ResolvedTurn = turn
+        };
+
+        transitions.Add(new DemandTransition(updated, demand.State, newState, cause));
+        return state.WithUpdatedDemand(updated);
     }
 
     /// <summary>Spends one charge of a limited ability. Unlimited abilities and untracked holds are untouched.</summary>

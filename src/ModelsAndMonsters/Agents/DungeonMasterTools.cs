@@ -21,6 +21,7 @@ public static class DungeonMasterTools
     public const string EscapeEncounterName = "escape_encounter";
     public const string OfferSurrenderName = "offer_surrender";
     public const string AcceptSurrenderName = "accept_surrender";
+    public const string DemandSurrenderName = "demand_surrender";
     public const string UseAbilityName = "use_ability";
     public const string DefendName = "defend";
     public const string GiveItemName = "give_item";
@@ -195,6 +196,21 @@ public static class DungeonMasterTools
             "{{OfferParameter}}": { "type": "string", "description": "The stable id of the pending offer being accepted, exactly as listed in the authoritative state (for example 'offer-1')." }
           },
           "required": ["{{RecipientParameter}}", "{{OfferParameter}}"]
+        }
+        """),
+        returnJsonSchema: null);
+
+    public static readonly AIFunctionDeclaration DemandSurrender = AIFunctionFactory.CreateDeclaration(
+        DemandSurrenderName,
+        "Resolve the ACTING character DEMANDING that one named opponent give up the fight — telling them to yield, throw down their weapon, or surrender or die. This is the opposite of offer_surrender: the acting character is NOT giving up, they are pressing the OTHER character to. Use it whenever the intent is to make an opponent surrender, however it is phrased — including an ultimatum, a threat of death, or an offer of mercy conditional on the opponent yielding ('throw down your hammer and you can walk'). It carries NO terms and moves nothing: the demander keeps their weapon and stays an active, targetable combatant, and the target keeps everything. It only puts the choice to the target, who may yield on their own turn (with an offer of their own) or fight on. Never record this as the demander's own surrender.",
+        ToolSchema.Parse($$"""
+        {
+          "type": "object",
+          "properties": {
+            "{{ActorParameter}}": { "type": "string", "description": "Name of the character DEMANDING the surrender — always the character whose intent you are adjudicating — exactly as given in the authoritative state. This character is NOT the one yielding." },
+            "{{TargetParameter}}": { "type": "string", "description": "Name of the ONE opposing character who is being told to give up, exactly as given in the authoritative state." }
+          },
+          "required": ["{{ActorParameter}}", "{{TargetParameter}}"]
         }
         """),
         returnJsonSchema: null);
@@ -375,7 +391,7 @@ public static class DungeonMasterTools
     public static readonly IReadOnlyList<AITool> All =
     [
         AttackCharacter, UseItem, OpenContainer, TakeItem, InspectObject, OpenExit, EscapeEncounter,
-        OfferSurrender, AcceptSurrender, UseAbility, Defend, GiveItem, DropItem, StealItem,
+        OfferSurrender, AcceptSurrender, DemandSurrender, UseAbility, Defend, GiveItem, DropItem, StealItem,
         IntimidateCharacter, SteadyAlly, TakeCover, LeaveCover, DamageEnvironmentalObject, RejectAction
     ];
 
@@ -395,6 +411,7 @@ public static class DungeonMasterTools
             [EscapeEncounterName] = EscapeEncounter,
             [OfferSurrenderName] = OfferSurrender,
             [AcceptSurrenderName] = AcceptSurrender,
+            [DemandSurrenderName] = DemandSurrender,
             [UseAbilityName] = UseAbility,
             [DefendName] = Defend,
             [GiveItemName] = GiveItem,

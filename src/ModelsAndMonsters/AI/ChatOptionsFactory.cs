@@ -21,7 +21,7 @@ public static class ChatOptionsFactory
 
         var options = new ChatOptions
         {
-            ModelId = profile.ModelId
+            ModelId = profile.ModelId,
         };
 
         // The modern Claude models (Claude 5, Opus 4.7+) both forbid sampling and reach reasoning through

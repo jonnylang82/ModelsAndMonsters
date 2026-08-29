@@ -23,6 +23,13 @@ namespace ModelsAndMonsters.AI;
 /// </remarks>
 public sealed class ChatClientFactory : IChatClientFactory
 {
+    /// <summary>
+    /// Carries the owning agent's name (e.g. "DungeonMaster", "Haldric", "IntentParser", "RulebookResolver")
+    /// on every outbound request, on every provider, so a captured request — a proxy log, a debugging
+    /// session — can be attributed to the agent that sent it without cross-referencing the trace.
+    /// </summary>
+    public const string VesselTagsHeader = "X-Vessel-Tags";
+
     private readonly ProvidersOptions _providers;
 
     public ChatClientFactory(IOptions<SimulationOptions> options)
@@ -54,22 +61,22 @@ public sealed class ChatClientFactory : IChatClientFactory
                 $"Agent '{profile.AgentName}' has an invalid Ollama endpoint '{endpoint}'.");
         }
 
-        // A local Ollama needs no key; Ollama Cloud (Endpoint https://ollama.com) needs a bearer token. When a
-        // key is resolved we hand OllamaApiClient an HttpClient carrying the Authorization header — the only
-        // difference between the local and cloud clients — otherwise the plain endpoint constructor is used
-        // exactly as before. The HttpClient is created per agent (a handful per run) and lives as long as the
-        // run does; there is nothing to dispose separately for a process that ends with the run.
+        // Every agent needs its own HttpClient regardless of provider now, to carry the X-Vessel-Tags header.
+        // A local Ollama needs no key; Ollama Cloud (Endpoint https://ollama.com) additionally needs a bearer
+        // token. The HttpClient is created per agent (a handful per run) and lives as long as the run does;
+        // there is nothing to dispose separately for a process that ends with the run.
+        var http = new HttpClient { BaseAddress = uri };
+        http.DefaultRequestHeaders.Add(VesselTagsHeader, profile.AgentName);
+
         var apiKey = ResolveOllamaApiKey();
         if (!string.IsNullOrWhiteSpace(apiKey))
         {
-            var http = new HttpClient { BaseAddress = uri };
             http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-            return new OllamaApiClient(http, profile.ModelId);
         }
 
         // OllamaApiClient implements IChatClient explicitly; returning it as IChatClient is what
         // erases the SDK type for the rest of the application.
-        return new OllamaApiClient(uri, profile.ModelId);
+        return new OllamaApiClient(http, profile.ModelId);
     }
 
     /// <summary>
@@ -94,6 +101,8 @@ public sealed class ChatClientFactory : IChatClientFactory
         {
             clientOptions.Endpoint = new Uri(endpoint);
         }
+
+        clientOptions.AddPolicy(new VesselTagsPolicy(profile.AgentName), PipelinePosition.PerCall);
 
         // Reasoning is OpenRouter's own `reasoning` request object, which the standard OpenAI chat request the
         // SDK builds cannot express. When the agent configures an effort, a pipeline policy injects that object
@@ -129,6 +138,25 @@ public sealed class ChatClientFactory : IChatClientFactory
         ReasoningEffort.ExtraHigh => new JsonObject { ["effort"] = "max" },
         _ => null
     };
+
+    /// <summary>
+    /// Sets the <see cref="VesselTagsHeader"/> on every request an OpenAI-compatible client sends (OpenAI,
+    /// OpenRouter, UnslothStudio), naming the agent the client belongs to.
+    /// </summary>
+    private sealed class VesselTagsPolicy(string agentName) : PipelinePolicy
+    {
+        public override void Process(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
+        {
+            message.Request.Headers.Set(VesselTagsHeader, agentName);
+            ProcessNext(message, pipeline, currentIndex);
+        }
+
+        public override ValueTask ProcessAsync(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
+        {
+            message.Request.Headers.Set(VesselTagsHeader, agentName);
+            return ProcessNextAsync(message, pipeline, currentIndex);
+        }
+    }
 
     /// <summary>
     /// Injects OpenRouter's <c>reasoning</c> object into the JSON body of each chat-completions request. The
@@ -220,6 +248,8 @@ public sealed class ChatClientFactory : IChatClientFactory
             clientOptions.Endpoint = new Uri(endpoint);
         }
 
+        clientOptions.AddPolicy(new VesselTagsPolicy(profile.AgentName), PipelinePosition.PerCall);
+
         // Chat completions, not the Responses API: GetChatClient posts to {endpoint}/chat/completions, which
         // is what Unsloth Studio's OpenAI-compatible surface serves. AsIChatClient erases the SDK type for
         // the rest of the application.
@@ -244,6 +274,8 @@ public sealed class ChatClientFactory : IChatClientFactory
         {
             clientOptions.Endpoint = new Uri(endpoint);
         }
+
+        clientOptions.AddPolicy(new VesselTagsPolicy(profile.AgentName), PipelinePosition.PerCall);
 
         // The Responses API (/v1/responses) rather than chat completions. It is the endpoint that allows
         // reasoning effort alongside function tools — chat completions 400s that combination for the
@@ -276,10 +308,18 @@ public sealed class ChatClientFactory : IChatClientFactory
             ? new AnthropicClient { ApiKey = apiKey }
             : new AnthropicClient { ApiKey = apiKey, BaseUrl = endpoint };
 
+        // AnthropicClient itself has no header property; ExtraHeaders lives on the ClientOptions view that
+        // WithOptions hands back, additive to (and unable to override) the auth headers the client already
+        // set. It does not modify the original client, hence reassigning here.
+        var taggedClient = client.WithOptions(options => options with
+        {
+            ExtraHeaders = new Dictionary<string, string> { [VesselTagsHeader] = profile.AgentName }
+        });
+
         // AsIChatClient erases the SDK type for the rest of the application. No UseFunctionInvocation():
         // the harness dispatches every tool call by hand, so no automatic-invocation middleware is added.
         // The caching wrapper marks the stable system-prompt prefix for Anthropic prompt caching.
-        return new AnthropicPromptCachingChatClient(client.AsIChatClient(profile.ModelId));
+        return new AnthropicPromptCachingChatClient(taggedClient.AsIChatClient(profile.ModelId));
     }
 
     /// <summary>User secrets first, then environment. Keys are never read from configuration files.</summary>

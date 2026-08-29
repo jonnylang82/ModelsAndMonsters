@@ -197,6 +197,18 @@ public enum TraceEventType
     SurrenderOfferResolved,
 
     /// <summary>
+    /// A surrender was DEMANDED: the demander, the target told to yield, and the public ultimatum. Termless
+    /// and pressure-only — nothing moved, nobody is bound; it records the ultimatum, not a transfer.
+    /// </summary>
+    SurrenderDemandMade,
+
+    /// <summary>
+    /// A surrender demand left Pending — lapsed after the target completed a turn without yielding, or
+    /// invalidated because a party left active play — with the cause.
+    /// </summary>
+    SurrenderDemandResolved,
+
+    /// <summary>
     /// A surrender agreement was struck: exactly what transferred, whether a weapon was forfeited, and the
     /// speech that accompanied the offer. The durable evidence of a negotiated surrender.
     /// </summary>

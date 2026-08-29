@@ -267,7 +267,7 @@ public sealed class RuleCatalog : IRuleRepository
             RelatedRuleIds = ["encounter.accept-surrender", "combat.morale", "inventory.give"],
             // Yielding on concrete terms, told apart from an ordinary give or drop — a weapon laid down or an
             // item held out to buy one's own life is a surrender term, not a gift and not a discard.
-            DistinguishedFrom = [DungeonMasterTools.GiveItemName, DungeonMasterTools.DropItemName],
+            DistinguishedFrom = [DungeonMasterTools.GiveItemName, DungeonMasterTools.DropItemName, DungeonMasterTools.DemandSurrenderName],
             ActionName = DungeonMasterTools.OfferSurrenderName,
             Description = "THE ACTOR GIVING UP THEIR OWN FIGHT, to ONE named opponent, on concrete terms they promise to hand over: one or more items they carry, the weapon in their hand, or both — either concession alone is enough, whatever else the offerer does or does not carry. Yielding is never unilateral and never free. Recognise it in yielding, surrendering, begging to be spared, or buying their life with payment or a weapon for mercy — PROVIDED something concrete is promised. A weapon held out by the flat, laid down, or offered to buy mercy is this rule with forfeit_weapon alone, not a give_item and not a bare plea. An item offered specifically to buy one's own life is likewise this rule, never an ordinary gift. The plea itself is ordinary speech; this action is only the enforceable terms. WHOSE fight is decisive: 'take my purse and let me live' is this rule, while 'hand over your purse and I will spare you' is a DEMAND, binds nobody, and is speech alone — recording it here would make the speaker the one who gave up.",
             RequiredBindings = ["the acting character (the one offering to give up)", "the ONE opposing character the terms are offered to", "the ordinary inventory items promised (may be none)", "whether the weapon in hand is promised"],
@@ -277,7 +277,7 @@ public sealed class RuleCatalog : IRuleRepository
             Visibility = "public: everyone present hears the terms",
             SuccessBehaviour = "a pending offer is recorded. NOTHING moves, nobody is disarmed, no disposition changes and the offerer stays an active, targetable combatant. Only the named recipient can accept it, on their own turn",
             FailureBehaviour = "refused if the offer promises nothing concrete, names an item the offerer does not own, names an ally rather than an opponent, or duplicates an offer already awaiting an answer",
-            Exclusions = ["a bare plea with nothing promised at all — no item and no weapon forfeited — is speech, not an offer", "yielding without naming an opponent", "promising anything the offerer does not carry, including another character's belongings", "making somebody else surrender, DEMANDING that they yield, or a truce conditional on the enemy also giving up ('I lay mine down if you lay yours') — asking the enemy to yield is a demand, not the actor's own surrender", "promises about the future — service or ransom beyond what is handed over on acceptance", "a secret offer: terms are always public"]
+            Exclusions = ["a bare plea with nothing promised at all — no item and no weapon forfeited — is speech, not an offer", "yielding without naming an opponent", "promising anything the offerer does not carry, including another character's belongings", "making somebody else surrender, DEMANDING that they yield, or a truce conditional on the enemy also giving up ('I lay mine down if you lay yours') — telling the enemy to give up is the demand_surrender action, never the actor's own surrender", "promises about the future — service or ransom beyond what is handed over on acceptance", "a secret offer: terms are always public"]
         },
         new RuleCard
         {
@@ -302,6 +302,26 @@ public sealed class RuleCatalog : IRuleRepository
             SuccessBehaviour = "the whole agreement is enforced at once — every promised item passes to the accepter, the offerer is disarmed and any promised weapon falls to the floor, a durable agreement is recorded, and the offerer becomes surrendered: alive, present, out of the fight and no longer a valid target",
             FailureBehaviour = "refused, with nothing transferred, if the actor is not the named recipient, the offer is no longer pending, or any promised asset has since left the offerer's hands",
             Exclusions = ["accepting an offer made to somebody else", "accepting part of the terms — acceptance is all or nothing", "demanding different terms (that is speech; the offerer may propose new terms on a later turn)", "attacking the offerer and taking the tribute anyway", "going back on an accepted surrender"]
+        },
+        new RuleCard
+        {
+            RuleId = "encounter.demand-surrender",
+            Summary = "Telling an opponent to give up the fight — an ultimatum, NOT the actor's own surrender.",
+            RelatedRuleIds = ["encounter.offer-surrender", "combat.intimidate", "combat.morale"],
+            // The whole reason this action exists: a winner pressing a loser to yield used to collapse into
+            // offer_surrender and get recorded as the WINNER surrendering. Declaring the boundary both ways
+            // surfaces each card when routing to the other, so the resolver can tell "you yield" from "I yield".
+            DistinguishedFrom = [DungeonMasterTools.OfferSurrenderName],
+            ActionName = DungeonMasterTools.DemandSurrenderName,
+            Description = "The acting character DEMANDING that ONE named opponent give up the fight — the opposite of an offer: the actor is NOT yielding, they are pressing the OTHER to. Recognise it in telling an enemy to surrender, yield, throw down their weapon, 'yield or die', an ultimatum, or mercy offered ON CONDITION the enemy yields ('throw down your hammer and you can walk'). WHOSE fight ends is decisive: 'throw down YOUR blade' or 'I spare YOU if you give up' is this rule; 'take my purse and let ME live' is the actor's own surrender (offer_surrender). It carries no terms and moves nothing.",
+            RequiredBindings = ["the acting character (the demander)", "the ONE opposing character told to yield"],
+            Preconditions = ["the demander is the current actor and active", "the target is a living, present, active OPPOSING character", "the demander has no other demand awaiting an answer"],
+            TurnCost = "consumes the demander's turn",
+            RngRequirement = "none",
+            Visibility = "public: everyone present hears the ultimatum",
+            SuccessBehaviour = "a pending demand is recorded and surfaced to the target on their next turn. NOTHING is compelled and NOTHING moves: the demander stays armed and a valid target, the target keeps everything, and only the target's own later choice can act on it",
+            FailureBehaviour = "refused if the target is an ally, dead, surrendered or fled, or the demander already has a demand awaiting an answer",
+            Exclusions = ["the actor giving up their OWN fight (offer_surrender)", "demanding an ally yield", "setting terms the target must forfeit — a demand enforces nothing and names none"]
         },
         new RuleCard
         {

@@ -61,6 +61,10 @@ public sealed record UiEvent(string Type, object? Payload)
     public static UiEvent SurrenderOffered(string offerId, string character, string recipient, string terms) =>
         new("surrenderOffered", new { offerId, character, recipient, terms });
 
+    /// <summary>A demand that an opponent yield (v0.11) — an ultimatum that compels nothing and moves nothing.</summary>
+    public static UiEvent SurrenderDemanded(string character, string target) =>
+        new("surrenderDemanded", new { character, target });
+
     public static UiEvent SurrenderOfferSettled(string offerId, string character, string recipient, string state, string cause) =>
         new("surrenderOfferSettled", new { offerId, character, recipient, state, cause });
 

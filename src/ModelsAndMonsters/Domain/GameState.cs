@@ -35,6 +35,13 @@ public sealed record GameState
     public ImmutableArray<SurrenderAgreement> SurrenderAgreements { get; init; } = [];
 
     /// <summary>
+    /// Every surrender DEMAND ever made — a winner telling an opponent to yield — pending or resolved.
+    /// Termless and pressure-only (see <see cref="SurrenderDemand"/>); retained like offers so the whole
+    /// negotiation history is in the authoritative snapshot.
+    /// </summary>
+    public ImmutableArray<SurrenderDemand> SurrenderDemands { get; init; } = [];
+
+    /// <summary>
     /// Every intimidation attempt made in the encounter, successful or not, in the order they were made.
     /// Authoritative state rather than a trace-only record, because the one-attempt-per-pair rule is enforced
     /// from it: a failed threat is spent exactly as surely as a successful one.
@@ -267,6 +274,45 @@ public sealed record GameState
     /// <summary>Returns a new state with the agreement appended.</summary>
     public GameState WithAgreement(SurrenderAgreement agreement) =>
         this with { SurrenderAgreements = SurrenderAgreements.Add(agreement) };
+
+    // -----------------------------------------------------------------------------------------------
+    // Surrender demands (pressure-only ultimatums)
+    // -----------------------------------------------------------------------------------------------
+
+    /// <summary>The pending demand with this id, or null.</summary>
+    public SurrenderDemand? FindDemand(string demandId) =>
+        string.IsNullOrWhiteSpace(demandId)
+            ? null
+            : SurrenderDemands.FirstOrDefault(d => string.Equals(d.Id, demandId.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Every demand still awaiting the target's answer.</summary>
+    public IEnumerable<SurrenderDemand> PendingDemands() => SurrenderDemands.Where(d => d.IsPending);
+
+    /// <summary>The demander's one pending demand, or null. Only one pending demand may exist per demander.</summary>
+    public SurrenderDemand? PendingDemandFrom(string demanderId) =>
+        PendingDemands().FirstOrDefault(d => string.Equals(d.DemanderId, demanderId, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Every pending demand made against this target — the ultimatums surfaced to them on their turn.</summary>
+    public IEnumerable<SurrenderDemand> PendingDemandsAgainst(string targetId) =>
+        PendingDemands().Where(d => string.Equals(d.TargetId, targetId, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Returns a new state with the demand appended.</summary>
+    public GameState WithDemand(SurrenderDemand demand) =>
+        this with { SurrenderDemands = SurrenderDemands.Add(demand) };
+
+    /// <summary>Returns a new state with <paramref name="updated"/> replacing the demand of the same id.</summary>
+    public GameState WithUpdatedDemand(SurrenderDemand updated)
+    {
+        for (var index = 0; index < SurrenderDemands.Length; index++)
+        {
+            if (string.Equals(SurrenderDemands[index].Id, updated.Id, StringComparison.OrdinalIgnoreCase))
+            {
+                return this with { SurrenderDemands = SurrenderDemands.SetItem(index, updated) };
+            }
+        }
+
+        throw new InvalidOperationException($"No surrender demand with id '{updated.Id}' exists in the current state.");
+    }
 
     // -----------------------------------------------------------------------------------------------
     // Morale

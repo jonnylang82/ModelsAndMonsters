@@ -93,6 +93,9 @@ public sealed class WebTraceSink : ITraceSink
                             _publish(UiEvent.SurrenderOffered(
                                 offer.OfferId, offer.OffererName, offer.RecipientName, offer.TermsDescription));
                             break;
+                        case DemandSurrenderOutcome demand:
+                            _publish(UiEvent.SurrenderDemanded(demand.DemanderName, demand.TargetName));
+                            break;
                         case AcceptSurrenderOutcome accepted:
                             _publish(UiEvent.SurrenderAccepted(
                                 accepted.AccepterName, accepted.OffererName, accepted.TransferredItemNames,

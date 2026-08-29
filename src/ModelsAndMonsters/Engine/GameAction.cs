@@ -159,6 +159,25 @@ public sealed record AcceptSurrenderAction(string RecipientRef, string OfferRef)
 }
 
 /// <summary>
+/// The acting character DEMANDING that one named opponent give up the fight. This is the counterpart to
+/// <see cref="OfferSurrenderAction"/>, pointed the other way: the demander is not yielding, they are telling
+/// the target to. It carries no terms and moves nothing — it only records a pending, pressure-only
+/// <see cref="Domain.SurrenderDemand"/> that is surfaced to the target on their next turn. The demander stays
+/// armed, active and targetable; whether the target complies is entirely the target's own later choice. It
+/// consumes the demander's turn, uses no randomness, and the words that carry it are ordinary speech, held
+/// only as <paramref name="AssociatedSpeechEventId"/>.
+/// </summary>
+public sealed record DemandSurrenderAction(
+    string DemanderRef,
+    string TargetRef,
+    int? AssociatedSpeechEventId = null) : GameAction
+{
+    public override string ActionType => "demand_surrender";
+
+    public override string Describe() => $"DemandSurrender(demander={DemanderRef}, target={TargetRef})";
+}
+
+/// <summary>
 /// The current actor using one of their own abilities, optionally on a target. One generic action covers every
 /// ability; the engine dispatches on the ability's <see cref="Domain.AbilityEffectKind"/> to a concrete
 /// handler. Whether it consults randomness depends on the ability — only an ability that performs a weapon
