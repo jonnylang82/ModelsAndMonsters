@@ -30,6 +30,12 @@ public sealed class ChatClientFactory : IChatClientFactory
     /// </summary>
     public const string VesselTagsHeader = "X-Vessel-Tags";
 
+    /// <summary>
+    /// Carries the run id on every outbound request, on every provider, so a captured request can be
+    /// correlated back to its originating simulation run.
+    /// </summary>
+    public const string VesselSessionHeader = "X-Vessel-Session";
+
     private readonly ProvidersOptions _providers;
 
     public ChatClientFactory(IOptions<SimulationOptions> options)
@@ -37,22 +43,22 @@ public sealed class ChatClientFactory : IChatClientFactory
         _providers = options.Value.Providers;
     }
 
-    public IChatClient Create(AgentModelProfile profile)
+    public IChatClient Create(AgentModelProfile profile, string? runId = null)
     {
         ArgumentNullException.ThrowIfNull(profile);
 
         return profile.Provider switch
         {
-            ModelProvider.Ollama => CreateOllamaClient(profile),
-            ModelProvider.OpenAI => CreateOpenAIClient(profile),
-            ModelProvider.Anthropic => CreateAnthropicClient(profile),
-            ModelProvider.OpenRouter => CreateOpenRouterClient(profile),
-            ModelProvider.UnslothStudio => CreateUnslothStudioClient(profile),
+            ModelProvider.Ollama => CreateOllamaClient(profile, runId),
+            ModelProvider.OpenAI => CreateOpenAIClient(profile, runId),
+            ModelProvider.Anthropic => CreateAnthropicClient(profile, runId),
+            ModelProvider.OpenRouter => CreateOpenRouterClient(profile, runId),
+            ModelProvider.UnslothStudio => CreateUnslothStudioClient(profile, runId),
             _ => throw new InvalidOperationException($"Unsupported provider '{profile.Provider}'.")
         };
     }
 
-    private IChatClient CreateOllamaClient(AgentModelProfile profile)
+    private IChatClient CreateOllamaClient(AgentModelProfile profile, string? runId = null)
     {
         var endpoint = profile.Endpoint ?? _providers.Ollama.Endpoint;
         if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri))
@@ -67,6 +73,10 @@ public sealed class ChatClientFactory : IChatClientFactory
         // there is nothing to dispose separately for a process that ends with the run.
         var http = new HttpClient { BaseAddress = uri };
         http.DefaultRequestHeaders.Add(VesselTagsHeader, profile.AgentName);
+        if (!string.IsNullOrWhiteSpace(runId))
+        {
+            http.DefaultRequestHeaders.Add(VesselSessionHeader, runId);
+        }
 
         var apiKey = ResolveOllamaApiKey();
         if (!string.IsNullOrWhiteSpace(apiKey))
@@ -84,7 +94,7 @@ public sealed class ChatClientFactory : IChatClientFactory
     /// does not serve). OpenRouter is OpenAI-compatible and needs no separate SDK: it is the OpenAI client with
     /// OpenRouter's base URL and key.
     /// </summary>
-    private IChatClient CreateOpenRouterClient(AgentModelProfile profile)
+    private IChatClient CreateOpenRouterClient(AgentModelProfile profile, string? runId = null)
     {
         var apiKey = ResolveOpenRouterApiKey();
         if (string.IsNullOrWhiteSpace(apiKey))
@@ -102,7 +112,7 @@ public sealed class ChatClientFactory : IChatClientFactory
             clientOptions.Endpoint = new Uri(endpoint);
         }
 
-        clientOptions.AddPolicy(new VesselTagsPolicy(profile.AgentName), PipelinePosition.PerCall);
+        clientOptions.AddPolicy(new VesselTagsPolicy(profile.AgentName, runId), PipelinePosition.PerCall);
 
         // Reasoning is OpenRouter's own `reasoning` request object, which the standard OpenAI chat request the
         // SDK builds cannot express. When the agent configures an effort, a pipeline policy injects that object
@@ -140,20 +150,28 @@ public sealed class ChatClientFactory : IChatClientFactory
     };
 
     /// <summary>
-    /// Sets the <see cref="VesselTagsHeader"/> on every request an OpenAI-compatible client sends (OpenAI,
-    /// OpenRouter, UnslothStudio), naming the agent the client belongs to.
+    /// Sets the <see cref="VesselTagsHeader"/> and optionally <see cref="VesselSessionHeader"/> on every request
+    /// an OpenAI-compatible client sends (OpenAI, OpenRouter, UnslothStudio), naming the agent and session.
     /// </summary>
-    private sealed class VesselTagsPolicy(string agentName) : PipelinePolicy
+    private sealed class VesselTagsPolicy(string agentName, string? runId = null) : PipelinePolicy
     {
         public override void Process(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
         {
             message.Request.Headers.Set(VesselTagsHeader, agentName);
+            if (!string.IsNullOrWhiteSpace(runId))
+            {
+                message.Request.Headers.Set(VesselSessionHeader, runId);
+            }
             ProcessNext(message, pipeline, currentIndex);
         }
 
         public override ValueTask ProcessAsync(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
         {
             message.Request.Headers.Set(VesselTagsHeader, agentName);
+            if (!string.IsNullOrWhiteSpace(runId))
+            {
+                message.Request.Headers.Set(VesselSessionHeader, runId);
+            }
             return ProcessNextAsync(message, pipeline, currentIndex);
         }
     }
@@ -230,7 +248,7 @@ public sealed class ChatClientFactory : IChatClientFactory
     /// way a plain local Ollama has none); <see cref="ApiKeyCredential"/> is what puts it in the
     /// Authorization header.
     /// </summary>
-    private IChatClient CreateUnslothStudioClient(AgentModelProfile profile)
+    private IChatClient CreateUnslothStudioClient(AgentModelProfile profile, string? runId = null)
     {
         var apiKey = ResolveUnslothStudioApiKey();
         if (string.IsNullOrWhiteSpace(apiKey))
@@ -248,7 +266,7 @@ public sealed class ChatClientFactory : IChatClientFactory
             clientOptions.Endpoint = new Uri(endpoint);
         }
 
-        clientOptions.AddPolicy(new VesselTagsPolicy(profile.AgentName), PipelinePosition.PerCall);
+        clientOptions.AddPolicy(new VesselTagsPolicy(profile.AgentName, runId), PipelinePosition.PerCall);
 
         // Chat completions, not the Responses API: GetChatClient posts to {endpoint}/chat/completions, which
         // is what Unsloth Studio's OpenAI-compatible surface serves. AsIChatClient erases the SDK type for
@@ -257,7 +275,7 @@ public sealed class ChatClientFactory : IChatClientFactory
         return openAIClient.GetChatClient(profile.ModelId).AsIChatClient();
     }
 
-    private IChatClient CreateOpenAIClient(AgentModelProfile profile)
+    private IChatClient CreateOpenAIClient(AgentModelProfile profile, string? runId = null)
     {
         var apiKey = ResolveOpenAIApiKey();
         if (string.IsNullOrWhiteSpace(apiKey))
@@ -275,7 +293,7 @@ public sealed class ChatClientFactory : IChatClientFactory
             clientOptions.Endpoint = new Uri(endpoint);
         }
 
-        clientOptions.AddPolicy(new VesselTagsPolicy(profile.AgentName), PipelinePosition.PerCall);
+        clientOptions.AddPolicy(new VesselTagsPolicy(profile.AgentName, runId), PipelinePosition.PerCall);
 
         // The Responses API (/v1/responses) rather than chat completions. It is the endpoint that allows
         // reasoning effort alongside function tools — chat completions 400s that combination for the
@@ -292,7 +310,7 @@ public sealed class ChatClientFactory : IChatClientFactory
 #pragma warning restore OPENAI001
     }
 
-    private IChatClient CreateAnthropicClient(AgentModelProfile profile)
+    private IChatClient CreateAnthropicClient(AgentModelProfile profile, string? runId = null)
     {
         var apiKey = ResolveAnthropicApiKey();
         if (string.IsNullOrWhiteSpace(apiKey))
@@ -311,9 +329,14 @@ public sealed class ChatClientFactory : IChatClientFactory
         // AnthropicClient itself has no header property; ExtraHeaders lives on the ClientOptions view that
         // WithOptions hands back, additive to (and unable to override) the auth headers the client already
         // set. It does not modify the original client, hence reassigning here.
+        var extraHeaders = new Dictionary<string, string> { [VesselTagsHeader] = profile.AgentName };
+        if (!string.IsNullOrWhiteSpace(runId))
+        {
+            extraHeaders[VesselSessionHeader] = runId;
+        }
         var taggedClient = client.WithOptions(options => options with
         {
-            ExtraHeaders = new Dictionary<string, string> { [VesselTagsHeader] = profile.AgentName }
+            ExtraHeaders = extraHeaders
         });
 
         // AsIChatClient erases the SDK type for the rest of the application. No UseFunctionInvocation():

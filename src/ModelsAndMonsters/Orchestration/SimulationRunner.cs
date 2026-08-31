@@ -866,7 +866,7 @@ public sealed class SimulationRunner
 
     private TracingChatClient CreateTracingClient(AgentModelProfile profile, ExperimentTrace trace, List<IChatClient> owned)
     {
-        var inner = _chatClientFactory.Create(profile);
+        var inner = _chatClientFactory.Create(profile, trace.RunId);
         var tracing = new TracingChatClient(inner, profile, trace);
         owned.Add(tracing);
         return tracing;

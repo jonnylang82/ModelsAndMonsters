@@ -17,7 +17,7 @@ internal sealed class ScriptedChatClientFactory : IChatClientFactory
         _clientsByAgent = clientsByAgent;
     }
 
-    public IChatClient Create(AgentModelProfile profile) =>
+    public IChatClient Create(AgentModelProfile profile, string? runId = null) =>
         _clientsByAgent.TryGetValue(profile.AgentName, out var client)
             ? client
             : throw new InvalidOperationException(

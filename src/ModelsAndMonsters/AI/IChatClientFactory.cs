@@ -11,5 +11,5 @@ namespace ModelsAndMonsters.AI;
 /// </remarks>
 public interface IChatClientFactory
 {
-    IChatClient Create(AgentModelProfile profile);
+    IChatClient Create(AgentModelProfile profile, string? runId = null);
 }

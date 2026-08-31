@@ -97,14 +97,14 @@ if (args is ["--rulebook-probe", var probeIntent, ..])
 
         var catalog = new RuleCatalog();
         var trace = new ExperimentTrace("rulebook-probe", new ProbeTraceSink());
-        using var probeClient = factory.Create(profile);
+        using var probeClient = factory.Create(profile, trace.RunId);
         var resolver = new RulebookResolver(profile, new TracingChatClient(probeClient, profile, trace), prompts);
 
         // The probe goes through the SAME selection path a run would, or it answers a different question
         // than the one being asked of it. One selector, one factory, both callers.
         var probeSelector = RuleSelectorFactory.Create(
             options.Harness, options.Providers, catalog, profile,
-            p => new TracingChatClient(factory.Create(p), p, trace));
+            p => new TracingChatClient(factory.Create(p, trace.RunId), p, trace));
 
         var consultant = new RulebookConsultant(
             catalog,
