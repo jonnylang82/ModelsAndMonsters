@@ -25,6 +25,17 @@ npm run dev
 
 Then open <http://localhost:5173/>. Ollama and the hosted providers remain available through configuration.
 
+The branch now boots into **The Archive Wakes**, the first Council-native encounter. Nema Mistsong, Emma
+Nightveil, Pipix Thistlegrin and Scott Stonefang are independent hero agents facing two archive wardens. Their
+names, equipment, concise behavioural grounding and supported abilities live in
+`src/ModelsAndMonsters/scenario_council.json`. Character appearance is separate from game logic: the web client
+loads `public/characters/manifest.json`, whose stable character ids point to copied portrait sheets. This lets
+future D&D skins and emotion variants replace art without changing the engine or character prompts.
+
+This first expedition remains fully autonomous. Jon is the observer/director, not a mandatory player character.
+Director interventions and an optional guest character are the next interaction layer; the engine remains the
+authority for outcomes when those controls are added.
+
 Most of you will have heard of Dungeons & Dragons, or seen it on _Stranger Things_: a group of friends sat round a table, rolling dice and taking on imaginary adventures.
 
 I wanted to play with that idea. What would happen if I recreated it with every role played by an AI agent? Would the agents stick to the rules? Would they work together? Would their personalities affect their decisions? Would they even remember whose side they were on?

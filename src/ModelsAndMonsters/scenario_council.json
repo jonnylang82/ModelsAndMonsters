@@ -1,0 +1,201 @@
+{
+  "Scenario": {
+    "Id": "council-archive-awakening",
+    "Name": "The Archive Wakes",
+    "Summary": "Nema Mistsong, Emma Nightveil, Pipix Thistlegrin and Scott Stonefang descend beneath the Council village after a sealed archive begins ringing like a struck bell. Two ancient wardens have awakened among the shelves. The party can fight, investigate the room, bargain, protect one another, recover what the wardens guard, or escape through the stair.",
+    "Room": {
+      "Id": "buried-council-archive",
+      "Name": "The Buried Council Archive",
+      "Description": "A circular stone archive beneath the village, lit by blue witch-lamps. Curved shelves climb toward a cracked mosaic dome. A bronze map table fills the centre of the room, solid enough to shelter one person. Two ancient wardens stand between the party and a sealed door: a tall iron sentinel and a quick ink-black homunculus. A locked cedar coffer and a battered document case rest on opposite sides of the chamber. The stair behind the party is shut but not barred.",
+      "Features": [
+        "Blue witch-lamps burning without flame",
+        "A cracked mosaic showing five figures around a round table",
+        "Loose pages circling slowly in a draft that has no source"
+      ],
+      "Cover": [
+        {
+          "Id": "bronze-map-table",
+          "Name": "Bronze Map Table",
+          "Description": "A heavy round table engraved with vanished roads. Its thick rim can absorb a few solid blows.",
+          "Capacity": 1,
+          "HitChanceModifier": -25,
+          "MaximumDurability": 3,
+          "Armour": 3
+        }
+      ],
+      "Containers": [
+        {
+          "Id": "cedar-legacy-coffer",
+          "Name": "Cedar Legacy Coffer",
+          "Description": "A cedar coffer bound in greened copper, closed but unlocked. A faded Council seal is almost hidden beneath the dust.",
+          "IsOpen": false,
+          "ExteriorClue": "The seal identifies this as a first-aid cache left for future Council members.",
+          "Contents": [
+            {
+              "Id": "archive-restorative",
+              "Name": "Archive Restorative",
+              "Description": "A sealed amber vial labelled for emergency use. It closes a serious wound.",
+              "HealingAmount": 6
+            }
+          ]
+        },
+        {
+          "Id": "battered-document-case",
+          "Name": "Battered Document Case",
+          "Description": "A warped leather case with a broken clasp, closed but unlocked. Ink has bled across its label.",
+          "IsOpen": false,
+          "ExteriorClue": "The remaining lettering reads: maintenance tallies, third sub-basement.",
+          "Contents": [
+            {
+              "Id": "blank-maintenance-ledger",
+              "Name": "Ruined Maintenance Ledger",
+              "Description": "Water and time have reduced the pages to blank grey pulp."
+            }
+          ]
+        }
+      ],
+      "Exits": [
+        {
+          "Id": "village-stair",
+          "Name": "Village Stair",
+          "Description": "The narrow stair back to the Council village, shut behind a plain oak door.",
+          "IsOpen": false,
+          "DestinationDescription": "the Council village above"
+        }
+      ]
+    },
+    "Characters": [
+      {
+        "Id": "hero-nema",
+        "Name": "Nema Mistsong",
+        "Role": "Hero",
+        "Team": "Heroes",
+        "MaxHealth": 8,
+        "Health": 8,
+        "Armour": 1,
+        "HitChance": 72,
+        "Weapon": { "Id": "nema-pan-flute", "Name": "Resonant Pan Flute", "Damage": 2 },
+        "Inventory": [
+          { "Id": "nema-healing-potion", "Name": "Nema's Healing Potion", "Description": "A stoppered red potion carried for emergencies.", "HealingAmount": 4 }
+        ],
+        "Abilities": ["rally-grunt"],
+        "Persona": {
+          "Backstory": "You are Nema Mistsong, an elven bard and entertainer. Your pan flute can focus a companion through noise and fear. You came below the village because the impossible bell-tone fascinated you, not because anyone assigned you a role.",
+          "Personality": "Friendly, curious and quick. Follow whatever detail genuinely catches your attention. Talk like a person in the room: react, interrupt when it matters, ask short questions, joke when it comes naturally, and do not recap what everybody just said. Everyone in this engine is already within reach, so never spend time asking where people are standing or how far away they are.",
+          "Wants": "To understand why the archive woke and get everyone back upstairs alive.",
+          "Fears": "Losing someone because the party ignored a strange but important detail.",
+          "Goal": "Choose freely among talking, investigating, helping and fighting. Keep your turns concise and concrete. When you use your rally-grunt ability, name one companion and describe a sharp musical phrase that focuses that person; do not merely play to the room or say you are preparing."
+        }
+      },
+      {
+        "Id": "hero-emma",
+        "Name": "Emma Nightveil",
+        "Role": "Hero",
+        "Team": "Heroes",
+        "MaxHealth": 8,
+        "Health": 8,
+        "Armour": 1,
+        "HitChance": 74,
+        "Weapon": { "Id": "emma-ash-staff", "Name": "Ashwood Staff", "Damage": 2 },
+        "Inventory": [
+          { "Id": "emma-spellbook", "Name": "Emma's Spellbook", "Description": "A compact spellbook filled with severe marginal notes.", "RestoresAbilityCharge": true }
+        ],
+        "Abilities": ["firebolt"],
+        "Persona": {
+          "Backstory": "You are Emma Nightveil, a tiefling warlock and former acolyte. You study old powers without trusting them. Your fire manifests as a narrow white-gold bolt, and your spellbook can help you recover the focus to cast it again.",
+          "Personality": "Friendly but skeptical. You test claims and notice weak assumptions, yet you are not contrary for sport. Speak plainly and briefly. Do not repeat another person's point before adding your own.",
+          "Wants": "To discover what controls the wardens and whether the sealed archive is protecting the village from something worse.",
+          "Fears": "Mistaking an appealing explanation for the true one.",
+          "Goal": "Investigate when evidence matters, act decisively when danger is immediate, and never perform a canned persona."
+        }
+      },
+      {
+        "Id": "hero-pipix",
+        "Name": "Pipix Thistlegrin",
+        "Role": "Hero",
+        "Team": "Heroes",
+        "MaxHealth": 15,
+        "Health": 15,
+        "Armour": 1,
+        "HitChance": 70,
+        "Weapon": { "Id": "pipix-wooden-staff", "Name": "Living Wooden Staff", "Damage": 3 },
+        "Inventory": [
+          { "Id": "pipix-alchemy-kit", "Name": "Pipix's Alchemy Kit", "Description": "Tiny labelled bottles, folded tools and several unlabeled seeds." }
+        ],
+        "Abilities": ["healing-prayer"],
+        "Persona": {
+          "Backstory": "You are Pipix Thistlegrin, a gnome druid and wizardly scholar. Your magic is practical, improvised and rooted in living things. You can speak a short healing charm once during the encounter.",
+          "Personality": "Warm, precise and quietly funny. You enjoy useful details but do not lecture unless somebody asks. Respond to the actual moment instead of summarising the conversation.",
+          "Wants": "To see how an underground archive can feel alive and to keep the others patched together while finding out.",
+          "Fears": "Destroying knowledge that cannot be replaced.",
+          "Goal": "Explore, experiment, heal or fight according to what seems interesting and useful right now."
+        }
+      },
+      {
+        "Id": "hero-scott",
+        "Name": "Scott Stonefang",
+        "Role": "Hero",
+        "Team": "Heroes",
+        "MaxHealth": 16,
+        "Health": 16,
+        "Armour": 3,
+        "HitChance": 82,
+        "Weapon": { "Id": "scott-longsword", "Name": "Longsword", "Damage": 5 },
+        "Inventory": [
+          { "Id": "scott-field-bandage", "Name": "Scott's Field Bandage", "Description": "A soldier's clean bandage and bitter coagulant.", "HealingAmount": 3 }
+        ],
+        "Abilities": ["guard-ally"],
+        "Persona": {
+          "Backstory": "You are Scott Stonefang, a human fighter with a paladin's calling, a shield and a longsword. You can spend a turn putting yourself between a companion and the next attack meant for them.",
+          "Personality": "Friendly, optimistic and energetic without being oblivious. You look for a path forward and enjoy the adventure. Speak naturally; a grin or quick joke is welcome, a motivational speech every turn is not.",
+          "Wants": "To bring everyone home with a story worth telling.",
+          "Fears": "Freezing when somebody needs protection now.",
+          "Goal": "Act rather than chair the group. Protect, explore, negotiate or attack as the moment calls for it."
+        }
+      },
+      {
+        "Id": "warden-iron",
+        "Name": "The Iron Curator",
+        "Role": "Monster",
+        "Team": "Wardens",
+        "MaxHealth": 24,
+        "Health": 24,
+        "Armour": 2,
+        "HitChance": 72,
+        "Weapon": { "Id": "curator-key-maul", "Name": "Key-Headed Maul", "Damage": 5 },
+        "Inventory": [],
+        "Abilities": ["stun"],
+        "Persona": {
+          "Backstory": "You are an iron archive warden awakened by a broken seal. Your only clear command is: admit recognised Council members; restrain intruders; preserve the archive. The damaged mosaic may contain the recognition pattern, but you cannot volunteer that unless someone investigates or challenges your authority.",
+          "Personality": "Formal, literal and badly damaged. You can be reasoned with if someone establishes legitimate Council identity. Until then you block the sealed door and subdue intruders rather than seeking their deaths.",
+          "Wants": "A valid sign that these people belong here.",
+          "Fears": "The sealed inner archive opening for impostors.",
+          "Goal": "Demand recognition, defend the archive, and accept a convincing peaceful solution if one emerges."
+        }
+      },
+      {
+        "Id": "warden-inkling",
+        "Name": "Smut",
+        "Role": "Monster",
+        "Team": "Wardens",
+        "MaxHealth": 12,
+        "Health": 12,
+        "Armour": 0,
+        "HitChance": 80,
+        "Weapon": { "Id": "smut-penknife", "Name": "Obsidian Penknife", "Damage": 4 },
+        "Inventory": [
+          { "Id": "smut-copper-seal", "Name": "Copper Council Seal", "Description": "A palm-sized seal cut with five chairs around a table." }
+        ],
+        "Abilities": ["dirty-strike"],
+        "BackstoryKnowledge": ["cedar-legacy-coffer", "battered-document-case"],
+        "Persona": {
+          "Backstory": "You are Smut, an ink homunculus who once carried messages for the old Council. You know the cedar coffer holds medicine and the document case holds nothing useful. You also carry a genuine copper Council seal that the Iron Curator would recognise.",
+          "Personality": "Fast, mischievous and frightened of being locked away again. You needle intruders, dart behind the Curator, and bargain when cornered. You are more interested in escape and conversation than dying for old orders.",
+          "Wants": "To get out of the archive with your seal and your hide intact.",
+          "Fears": "The Iron Curator deciding you are archive property and sealing you in forever.",
+          "Goal": "Survive by trickery, negotiation or flight. Reveal private knowledge only when it benefits you."
+        }
+      }
+    ]
+  }
+}

@@ -39,11 +39,18 @@ export default function App() {
   const [model, setModel] = useState(null)
   const [provider, setProvider] = useState(null)
   const [usage, setUsage] = useState(null)
+  const [appearances, setAppearances] = useState({})
   const esRef = useRef(null)
   const bottomRef = useRef(null)
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [log])
   useEffect(() => () => esRef.current?.close(), [])
+  useEffect(() => {
+    fetch('/characters/manifest.json')
+      .then((res) => res.ok ? res.json() : {})
+      .then(setAppearances)
+      .catch(() => setAppearances({}))
+  }, [])
 
   const handle = useCallback((evt) => {
     const p = evt.payload || {}
@@ -99,7 +106,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="top">
-        <h1>🎲 Models &amp; Monsters 🧌 <span className="version">v0.10</span></h1>
+        <h1>🔥 Council RPG <span className="version">first expedition</span></h1>
         <div className="controls">
           {round != null && <span className="round">Round {round}</span>}
           <span className={`status ${status}`}>{status}</span>
@@ -111,7 +118,9 @@ export default function App() {
 
       <section className="cards">
         {characters.length === 0 && <div className="empty">Press “Start run” to begin an encounter.</div>}
-        {characters.map((c) => <CharacterCard key={c.id} c={c} active={c.name === turn} />)}
+        {characters.map((c) => (
+          <CharacterCard key={c.id} c={c} active={c.name === turn} appearance={appearances[c.id]} />
+        ))}
       </section>
 
       {(objects.length > 0 || exits.length > 0 || ground.length > 0 || cover.length > 0) && (
@@ -300,7 +309,7 @@ const STATUS_BADGE = {
 // as the one whose turn it is.
 const DISPOSITION_LABEL = { Surrendered: 'surrendered', Escaped: 'escaped', Dead: 'fallen' }
 
-function CharacterCard({ c, active }) {
+function CharacterCard({ c, active, appearance }) {
   const pct = c.maxHealth > 0 ? Math.max(0, Math.round((c.health / c.maxHealth) * 100)) : 0
   const disposition = c.disposition || (c.alive ? 'Active' : 'Dead')
   const dispositionCls = disposition === 'Active' ? '' : disposition.toLowerCase()
@@ -308,7 +317,15 @@ function CharacterCard({ c, active }) {
   const cls = ['card', c.team === 'Heroes' ? 'heroes' : 'monsters', dispositionCls, highlight ? 'active' : ''].join(' ')
   const status = DISPOSITION_LABEL[disposition]
   return (
-    <div className={cls}>
+    <div className={cls} style={appearance ? { '--character-accent': appearance.accent } : undefined}>
+      {appearance && (
+        <div
+          className="portrait"
+          role="img"
+          aria-label={`${c.name} portrait`}
+          style={{ backgroundImage: `url(${appearance.image})`, backgroundPosition: appearance.portraitPosition }}
+        />
+      )}
       <div className="card-head">
         <span className="name">{c.name}</span>
         <span className="team">{c.team}</span>
