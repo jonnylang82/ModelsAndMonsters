@@ -1,0 +1,430 @@
+[
+  {
+    "name": "Mirabel Tipton",
+    "race": "Halfling",
+    "className": "Rogue",
+    "level": 1,
+    "abilityScores": {
+      "strength": 16,
+      "dexterity": 17,
+      "constitution": 11,
+      "intelligence": 14,
+      "wisdom": 12,
+      "charisma": 13
+    },
+    "maxHp": 8,
+    "currentHp": 8,
+    "armorClass": 13,
+    "speed": 30,
+    "proficiencyBonus": 2,
+    "hitDiceExpended": 0,
+    "background": "Criminal",
+    "savingThrowProficiencies": [
+      "dexterity",
+      "intelligence"
+    ],
+    "skillProficiencies": [
+      "Sleight of Hand",
+      "Stealth"
+    ],
+    "preparedSpells": [],
+    "spellSlots": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "usedSpellSlots": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "equipment": [
+      "Dagger",
+      "Crossbow, light",
+      "Clothes, traveler's",
+      "Caltrops"
+    ],
+    "attacks": [],
+    "notes": "Mirabel Tipton has never considered herself dishonest. Dishonesty implies betraying someone’s reasonable expectations, and anyone carrying a heavy purse through a crowded street should reasonably expect Mirabel to investigate it.\n\nShe and Nema Mistsong grew up together, learning to survive through a simple division of labor. Nema attracted attention; Mirabel exploited it. Nema played music in market squares while Mirabel slipped between boots and beneath elbows, returning with enough coin to secure food, shelter, and occasionally something neither of them technically needed.\n\nAs they grew older, their schemes became more sophisticated. Mirabel learned locks, traps, ambushes, escape routes, and the precise moment at which confidence becomes suspicion. Nema learned how to play wealthy, innocent, offended, heartbroken, or hopelessly in love. Together, they could sell a worthless map, empty a dishonest merchant’s strongbox, and leave him convinced he had enjoyed the experience.\n\nMirabel’s attempt to rob Scott Suncrest should have been routine. Nema was performing, the tavern was crowded, and Scott was wearing enough polished metal to announce that subtlety had never troubled him. Mirabel had just reached his purse strings when a bottle intended for someone else struck her in the temple.\n\nShe awoke outside with her head in Pipix Thistlegrin’s lap and Scott holding a damp cloth against the bruise. Nema stood nearby, visibly deciding whether a rescue was still necessary.\n\nScott had already discovered Mirabel’s hand tangled in the cut cords of his purse. Rather than turn her over to the tavern keeper, he asked whether she intended to finish the job once she could see straight. Pipix scolded him. Nema laughed. Mirabel decided she hated all three of them.\n\nShe has remained with them ever since.\n\nMirabel still maintains that joining the group was a practical decision. Scott attracts danger before it reaches her, Pipix can heal injuries, and Nema remains the closest thing Mirabel has to family. Any suggestion that she has become fond of the others is slander and will be answered by the mysterious disappearance of the accuser’s valuables.\n",
+    "weaponMasteries": [],
+    "originFeat": "Alert",
+    "id": "char-1788322813561-1",
+    "createdAt": 1788322813561,
+    "updatedAt": 1788325164757
+  },
+  {
+    "name": "Emma Nightveil",
+    "race": "Tiefling",
+    "className": "Warlock",
+    "level": 3,
+    "abilityScores": {
+      "strength": 10,
+      "dexterity": 12,
+      "constitution": 11,
+      "intelligence": 18,
+      "wisdom": 17,
+      "charisma": 14
+    },
+    "maxHp": 18,
+    "currentHp": 18,
+    "armorClass": 11,
+    "speed": 30,
+    "proficiencyBonus": 2,
+    "hitDiceExpended": 0,
+    "background": "Acolyte",
+    "savingThrowProficiencies": [
+      "wisdom",
+      "charisma"
+    ],
+    "skillProficiencies": [
+      "Insight",
+      "Religion"
+    ],
+    "preparedSpells": [
+      "Comprehend Languages",
+      "Alter Self",
+      "Arcane Sword"
+    ],
+    "spellSlots": [
+      0,
+      3,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "usedSpellSlots": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "equipment": [
+      "Staff",
+      "Robes",
+      "Spellbook"
+    ],
+    "attacks": [],
+    "notes": "Emma Nightveil was raised among acolytes who taught her to recognize sin before she was old enough to understand desire. Her Tiefling blood made her an object of suspicion within the temple, but her sharp mind and instinctive understanding of forbidden texts made her too valuable to dismiss. She learned the approved prayers in public and studied the locked books in private.\n\nWhen divine answers failed to satisfy her questions, something else answered.\n\nEmma does not discuss the precise nature of her pact. She describes her patron as a mutually beneficial professional arrangement, although the truth is likely more complicated. Her abilities eventually drew her into the Ashen Concord, fighting opposite the celestial host and its infuriatingly handsome champion, Scott Suncrest.\n\nScott represented everything Emma had been taught to distrust: divine authority, shining armor, impossible confidence, and the unbearable assumption that the universe approved of him personally. She should have hated him. She made an admirable effort.\n\nTheir battles became legendary only to themselves. Emma would unleash enough magic to make their confrontation convincing, Scott would charge through it with unnecessary theatricality, and somehow neither ever landed the killing blow. She occasionally saved his life so that she could defeat him properly later. Scott returned the favor with the same transparent excuse.\n\nSince the war, Emma has built a respectable career locating forbidden objects, deciphering dangerous texts, and accepting mercenary work from clients wise enough not to ask what she intends to do with the information she collects. Scott continues to appear during these jobs with statistically implausible regularity.\n\nEmma considers their flirtation a method of psychological warfare. She considers their occasional partnerships temporary tactical arrangements. She considers the warmth she feels when he smiles at her an infernal side effect that will presumably resolve itself.\n\nIt has not.\n",
+    "weaponMasteries": [],
+    "originFeat": "Magic Initiate (Cleric)",
+    "id": "char-1788323226012-2",
+    "createdAt": 1788323226012,
+    "updatedAt": 1788325727105
+  },
+  {
+    "name": "Pipix Thistlegrin",
+    "race": "Elf",
+    "className": "Druid",
+    "level": 1,
+    "abilityScores": {
+      "strength": 11,
+      "dexterity": 11,
+      "constitution": 13,
+      "intelligence": 17,
+      "wisdom": 16,
+      "charisma": 11
+    },
+    "maxHp": 14,
+    "currentHp": 14,
+    "armorClass": 10,
+    "speed": 30,
+    "proficiencyBonus": 2,
+    "hitDiceExpended": 0,
+    "background": "Sage",
+    "savingThrowProficiencies": [
+      "intelligence",
+      "wisdom"
+    ],
+    "skillProficiencies": [
+      "Arcana",
+      "History"
+    ],
+    "secondaryClassName": "Wizard",
+    "secondaryClassLevel": 1,
+    "preparedSpells": [
+      "Entangle",
+      "Faerie Fire",
+      "Healing Word"
+    ],
+    "spellSlots": [
+      0,
+      3,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "usedSpellSlots": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "equipment": [
+      "Animal Feed (1 day)",
+      "Alchemist's supplies",
+      "Wooden staff",
+      "Blowgun",
+      "Robes"
+    ],
+    "attacks": [],
+    "notes": "Pipix Thistlegrin was raised among Elves who treated nature with reverence, magic with discipline, and emotional restraint as though it were a competitive sport. Pipix proved talented at the first two.\n\nA student of both druidic traditions and arcane scholarship, Pipix believes the natural and magical worlds are not separate disciplines but different languages describing the same truth. This has led to several useful discoveries, two minor academic scandals, and at least one greenhouse that remains legally classified as hostile terrain.\n\nPipix cares deeply for living things. Pipix is also alarmingly willing to injure anyone who harms them.\n\nThat contradiction became apparent in a roadside tavern when several poachers began boasting about the creatures they had trapped and the price their hides would bring. Pipix tried to ignore them. Then one described skinning a still-living animal.\n\nPipix crossed the room without finishing the drink.\n\nScott Suncrest joined the resulting brawl moments later. He later claimed he had intervened to defend Pipix, although Pipix distinctly remembers Scott grinning before throwing the first poacher through a table. By the time the fighting ended, the tavern had lost three chairs, a railing, most of its glassware, and any remaining ambiguity about the poachers’ travel plans.\n\nOutside, Pipix and Scott discovered an unconscious Halfling woman who had been struck by a bottle apparently intended for Pipix. They carried her clear of the wreckage, tended to the swelling on her head, and waited for her to awaken. Pipix did not discover until later that the Halfling had been attempting to cut Scott’s purse when she was struck.\n\nScott found this hilarious. Pipix pretended not to.\n\nPipix and Scott have remained close ever since. Both are associated with ideals they routinely fail to embody: celestial virtue in Scott’s case and peaceful natural harmony in Pipix’s. Neither judges the other for falling short. Usually, they help one another fall short more effectively.\n",
+    "weaponMasteries": [],
+    "originFeat": "Magic Initiate (Wizard)",
+    "id": "char-1788323239333-3",
+    "createdAt": 1788323239333,
+    "updatedAt": 1788325068961
+  },
+  {
+    "name": "Nema Mistsong",
+    "race": "Human",
+    "className": "Bard",
+    "level": 1,
+    "abilityScores": {
+      "strength": 12,
+      "dexterity": 13,
+      "constitution": 12,
+      "intelligence": 11,
+      "wisdom": 14,
+      "charisma": 16
+    },
+    "maxHp": 9,
+    "currentHp": 9,
+    "armorClass": 12,
+    "speed": 30,
+    "proficiencyBonus": 2,
+    "hitDiceExpended": 0,
+    "background": "Entertainer",
+    "savingThrowProficiencies": [
+      "dexterity",
+      "charisma"
+    ],
+    "skillProficiencies": [
+      "Acrobatics",
+      "Performance"
+    ],
+    "preparedSpells": [
+      "Mage Hand",
+      "Sleep"
+    ],
+    "spellSlots": [
+      0,
+      2,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "usedSpellSlots": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "equipment": [
+      "Pan flute",
+      "Leather Armor",
+      "Potion of healing",
+      "Clothes, traveler's"
+    ],
+    "attacks": [],
+    "notes": "Nema Mistsong learned early that a good performance could open doors, soften hearts, and redirect every eye in a crowded street. She also learned that while people watched the musician, they rarely watched their purses.\n\nShe met Mirabel Tipton when they were children surviving by whatever combination of charm, speed, and dishonesty the day required. Nema could gather a crowd with a song and hold it with a smile. Mirabel could move through that crowd like a pleasant thought no one remembered having. By the end of a performance, Nema’s hat would contain a respectable collection of coins and Mirabel’s pockets would contain a considerably less respectable one.\n\nThey grew up as sisters in every sense that mattered. Nema became a genuine entertainer, traveling between taverns, festivals, and private halls. Mirabel became an extraordinarily capable thief. Their childhood grift matured with them, becoming more elaborate, more profitable, and occasionally almost legal.\n\nDuring one performance at a roadside tavern, Nema noticed Mirabel working her way toward a broad-shouldered Aasimar in polished armor. The mark looked wealthy, distracted, and far too pleased with himself. He was perfect.\n\nThen someone mentioned poaching.\n\nA furious Elf launched across the room. The Aasimar joined the fight with obvious delight. A bottle sailed over the melee and struck Mirabel directly in the head just as she reached for the Aasimar’s purse.\n\nBy the time Nema fought her way off the stage, Mirabel had disappeared. She found her outside with the Aasimar and the Elf carefully tending to her. Nema approached prepared to lie, threaten, charm, or attack as circumstances required.\n\nThe Aasimar simply held up his purse and asked whether Mirabel always introduced herself that way.\n\nThat was how Nema and Mirabel met Scott Suncrest and Pipix Thistlegrin: one song, one attempted theft, four unconscious poachers, and a repair bill none of them intended to pay.\n",
+    "weaponMasteries": [],
+    "originFeat": "Musician",
+    "id": "char-1788323274109-5",
+    "createdAt": 1788323274109,
+    "updatedAt": 1788325124367
+  },
+  {
+    "name": "Deacon",
+    "race": "Dragonborn",
+    "className": "Ranger",
+    "level": 3,
+    "abilityScores": {
+      "strength": 18,
+      "dexterity": 17,
+      "constitution": 16,
+      "intelligence": 9,
+      "wisdom": 14,
+      "charisma": 15
+    },
+    "maxHp": 47,
+    "currentHp": 47,
+    "armorClass": 16,
+    "speed": 30,
+    "proficiencyBonus": 3,
+    "hitDiceExpended": 0,
+    "background": "Outlander",
+    "savingThrowProficiencies": [
+      "strength",
+      "dexterity"
+    ],
+    "skillProficiencies": [
+      "Athletics",
+      "Survival"
+    ],
+    "secondaryClassName": "Rogue",
+    "secondaryClassLevel": 2,
+    "preparedSpells": [
+      "Barkskin",
+      "Goodberry",
+      "Hunter's Mark"
+    ],
+    "spellSlots": [
+      0,
+      3,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "usedSpellSlots": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "equipment": [
+      "Dagger",
+      "Shortbow",
+      "Shortsword",
+      "Poisoner's Kit",
+      "Scale Mail",
+      "Amulet"
+    ],
+    "attacks": [],
+    "notes": "Deacon learned to track before he learned to read. In the borderlands where he was raised, survival depended less on laws than on knowing which trails were safe, which plants concealed poison, and which smiling strangers had been following you for the last three miles.\n\nHis Dragonborn heritage made him conspicuous, so Deacon abandoned any hope of disappearing into a crowd. Instead, he learned to vanish where crowds could not follow: forest shadows, rocky passes, ruined roads, and the narrow spaces between civilization and wilderness. His skills as a Ranger made him an exceptional hunter. His less reputable education taught him locks, poisons, quiet blades, and the value of entering a guarded camp from the direction everyone had declared impossible.\n\nDeacon works as a guide, tracker, scout, and occasional recovery specialist. The distinction between recovering stolen property and stealing it again depends largely upon who pays him first. He has no particular objection to honorable work, but he prefers clients who understand that honor and success are not always traveling companions.\n\nHe first encountered Scott Suncrest’s strange collection of companions while following a quarry whose trail ended at the same roadside tavern they had recently demolished. The scene told a remarkable story: injured poachers, missing coin purses, druidic magic, celestial footprints, and a broken bottle with strands of Halfling hair stuck to it.\n\nDeacon decided that anyone leaving that much chaos behind would either lead him directly to his quarry or become significantly more interesting.\n\nHe was correct on both counts.\n",
+    "id": "char-1788323292457-6",
+    "createdAt": 1788323292457,
+    "updatedAt": 1788325676785,
+    "weaponMasteries": [],
+    "originFeat": "Tough"
+  },
+  {
+    "name": "Scott Suncrest",
+    "race": "Aasimar",
+    "className": "Paladin",
+    "level": 3,
+    "abilityScores": {
+      "strength": 20,
+      "dexterity": 17,
+      "constitution": 14,
+      "intelligence": 9,
+      "wisdom": 17,
+      "charisma": 16
+    },
+    "maxHp": 36,
+    "currentHp": 36,
+    "armorClass": 18,
+    "speed": 30,
+    "proficiencyBonus": 2,
+    "hitDiceExpended": 0,
+    "background": "Soldier",
+    "savingThrowProficiencies": [
+      "wisdom",
+      "charisma"
+    ],
+    "skillProficiencies": [
+      "Athletics",
+      "Intimidation"
+    ],
+    "secondaryClassName": "Fighter",
+    "secondaryClassLevel": 1,
+    "preparedSpells": [
+      "Divine Favor"
+    ],
+    "spellSlots": [
+      0,
+      3,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "usedSpellSlots": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "equipment": [
+      "Longsword",
+      "Shield",
+      "Breastplate"
+    ],
+    "attacks": [],
+    "notes": "Scott Suncrest was born beneath favorable stars, marked from infancy by the quiet radiance of the Upper Planes. Priests called him blessed. Commanders called him useful. By the time he was old enough to understand either word, Scott had already learned that a celestial heritage mostly meant other people felt entitled to decide what sort of man he ought to become.\n\nHe became a soldier because it was expected of him and a fighter because he was exceptionally good at it. During the conflict later called the Ashen Concord, Scott served beneath the banners of the radiant host. The cause was supposedly righteous, the enemy unquestionably wicked, and the orders uncomplicated—at least until he repeatedly encountered Emma Nightveil.\n\nEmma fought for the opposing side, though neither of them seemed especially committed to killing the other. Their clashes became a private ritual: dramatic threats, flashing steel, bursts of magic, and conveniently survivable injuries. Each insisted the other had escaped through luck. Neither mentioned the occasions when one had quietly warned the other of an ambush, delayed reinforcements, or aimed conspicuously wide.\n\nThe war eventually ended, as wars often do, with the people who started it declaring victory while everyone else buried the dead. Scott and Emma went their separate ways. They have since crossed paths with suspicious frequency, usually when both have accepted the same mercenary contract from different directions. Their temporary alliances involve constant arguing, shameless flirting disguised as threats, and increasingly unconvincing claims that they tolerate one another only because the money is good.\n\nScott later befriended Pipix Thistlegrin after hearing a band of poachers drunkenly boast about the animals they intended to kill for their hides. Pipix threw the first punch. Scott joined because the cause was just, the odds were entertaining, and he had already finished his drink.\n\nScott and Pipix are both presumed to embody purity—Scott through celestial blood and Pipix through communion with the natural world. Both know the presumption is nonsense. Scott is vain, enjoys violence considerably more than a celestial warrior should, and has never encountered a bad decision he couldn’t make sound heroic. That shared imperfection forms the heart of their friendship. Pipix never expects Scott to be a symbol, and Scott never expects Pipix to be serene.\n",
+    "weaponMasteries": [
+      "Vex"
+    ],
+    "originFeat": "Savage Attacker",
+    "id": "char-1788323754852-7",
+    "createdAt": 1788323754852,
+    "updatedAt": 1788325790363
+  }
+]

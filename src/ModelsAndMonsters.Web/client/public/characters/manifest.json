@@ -2,25 +2,31 @@
   "hero-nema": {
     "name": "Nema Mistsong",
     "image": "/characters/nema.png",
-    "portraitPosition": "19% 23%",
+    "portraitPosition": "50% 16%",
     "accent": "#27b7bd"
+  },
+  "hero-mirabel": {
+    "name": "Mirabel Tipton",
+    "image": "/characters/mirabel.png",
+    "portraitPosition": "50% 17%",
+    "accent": "#8b5bd6"
   },
   "hero-emma": {
     "name": "Emma Nightveil",
     "image": "/characters/emma.png",
-    "portraitPosition": "19% 23%",
+    "portraitPosition": "50% 16%",
     "accent": "#d9ad39"
   },
   "hero-pipix": {
     "name": "Pipix Thistlegrin",
     "image": "/characters/pipix.png",
-    "portraitPosition": "19% 23%",
+    "portraitPosition": "50% 16%",
     "accent": "#e87932"
   },
   "hero-scott": {
-    "name": "Scott Stonefang",
+    "name": "Scott Suncrest",
     "image": "/characters/scott.png",
-    "portraitPosition": "19% 23%",
+    "portraitPosition": "50% 16%",
     "accent": "#d94848"
   }
 }

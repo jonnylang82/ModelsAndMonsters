@@ -22,13 +22,14 @@ public sealed class CouncilScenarioTests
         var heroes = state.Characters.Where(c => c.Role == CharacterRole.Hero).ToList();
         var wardens = state.Characters.Where(c => c.Team == "Wardens").ToList();
 
-        Assert.Equal(4, heroes.Count);
+        Assert.Equal(5, heroes.Count);
         Assert.Equal(2, wardens.Count);
         Assert.Equal(
-            ["Emma Nightveil", "Nema Mistsong", "Pipix Thistlegrin", "Scott Stonefang"],
+            ["Emma Nightveil", "Mirabel Tipton", "Nema Mistsong", "Pipix Thistlegrin", "Scott Suncrest"],
             heroes.Select(c => c.Name).OrderBy(name => name).ToArray());
 
         Assert.NotNull(state.RequireById("hero-nema").FindAbility(AbilityCatalog.RallyGruntId));
+        Assert.NotNull(state.RequireById("hero-mirabel").FindAbility(AbilityCatalog.DirtyStrikeId));
         Assert.NotNull(state.RequireById("hero-emma").FindAbility(AbilityCatalog.FireboltId));
         Assert.NotNull(state.RequireById("hero-pipix").FindAbility(AbilityCatalog.HealingPrayerId));
         Assert.NotNull(state.RequireById("hero-scott").FindAbility(AbilityCatalog.GuardAllyId));
