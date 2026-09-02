@@ -63,7 +63,7 @@ public static partial class MachineryLanguage
         @"|\bguard-ally\b|\bhealing-prayer\b|\brally-grunt\b|\bdirty-strike\b" +
         // 3. Tool names. snake_case is not a thing anybody says out loud.
         @"|\b(?:attack_character|use_item|use_ability|open_container|take_item|inspect_object|open_exit" +
-        @"|escape_encounter|offer_surrender|accept_surrender|give_item|drop_item|steal_item|reject_action" +
+        @"|escape_encounter|offer_surrender|accept_surrender|give_item|present_item|drop_item|steal_item|reject_action" +
         @"|intimidate_character|steady_ally|ask_dm|take_action|end_turn)\b",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex MachineryPattern();

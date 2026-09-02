@@ -91,6 +91,28 @@ public sealed class InventoryOrchestrationTests
         Assert.DoesNotContain(TestWorld.SkritId, delivery.Recipients); // escaped: receives no further room events
     }
 
+    [Fact]
+    public async Task Presenting_proof_is_a_public_resolved_action_and_keeps_ownership()
+    {
+        var harness = new MultiActorHarness(
+            new ScriptedChatClient(
+                ScriptedChatClient.Call("dm-1", DungeonMasterTools.PresentItemName,
+                    ("actor", "Rowan"), ("recipient", "Vark"), ("item", "Rope")),
+                ScriptedChatClient.Text("Rowan holds the rope up where Vark can plainly see it.")),
+            MultiActorHarness.Clients(
+                ("Rowan", new ScriptedChatClient(ScriptedChatClient.Call("r-1", CharacterTools.TakeActionName,
+                    ("intent", "I show Vark the rope I am carrying."))))),
+            initialState: State(rowan: [Rope()]));
+
+        var result = await harness.RunTurn("Rowan");
+
+        Assert.Equal(TurnOutcome.ActionResolved, result.Outcome);
+        Assert.Contains(harness.Engine.State.RequireById(TestWorld.RowanId).Inventory, item => item.Id == "rope");
+        Assert.Empty(harness.Engine.State.RequireById(TestWorld.VarkId).Inventory);
+        Assert.Contains(harness.Sink.Payloads<PublicFactDeliveredPayload>(TraceEventType.PublicFactDelivered),
+            delivery => delivery.SourceEvent == "present_item" && delivery.Fact.Contains("Rope", StringComparison.Ordinal));
+    }
+
     // ------------------------------------------------------------------------------------------
     // drop_item
     // ------------------------------------------------------------------------------------------

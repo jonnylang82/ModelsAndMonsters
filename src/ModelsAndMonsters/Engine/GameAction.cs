@@ -219,6 +219,21 @@ public sealed record GiveItemAction(string GiverRef, string RecipientRef, string
 }
 
 /// <summary>
+/// The current actor deliberately showing an ordinary item they carry to another character. The item does
+/// not change hands. This is the supported form of presenting proof, displaying a seal, or holding something
+/// up for another person to recognise.
+/// </summary>
+public sealed record PresentItemAction(string ActorRef, string RecipientRef, string ItemRef) : GameAction
+{
+    public override string ActionType => "present_item";
+
+    public override string Describe() =>
+        $"PresentItem(actor={ActorRef}, recipient={RecipientRef}, item={ItemRef})";
+
+    public override bool ExposesActor => true;
+}
+
+/// <summary>
 /// The current actor dropping one of its ordinary inventory items onto the room's ground-loot location.
 /// Uses no randomness. The item keeps its stable id and can subsequently be taken through <c>take_item</c>.
 /// </summary>

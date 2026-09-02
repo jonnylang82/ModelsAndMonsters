@@ -88,6 +88,7 @@ public sealed class GameEngine : IGameEngine
             SteadyAllyAction steady => ResolveSteadyAlly(steady),
             DefendAction defend => ResolveUseAbility(new UseAbilityAction(defend.ActorRef, AbilityCatalog.DefendId)),
             GiveItemAction give => ResolveGiveItem(give),
+            PresentItemAction present => ResolvePresentItem(present),
             DropItemAction drop => ResolveDropItem(drop),
             StealItemAction steal => ResolveStealItem(steal),
             TakeCoverAction takeCover => ResolveTakeCover(takeCover),
@@ -2472,6 +2473,67 @@ public sealed class GameEngine : IGameEngine
         };
 
         return EngineResult.Accept(action, state, after, outcome, statusEvents: statusEvents, offerTransitions: transitions);
+    }
+
+    /// <summary>Resolves showing an inventory item to another present character without transferring it.</summary>
+    private EngineResult ResolvePresentItem(PresentItemAction action)
+    {
+        var state = _state;
+        var actor = state.Resolve(action.ActorRef);
+        if (actor is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.UnknownActor,
+                $"There is no character called '{action.ActorRef}' in the room.");
+        }
+
+        if (!actor.CanAct)
+        {
+            return RejectInactiveActor(action, state, actor);
+        }
+
+        var recipient = state.Resolve(action.RecipientRef);
+        if (recipient is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.UnknownRecipient,
+                $"There is no character called '{action.RecipientRef}' in the room to show anything to.");
+        }
+
+        if (Same(recipient.Id, actor.Id))
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.RecipientIsSelf,
+                $"{actor.Name} cannot present an item to themselves.");
+        }
+
+        if (!recipient.IsAlive || !recipient.IsPresent)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.RecipientNotPresent,
+                $"{recipient.Name} is not here to see anything.");
+        }
+
+        var (item, ambiguousItem) = actor.ResolveItem(action.ItemRef);
+        if (ambiguousItem)
+        {
+            return RejectAmbiguousItem(action, state, actor.Inventory, action.ItemRef,
+                $"that {actor.Name} is carrying");
+        }
+
+        if (item is null)
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.ItemNotPossessed,
+                $"{actor.Name} is not carrying '{action.ItemRef}'.");
+        }
+
+        var outcome = new PresentItemOutcome
+        {
+            ActorId = actor.Id,
+            ActorName = actor.Name,
+            RecipientId = recipient.Id,
+            RecipientName = recipient.Name,
+            ItemId = item.Id,
+            ItemName = item.DisplayName
+        };
+
+        return EngineResult.Accept(action, state, state, outcome);
     }
 
     /// <summary>

@@ -262,6 +262,16 @@ public static class RuleSelectionCorpus
         },
         new()
         {
+            Id = "present-proof",
+            Category = "give vs drop vs steal",
+            Intent = "I hold the Council Seal up to the Iron Curator so he can see its mark.",
+            RequiredRuleIds = ["inventory.present"],
+            ExpectedAction = "present_item",
+            Clarity = IntentClarity.Clear,
+            Note = "The recipient sees the proof, but the seal does not change hands."
+        },
+        new()
+        {
             Id = "steal",
             Category = "give vs drop vs steal",
             Intent = "I lunge in and try to snatch the vial off Vark's belt while he is looking at Rowan.",
@@ -633,7 +643,7 @@ public static class RuleSelectionCorpus
     /// v0.9/v0.10 cards and this refresh moved it here (25 cards; the DistinguishedFrom routing metadata added
     /// in the same refresh is part of the hash but changes no required-card or expected-action label).
     /// </summary>
-    public const string LabelledAgainstRulebookVersion = "rulebook-d4faaed3a0";
+    public const string LabelledAgainstRulebookVersion = "rulebook-50add9fb19";
 
     /// <summary>
     /// Cards that no case requires, on purpose, each with the reason it genuinely cannot be exercised as a

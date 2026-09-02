@@ -411,6 +411,21 @@ public sealed class HarnessOptions
 
     public int MaxQuestionsPerTurn { get; set; } = 3;
 
+    /// <summary>
+    /// When true, a character's first decision must be an action, speech or deliberate pass. The question
+    /// tool becomes available only after an attempted action is refused, when clarification can actually
+    /// unblock a choice. This prevents a roomful of agents independently opening every turn by interviewing
+    /// the Dungeon Master about facts already visible in their turn context.
+    /// </summary>
+    public bool QuestionsAfterFailedActionOnly { get; set; }
+
+    /// <summary>
+    /// When true, discoveries made by inspecting or opening an object are immediately shared with present
+    /// allies. This models an adventuring party openly comparing what it sees while preserving the hidden
+    /// information boundary against opponents.
+    /// </summary>
+    public bool ShareDiscoveriesWithAllies { get; set; }
+
     public int MaxActionAttemptsPerTurn { get; set; } = 3;
 
     /// <summary>

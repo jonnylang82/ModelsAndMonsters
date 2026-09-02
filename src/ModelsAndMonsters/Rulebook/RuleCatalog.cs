@@ -147,6 +147,23 @@ public sealed class RuleCatalog : IRuleRepository
         },
         new RuleCard
         {
+            RuleId = "inventory.present",
+            Summary = "Showing an item you carry to one character without giving it away.",
+            RelatedRuleIds = ["inventory.give", "object.inspect"],
+            DistinguishedFrom = [DungeonMasterTools.GiveItemName, DungeonMasterTools.InspectObjectName],
+            ActionName = DungeonMasterTools.PresentItemName,
+            Description = "Displaying an item to ONE character: holding up a seal, showing proof, or presenting a token. The actor keeps it.",
+            RequiredBindings = ["actor", "recipient", "item carried"],
+            Preconditions = ["actor is active", "recipient is another living character present", "actor carries the item"],
+            TurnCost = "consumes the turn",
+            RngRequirement = "none",
+            Visibility = "public",
+            SuccessBehaviour = "the recipient sees the item; ownership does not change",
+            FailureBehaviour = "refused if the item is not carried or recipient is absent",
+            Exclusions = ["handing it over", "forcing any reaction"]
+        },
+        new RuleCard
+        {
             RuleId = "inventory.steal",
             // The dead are excluded here and claimed by container.take, because a live run had a goblin
             // spend its whole turn on three rewordings of "loot the gold from dead Rowan".

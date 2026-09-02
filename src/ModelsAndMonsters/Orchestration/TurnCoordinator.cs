@@ -372,7 +372,8 @@ public sealed class TurnCoordinator
                 break;
             }
 
-            var response = await character.DecideAsync(cancellationToken).ConfigureAwait(false);
+            var allowQuestions = !_limits.QuestionsAfterFailedActionOnly || actionAttempts > 0;
+            var response = await character.DecideAsync(allowQuestions, cancellationToken).ConfigureAwait(false);
             modelCalls++;
 
             var calls = ModelAgent.GetToolCalls(response);
@@ -458,6 +459,14 @@ public sealed class TurnCoordinator
                 {
                     case CharacterTools.AskDmName:
                     {
+                        if (_limits.QuestionsAfterFailedActionOnly && actionAttempts == 0)
+                        {
+                            DispatchAndRecord(character, call,
+                                "Act on what you can already perceive. Ask only if a real attempted action is refused and leaves you needing clarification.",
+                                "refused-question-before-action");
+                            break;
+                        }
+
                         if (questionsAsked >= _limits.MaxQuestionsPerTurn)
                         {
                             EmitLimit(nameof(HarnessOptions.MaxQuestionsPerTurn), _limits.MaxQuestionsPerTurn,
@@ -1127,7 +1136,7 @@ public sealed class TurnCoordinator
                 or DungeonMasterTools.AcceptSurrenderName or DungeonMasterTools.DemandSurrenderName
                 or DungeonMasterTools.UseAbilityName
                 or DungeonMasterTools.DefendName
-                or DungeonMasterTools.GiveItemName or DungeonMasterTools.DropItemName
+                or DungeonMasterTools.GiveItemName or DungeonMasterTools.PresentItemName or DungeonMasterTools.DropItemName
                 or DungeonMasterTools.StealItemName or DungeonMasterTools.IntimidateCharacterName
                 or DungeonMasterTools.SteadyAllyName or DungeonMasterTools.TakeCoverName
                 or DungeonMasterTools.LeaveCoverName or DungeonMasterTools.DamageEnvironmentalObjectName =>
@@ -1518,6 +1527,7 @@ public sealed class TurnCoordinator
             RallyOutcome rally => await DeliverAbilityOutcomeAsync(character, rally, "ability-rally", cancellationToken).ConfigureAwait(false),
             DefendOutcome defend => await DeliverAbilityOutcomeAsync(character, defend, "combat-defend", cancellationToken).ConfigureAwait(false),
             GiveItemOutcome give => await DeliverGiveAsync(character, give, cancellationToken).ConfigureAwait(false),
+            PresentItemOutcome present => await DeliverPresentAsync(character, present, cancellationToken).ConfigureAwait(false),
             DropItemOutcome drop => await DeliverDropAsync(character, drop, cancellationToken).ConfigureAwait(false),
             StealItemOutcome steal => await DeliverStealAsync(character, steal, cancellationToken).ConfigureAwait(false),
             IntimidateOutcome intimidate => await DeliverIntimidationAsync(character, intimidate, engineResult, cancellationToken).ConfigureAwait(false),
@@ -2086,13 +2096,23 @@ public sealed class TurnCoordinator
             SourceEvent = "open_container"
         });
 
-        // The opener directly observes the current contents, at the post-open world version.
+        // The opener directly observes the current contents, at the post-open world version. In party-play
+        // mode nearby allies receive the same true fact immediately: the group is assumed to be openly
+        // comparing what it sees, rather than forcing every hero to spend a separate turn peering in.
         var container = FindContainer(outcome.ContainerId);
         var contents = container is null ? [] : container.Contents;
         var fact = _knowledge.GetOrAddContentsFact(outcome.ContainerId, outcome.ContainerName, contents, worldVersion);
         TraceFactCreatedIfNew(fact, KnowledgeSource.OpenedContainer, "open_container", character.Name);
-        LearnAndTrace(character.CharacterId, character.Name, fact.Fact, KnowledgeSource.OpenedContainer, worldVersion,
-            "private", [character.CharacterId], "open_container");
+        var discoveryRecipients = DiscoveryRecipients(character.CharacterId);
+        foreach (var recipientId in discoveryRecipients)
+        {
+            var recipientName = _engine.State.FindById(recipientId)?.Name ?? recipientId;
+            var source = string.Equals(recipientId, character.CharacterId, StringComparison.OrdinalIgnoreCase)
+                ? KnowledgeSource.OpenedContainer
+                : KnowledgeSource.PublicEvent;
+            LearnAndTrace(recipientId, recipientName, fact.Fact, source, worldVersion,
+                _limits.ShareDiscoveriesWithAllies ? "allies" : "private", discoveryRecipients, "open_container");
+        }
 
         var observation = outcome.RevealedContents.Count == 0
             ? $"You look inside the {outcome.ContainerName}. It is empty."
@@ -2158,6 +2178,33 @@ public sealed class TurnCoordinator
         DeliverPublicFact(fact.Fact, LivingRecipients(), worldVersion, "give_item");
 
         RecordPublicNarration("item-given", stateAfterText, outcome.Summary, narration, character, [fact.Fact.Id]);
+        _console.DungeonMaster(narration);
+        return narration;
+    }
+
+    /// <summary>
+    /// One character deliberately showed an item to another. The item remains with its owner, but its identity
+    /// and presentation become a public event so the recipient can react to actual proof on their next turn.
+    /// </summary>
+    private async Task<string> DeliverPresentAsync(
+        CharacterAgent character, PresentItemOutcome outcome, CancellationToken cancellationToken)
+    {
+        var stateAfterText = WorldStateFormatter.FormatAuthoritativeState(_engine.State);
+        var narration = await _dungeonMaster
+            .NarratePublicEventAsync(character.Name, outcome.Summary, stateAfterText, cancellationToken)
+            .ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(narration))
+        {
+            narration = outcome.Summary;
+        }
+
+        var worldVersion = _engine.State.Version;
+        var fact = _knowledge.GetOrAddItemPossessionFact(
+            outcome.ItemId, outcome.ItemName, outcome.ActorName, worldVersion);
+        TraceFactCreatedIfNew(fact, KnowledgeSource.PublicEvent, "present_item", character.Name);
+        DeliverPublicFact(fact.Fact, LivingRecipients(), worldVersion, "present_item");
+
+        RecordPublicNarration("item-presented", stateAfterText, outcome.Summary, narration, character, [fact.Fact.Id]);
         _console.DungeonMaster(narration);
         return narration;
     }
@@ -2231,8 +2278,20 @@ public sealed class TurnCoordinator
             var marking = _knowledge.GetOrAddMarkingFact(outcome.ObjectId, clue);
             TraceFactCreatedIfNew(marking, KnowledgeSource.DirectInspection, "inspect_object", character.Name);
             discoveredFactIds.Add(marking.Fact.Id);
-            learnedSomethingNew |= LearnAndTrace(character.CharacterId, character.Name, marking.Fact,
-                KnowledgeSource.DirectInspection, worldVersion, "private", [character.CharacterId], "inspect_object");
+            var recipients = DiscoveryRecipients(character.CharacterId);
+            foreach (var recipientId in recipients)
+            {
+                var recipientName = _engine.State.FindById(recipientId)?.Name ?? recipientId;
+                var source = string.Equals(recipientId, character.CharacterId, StringComparison.OrdinalIgnoreCase)
+                    ? KnowledgeSource.DirectInspection
+                    : KnowledgeSource.PublicEvent;
+                var learned = LearnAndTrace(recipientId, recipientName, marking.Fact, source, worldVersion,
+                    _limits.ShareDiscoveriesWithAllies ? "allies" : "private", recipients, "inspect_object");
+                if (string.Equals(recipientId, character.CharacterId, StringComparison.OrdinalIgnoreCase))
+                {
+                    learnedSomethingNew |= learned;
+                }
+            }
         }
 
         if (outcome is { IsContainer: true, IsOpen: true })
@@ -2242,8 +2301,20 @@ public sealed class TurnCoordinator
             var contentsFact = _knowledge.GetOrAddContentsFact(outcome.ObjectId, outcome.ObjectName, contents, worldVersion);
             TraceFactCreatedIfNew(contentsFact, KnowledgeSource.DirectInspection, "inspect_object", character.Name);
             discoveredFactIds.Add(contentsFact.Fact.Id);
-            learnedSomethingNew |= LearnAndTrace(character.CharacterId, character.Name, contentsFact.Fact,
-                KnowledgeSource.DirectInspection, worldVersion, "private", [character.CharacterId], "inspect_object");
+            var recipients = DiscoveryRecipients(character.CharacterId);
+            foreach (var recipientId in recipients)
+            {
+                var recipientName = _engine.State.FindById(recipientId)?.Name ?? recipientId;
+                var source = string.Equals(recipientId, character.CharacterId, StringComparison.OrdinalIgnoreCase)
+                    ? KnowledgeSource.DirectInspection
+                    : KnowledgeSource.PublicEvent;
+                var learned = LearnAndTrace(recipientId, recipientName, contentsFact.Fact, source, worldVersion,
+                    _limits.ShareDiscoveriesWithAllies ? "allies" : "private", recipients, "inspect_object");
+                if (string.Equals(recipientId, character.CharacterId, StringComparison.OrdinalIgnoreCase))
+                {
+                    learnedSomethingNew |= learned;
+                }
+            }
         }
 
         _trace.Emit(TraceEventType.ObjectInspected, new ObjectInspectedPayload
@@ -2625,6 +2696,12 @@ public sealed class TurnCoordinator
 
             case DungeonMasterTools.GiveItemName:
                 return new GiveItemAction(
+                    ResolveActingCharacter(call, DungeonMasterTools.ActorParameter, character),
+                    ToolArguments.GetRequiredString(call, DungeonMasterTools.RecipientParameter),
+                    ToolArguments.GetRequiredString(call, DungeonMasterTools.ItemParameter));
+
+            case DungeonMasterTools.PresentItemName:
+                return new PresentItemAction(
                     ResolveActingCharacter(call, DungeonMasterTools.ActorParameter, character),
                     ToolArguments.GetRequiredString(call, DungeonMasterTools.RecipientParameter),
                     ToolArguments.GetRequiredString(call, DungeonMasterTools.ItemParameter));
@@ -3204,6 +3281,26 @@ public sealed class TurnCoordinator
     /// </summary>
     private IReadOnlyList<string> LivingRecipients() =>
         [.. _engine.State.Characters.Where(c => c.IsPresent).Select(c => c.Id)];
+
+    /// <summary>
+    /// The discoverer alone under strict hidden-information rules; in party-play mode, every present ally.
+    /// Opponents never receive the discovered clue or contents through this path.
+    /// </summary>
+    private IReadOnlyList<string> DiscoveryRecipients(string discovererId)
+    {
+        if (!_limits.ShareDiscoveriesWithAllies)
+        {
+            return [discovererId];
+        }
+
+        var discoverer = _engine.State.RequireById(discovererId);
+        return
+        [
+            .. _engine.State.Characters
+                .Where(c => c.IsPresent && c.IsAlive && c.IsAllyOf(discoverer))
+                .Select(c => c.Id)
+        ];
+    }
 
     /// <summary>Every present character except the given one — the intended audience for that character's speech.</summary>
     private IReadOnlyList<string> LivingRecipientsExcept(string speakerId) =>

@@ -648,6 +648,26 @@ public sealed record GiveItemOutcome : ActionOutcome
 }
 
 /// <summary>
+/// The result of one character deliberately presenting an item to another. Public and non-transferable: the
+/// recipient and room can recognise the item, while ownership remains with the presenter.
+/// </summary>
+public sealed record PresentItemOutcome : ActionOutcome
+{
+    public required string ActorId { get; init; }
+    public required string ActorName { get; init; }
+    public required string RecipientId { get; init; }
+    public required string RecipientName { get; init; }
+    public required string ItemId { get; init; }
+    public required string ItemName { get; init; }
+
+    public override string OutcomeType => "present_item";
+
+    public override string Summary =>
+        $"{ActorName} deliberately presented the {ItemName} to {RecipientName}, holding it where " +
+        $"{RecipientName} could clearly see and recognise it. {ActorName} still carries it.";
+}
+
+/// <summary>
 /// The result of a character dropping an ordinary inventory item onto the floor. Public: everyone present
 /// sees it fall, so the <see cref="Summary"/> may be narrated to the whole room. The item keeps its stable
 /// id and can afterwards be taken from the floor through the ordinary item-taking interaction.

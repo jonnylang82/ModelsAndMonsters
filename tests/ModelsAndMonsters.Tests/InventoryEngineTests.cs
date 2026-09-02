@@ -110,6 +110,36 @@ public sealed class InventoryEngineTests
     }
 
     // ------------------------------------------------------------------------------------------
+    // present_item
+    // ------------------------------------------------------------------------------------------
+
+    [Fact]
+    public void Presenting_an_item_is_accepted_without_transferring_it()
+    {
+        var engine = EngineWith(TestWorld.State(Giver(Rope()), Receiver()));
+
+        var result = engine.Execute(new PresentItemAction(TestWorld.RowanId, TestWorld.ElaraId, "Rope"));
+
+        Assert.True(result.Accepted);
+        var presented = Assert.IsType<PresentItemOutcome>(result.Outcome);
+        Assert.Equal("rope", presented.ItemId);
+        Assert.Contains(engine.State.RequireById(TestWorld.RowanId).Inventory, item => item.Id == "rope");
+        Assert.Empty(engine.State.RequireById(TestWorld.ElaraId).Inventory);
+        Assert.Equal(0, engine.State.Version);
+    }
+
+    [Fact]
+    public void Presenting_an_item_the_actor_does_not_carry_is_rejected()
+    {
+        var engine = EngineWith(TestWorld.State(Giver(), Receiver()));
+
+        var result = engine.Execute(new PresentItemAction(TestWorld.RowanId, TestWorld.ElaraId, "Rope"));
+
+        Assert.False(result.Accepted);
+        Assert.Equal(EngineRejectionReason.ItemNotPossessed, result.RejectionReason);
+    }
+
+    // ------------------------------------------------------------------------------------------
     // drop_item
     // ------------------------------------------------------------------------------------------
 

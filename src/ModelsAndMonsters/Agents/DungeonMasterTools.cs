@@ -25,6 +25,7 @@ public static class DungeonMasterTools
     public const string UseAbilityName = "use_ability";
     public const string DefendName = "defend";
     public const string GiveItemName = "give_item";
+    public const string PresentItemName = "present_item";
     public const string DropItemName = "drop_item";
     public const string StealItemName = "steal_item";
     public const string IntimidateCharacterName = "intimidate_character";
@@ -261,6 +262,22 @@ public static class DungeonMasterTools
         """),
         returnJsonSchema: null);
 
+    public static readonly AIFunctionDeclaration PresentItem = AIFunctionFactory.CreateDeclaration(
+        PresentItemName,
+        "Resolve the ACTING character deliberately showing an ordinary item they carry to one other character so it can be seen or recognised. Use for presenting proof, displaying a seal, or holding an item up. The item does not change hands.",
+        ToolSchema.Parse($$"""
+        {
+          "type": "object",
+          "properties": {
+            "{{ActorParameter}}":     { "type": "string", "description": "Name of the character presenting the item — always the character whose intent you are adjudicating." },
+            "{{RecipientParameter}}": { "type": "string", "description": "Name of the one character being shown the item." },
+            "{{ItemParameter}}":      { "type": "string", "description": "Name of the item, exactly as it appears in the actor's inventory." }
+          },
+          "required": ["{{ActorParameter}}", "{{RecipientParameter}}", "{{ItemParameter}}"]
+        }
+        """),
+        returnJsonSchema: null);
+
     public static readonly AIFunctionDeclaration DropItem = AIFunctionFactory.CreateDeclaration(
         DropItemName,
         "Resolve the ACTING character dropping one of their own ordinary inventory items onto the floor, where anyone may later pick it up. Not for an equipped weapon.",
@@ -391,7 +408,7 @@ public static class DungeonMasterTools
     public static readonly IReadOnlyList<AITool> All =
     [
         AttackCharacter, UseItem, OpenContainer, TakeItem, InspectObject, OpenExit, EscapeEncounter,
-        OfferSurrender, AcceptSurrender, DemandSurrender, UseAbility, Defend, GiveItem, DropItem, StealItem,
+        OfferSurrender, AcceptSurrender, DemandSurrender, UseAbility, Defend, GiveItem, PresentItem, DropItem, StealItem,
         IntimidateCharacter, SteadyAlly, TakeCover, LeaveCover, DamageEnvironmentalObject, RejectAction
     ];
 
@@ -415,6 +432,7 @@ public static class DungeonMasterTools
             [UseAbilityName] = UseAbility,
             [DefendName] = Defend,
             [GiveItemName] = GiveItem,
+            [PresentItemName] = PresentItem,
             [DropItemName] = DropItem,
             [StealItemName] = StealItem,
             [IntimidateCharacterName] = IntimidateCharacter,

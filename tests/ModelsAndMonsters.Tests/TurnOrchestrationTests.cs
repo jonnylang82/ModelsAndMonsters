@@ -302,7 +302,7 @@ public sealed class TurnOrchestrationTests
                 DungeonMasterTools.AcceptSurrenderName, DungeonMasterTools.DemandSurrenderName,
                 DungeonMasterTools.UseAbilityName,
                 DungeonMasterTools.DefendName,
-                DungeonMasterTools.GiveItemName, DungeonMasterTools.DropItemName,
+                DungeonMasterTools.GiveItemName, DungeonMasterTools.PresentItemName, DungeonMasterTools.DropItemName,
                 DungeonMasterTools.StealItemName, DungeonMasterTools.IntimidateCharacterName,
                 DungeonMasterTools.SteadyAllyName, DungeonMasterTools.TakeCoverName,
                 DungeonMasterTools.LeaveCoverName, DungeonMasterTools.DamageEnvironmentalObjectName,
@@ -312,6 +312,56 @@ public sealed class TurnOrchestrationTests
 
         // Narration is a toolless call: the DM cannot change the world while describing it.
         Assert.Null(harness.DungeonMasterClient.RequestOptions[1]!.Tools);
+    }
+
+    [Fact]
+    public async Task Action_first_mode_withholds_questions_until_an_action_has_failed()
+    {
+        var harness = new OrchestrationHarness(
+            AcceptedAttackDungeonMaster(),
+            new ScriptedChatClient(ScriptedChatClient.Call("h-1", CharacterTools.TakeActionName,
+                ("intent", "I strike."))),
+            new ScriptedChatClient(),
+            new HarnessOptions
+            {
+                QuestionsAfterFailedActionOnly = true,
+                MaxQuestionsPerTurn = 1,
+                MaxActionAttemptsPerTurn = 3,
+                MaxModelCallsPerTurn = 8
+            });
+
+        await harness.RunHeroTurn();
+
+        var firstRequestTools = harness.HeroClient.RequestOptions[0]!.Tools!.Select(t => t.Name).ToList();
+        Assert.DoesNotContain(CharacterTools.AskDmName, firstRequestTools);
+        Assert.Equal([CharacterTools.TakeActionName, CharacterTools.SayName, CharacterTools.EndTurnName],
+            firstRequestTools);
+    }
+
+    [Fact]
+    public async Task Action_first_mode_refuses_a_question_even_if_the_model_emits_the_hidden_tool()
+    {
+        var harness = new OrchestrationHarness(
+            AcceptedAttackDungeonMaster(),
+            new ScriptedChatClient(
+                ScriptedChatClient.Call("h-1", CharacterTools.AskDmName, ("question", "What should I inspect?")),
+                ScriptedChatClient.Call("h-2", CharacterTools.TakeActionName, ("intent", "I strike."))),
+            new ScriptedChatClient(),
+            new HarnessOptions
+            {
+                QuestionsAfterFailedActionOnly = true,
+                MaxQuestionsPerTurn = 1,
+                MaxActionAttemptsPerTurn = 3,
+                MaxModelCallsPerTurn = 8
+            });
+
+        var result = await harness.RunHeroTurn();
+
+        Assert.Equal(TurnOutcome.ActionResolved, result.Outcome);
+        Assert.Equal(0, result.QuestionsAsked);
+        Assert.Contains(harness.Sink.Payloads<ToolCallDispatchPayload>(TraceEventType.ToolCallDispatched),
+            tool => tool.ToolName == CharacterTools.AskDmName
+                    && tool.DispatchDecision == "refused-question-before-action");
     }
 
     [Fact]

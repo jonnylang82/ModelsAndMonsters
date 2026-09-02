@@ -148,6 +148,12 @@ public static class CharacterTools
 
     public static readonly IReadOnlyList<AITool> All = [AskDm, TakeAction, Say, EndTurn];
 
+    /// <summary>
+    /// The opening decision surface for action-first play. A refused action can unlock <see cref="All"/> on
+    /// the next model call, but agents cannot spend a free opening call asking the same obvious question.
+    /// </summary>
+    public static readonly IReadOnlyList<AITool> WithoutQuestions = [TakeAction, Say, EndTurn];
+
     /// <summary>The tool names, used to recognise a tool call a model wrote as prose.</summary>
     public static readonly IReadOnlyList<string> Names = [AskDmName, TakeActionName, SayName, EndTurnName];
 }

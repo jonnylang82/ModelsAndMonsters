@@ -1,4 +1,5 @@
 using ModelsAndMonsters.Agents;
+using ModelsAndMonsters.Configuration;
 using ModelsAndMonsters.Domain;
 using ModelsAndMonsters.Knowledge;
 using ModelsAndMonsters.Orchestration;
@@ -104,6 +105,35 @@ public sealed class KnowledgeOrchestrationTests
         var heard = string.Join("\n", pending.Select(p => p.Text));
         Assert.DoesNotContain(Potion, heard, StringComparison.Ordinal);
         Assert.False(HasContentsRecord(harness.Ledger, TestWorld.RowanId, TestWorld.MedicineCaseId));
+    }
+
+    [Fact]
+    public async Task Party_mode_shares_an_opened_containers_contents_with_allies_but_not_enemies()
+    {
+        var harness = new MultiActorHarness(
+            new ScriptedChatClient(
+                ScriptedChatClient.Call("dm-1", DungeonMasterTools.OpenContainerName,
+                    ("actor", "Elara"), ("container", MedicineCase)),
+                ScriptedChatClient.Text("Elara opens the case and calls out what she finds.")),
+            MultiActorHarness.Clients(("Elara", new ScriptedChatClient(
+                ScriptedChatClient.Call("e-1", CharacterTools.TakeActionName,
+                    ("intent", "I open the shrine case and tell my companions what is inside."))))),
+            initialState: TestWorld.TwoCasesState(),
+            scenario: TestWorld.TwoCasesScenario(),
+            limits: new HarnessOptions
+            {
+                ShareDiscoveriesWithAllies = true,
+                MaxQuestionsPerTurn = 2,
+                MaxActionAttemptsPerTurn = 3,
+                MaxModelCallsPerTurn = 8
+            });
+
+        await harness.RunTurn("Elara");
+
+        Assert.True(HasContentsRecord(harness.Ledger, TestWorld.ElaraId, TestWorld.MedicineCaseId));
+        Assert.True(HasContentsRecord(harness.Ledger, TestWorld.RowanId, TestWorld.MedicineCaseId));
+        // Vark begins with backstory knowledge of this case, so Skrit is the clean enemy-side assertion.
+        Assert.False(HasContentsRecord(harness.Ledger, TestWorld.SkritId, TestWorld.MedicineCaseId));
     }
 
     // ------------------------------------------------------------------------------------------

@@ -35,9 +35,18 @@ public sealed class CharacterAgent : ModelAgent
     /// <summary>Injects this turn's exact self-state and the narration this character has not yet heard.</summary>
     public void BeginTurn(string turnContext) => Conversation.AppendUser(turnContext);
 
-    /// <summary>Asks the character what it wants to do, exposing only ask_dm and take_action.</summary>
+    /// <summary>Asks the character what it wants to do.</summary>
     public Task<ChatResponse> DecideAsync(CancellationToken cancellationToken) =>
-        CallModelAsync("character.decide", CharacterTools.All, cancellationToken);
+        DecideAsync(allowQuestions: true, cancellationToken);
+
+    /// <summary>
+    /// Asks the character what it wants to do, optionally withholding the question tool until an attempted
+    /// action has exposed a real ambiguity. The ordinary overload remains question-capable for existing
+    /// callers and tests.
+    /// </summary>
+    public Task<ChatResponse> DecideAsync(bool allowQuestions, CancellationToken cancellationToken) =>
+        CallModelAsync("character.decide", allowQuestions ? CharacterTools.All : CharacterTools.WithoutQuestions,
+            cancellationToken);
 
     /// <summary>Used when the model replied without calling either tool.</summary>
     public void AppendNudge(string text) => Conversation.AppendUser(text);
