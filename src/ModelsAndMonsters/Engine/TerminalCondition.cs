@@ -24,7 +24,10 @@ public enum EncounterOutcome
     Draw,
 
     /// <summary>The run stopped on a round or idle limit before a terminal condition was reached.</summary>
-    HarnessLimit
+    HarnessLimit,
+
+    Rescued,
+    RescueFailed
 }
 
 /// <summary>6
@@ -36,12 +39,12 @@ public enum EncounterOutcome
 /// members are alive. <see cref="Living"/> and <see cref="Total"/> are retained so existing standings
 /// output keeps its meaning.
 /// </remarks>
-public sealed record TeamStanding(string Team, int Active, int Surrendered, int Escaped, int Dead)
+public sealed record TeamStanding(string Team, int Active, int Surrendered, int Escaped, int Dead, int Detained = 0)
 {
     /// <summary>Members who are alive in any disposition: active, surrendered or escaped.</summary>
-    public int Living => Active + Surrendered + Escaped;
+    public int Living => Active + Surrendered + Escaped + Detained;
 
-    public int Total => Active + Surrendered + Escaped + Dead;
+    public int Total => Living + Dead;
 
     /// <summary>True while the team still has at least one active fighter — what keeps it in the encounter.</summary>
     public bool IsActiveContender => Active > 0;
@@ -63,6 +66,7 @@ public sealed record CharacterResolution(
     {
         CharacterDisposition.Dead => $"{CharacterName} was killed.",
         CharacterDisposition.Surrendered => $"{CharacterName} surrendered.",
+        CharacterDisposition.Detained => $"{CharacterName} remained detained.",
         CharacterDisposition.Escaped => ExitName is null
             ? $"{CharacterName} escaped."
             : $"{CharacterName} escaped through the {ExitName}.",
@@ -124,7 +128,8 @@ public static class TerminalCondition
                 Active: state.Characters.Count(c => c.CanAct && Same(c.Team, team)),
                 Surrendered: state.Characters.Count(c => c.Disposition == CharacterDisposition.Surrendered && Same(c.Team, team)),
                 Escaped: state.Characters.Count(c => c.Disposition == CharacterDisposition.Escaped && Same(c.Team, team)),
-                Dead: state.Characters.Count(c => c.Disposition == CharacterDisposition.Dead && Same(c.Team, team))))
+                Dead: state.Characters.Count(c => c.Disposition == CharacterDisposition.Dead && Same(c.Team, team)),
+                Detained: state.Characters.Count(c => c.Disposition == CharacterDisposition.Detained && Same(c.Team, team))))
             .ToList();
 
         var eliminated = standings.Where(s => s.IsEliminated).Select(s => s.Team).ToList();
@@ -143,6 +148,29 @@ public static class TerminalCondition
             .ToList();
 
         var outcome = ClassifyOutcome(isOver, surviving, eliminated, state);
+
+        if (state.Rescue is { } rescue)
+        {
+            var detainee = state.RequireById(rescue.DetaineeId);
+            var stage = rescue.Stage(state);
+            return new TerminalConditionResult
+            {
+                IsOver = stage is "completed" or "failed",
+                Standings = standings,
+                WinningTeams = stage == "completed" ? [detainee.Team] : [],
+                EliminatedTeams = stage == "failed" ? [detainee.Team] : [],
+                Resolutions = resolutions,
+                Outcome = stage == "completed" ? EncounterOutcome.Rescued
+                    : stage == "failed" ? EncounterOutcome.RescueFailed : EncounterOutcome.Ongoing,
+                Description = stage switch
+                {
+                    "completed" => $"Rescue complete: {detainee.Name} escaped alive through {ExitNameFor(state, rescue.ExitId)}.",
+                    "failed" => $"Rescue failed: {detainee.Name} did not reach safety and cannot be rescued in this encounter.",
+                    "extraction" => $"The detention gate is open. Get {detainee.Name} out through {ExitNameFor(state, rescue.ExitId)}.",
+                    _ => $"{detainee.Name} remains detained. Secure the archive to unlock the detention gate."
+                }
+            };
+        }
 
         return new TerminalConditionResult
         {

@@ -41,8 +41,9 @@ public sealed class DispositionOrchestrationTests
 
     [Theory]
     [InlineData(CharacterDisposition.Surrendered)]
+    [InlineData(CharacterDisposition.Detained)]
     [InlineData(CharacterDisposition.Escaped)]
-    public async Task A_surrendered_or_escaped_character_is_skipped_without_a_model_call(CharacterDisposition disposition)
+    public async Task A_non_active_character_is_skipped_without_a_model_call(CharacterDisposition disposition)
     {
         var skrit = TestWorld.Skrit() with { Disposition = disposition };
         var skritClient = new ScriptedChatClient(); // no scripted responses: a model call would throw

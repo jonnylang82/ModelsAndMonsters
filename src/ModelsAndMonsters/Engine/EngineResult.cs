@@ -118,6 +118,9 @@ public sealed record EngineResult
 
     public ActionOutcome? Outcome { get; init; }
 
+    /// <summary>Detention opened as a deterministic consequence of removing the last active guard.</summary>
+    public string? ReleasedDetaineeId { get; init; }
+
     /// <summary>
     /// Every random draw this action made, in order. Empty for actions that consult no randomness
     /// (item use) and for rejected actions (validation happens before any roll). The orchestration

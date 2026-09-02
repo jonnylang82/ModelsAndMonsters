@@ -2,14 +2,23 @@
   "Scenario": {
     "Id": "council-archive-awakening",
     "Name": "The Archive Wakes",
-    "Summary": "Nema Mistsong, Mirabel Tipton, Emma Nightveil, Pipix Thistlegrin and Scott Suncrest descend beneath the Council village after a sealed archive begins ringing like a struck bell. Two ancient wardens have awakened among the shelves. The party can fight, investigate the room, bargain, protect one another, recover what the wardens guard, or escape through the stair.",
+    "Summary": "Nema Mistsong, Mirabel Tipton, Emma Nightveil, Pipix Thistlegrin and Scott Suncrest descend beneath the Council village after Deacon is wrongly detained by its awakened archive. They can see him confined beyond the inner gate, but two ancient wardens block the way. The party can fight, investigate, bargain, prove Deacon's innocence, recover what the wardens guard, or retreat through the stair.",
+    "Objectives": [
+      {
+        "Id": "rescue-deacon",
+        "Title": "Rescue Deacon",
+        "Description": "Secure the archive by defeating the wardens or accepting their surrender. The detention gate then opens. Get Deacon safely out through the Village Stair."
+      }
+    ],
+    "Rescue": { "DetaineeId": "hero-deacon", "GuardTeam": "Wardens", "ExitId": "village-stair" },
     "Room": {
       "Id": "buried-council-archive",
       "Name": "The Buried Council Archive",
-      "Description": "A circular stone archive beneath the village, lit by blue witch-lamps. Curved shelves climb toward a cracked mosaic dome. A bronze map table fills the centre of the room, solid enough to shelter one person. Two ancient wardens stand between the party and a sealed door: a tall iron sentinel and a quick ink-black homunculus. A locked cedar coffer and a battered document case rest on opposite sides of the chamber. The stair behind the party is shut but not barred.",
+      "Description": "A circular stone archive beneath the village, lit by blue witch-lamps. Curved shelves climb toward a cracked mosaic dome. A bronze map table fills the centre of the room, solid enough to shelter one person. Two ancient wardens stand between the party and a sealed inner detention gate: a tall iron sentinel and a quick ink-black homunculus. Through its bronze lattice, Deacon is visible alive but confined. A locked cedar coffer and a battered document case rest on opposite sides of the chamber. The stair behind the party is shut but not barred.",
       "Features": [
         "Blue witch-lamps burning without flame",
         "A cracked mosaic showing five figures around a round table",
+        "Deacon visible behind a detention gate that unlocks when no warden remains fighting",
         "Loose pages circling slowly in a draft that has no source"
       ],
       "Cover": [
@@ -173,6 +182,29 @@
           "Wants": "To bring everyone home with a story worth telling.",
           "Fears": "Freezing when somebody needs protection now.",
           "Goal": "Act rather than chair the group. Protect, explore, negotiate or attack as the moment calls for it."
+        }
+      },
+      {
+        "Id": "hero-deacon",
+        "Name": "Deacon",
+        "Role": "Hero",
+        "Team": "Heroes",
+        "StartingDisposition": "Detained",
+        "MaxHealth": 47,
+        "Health": 47,
+        "Armour": 3,
+        "HitChance": 78,
+        "Weapon": { "Id": "deacon-shortsword", "Name": "Shortsword", "Damage": 4 },
+        "Inventory": [
+          { "Id": "deacon-trail-token", "Name": "Deacon's Trail Token", "Description": "A worn recovery marker whose altered Council stamp may explain why the archive detained him." }
+        ],
+        "Abilities": ["dirty-strike"],
+        "Persona": {
+          "Backstory": "You are Deacon, a dragonborn ranger and recovery specialist who finds people, trails and things that were meant to stay lost. You entered the buried archive ahead of the others after following a false Council summons. Its damaged recognition system read your altered trail token as evidence of theft and sealed you behind the inner detention gate. You are innocent, alert and very much alive.",
+          "Personality": "Observant, practical and dryly funny. You do not make speeches about being a tracker; you notice what matters and say it plainly. You trust the party enough to let them work, but you will call out a dangerous assumption.",
+          "Wants": "To clear your name, get out of the archive and learn who altered the trail token.",
+          "Fears": "The others becoming trapped or hurt because they rushed in to rescue you.",
+          "Goal": "While detained, remember what you can see and hear beyond the gate. Once released, open the Village Stair if needed and escape through it alive. That completes this rescue; who framed you can be investigated later."
         }
       },
       {

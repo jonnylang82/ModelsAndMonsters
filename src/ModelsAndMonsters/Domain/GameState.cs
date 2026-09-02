@@ -18,6 +18,8 @@ public sealed record GameState
     /// <summary>Incremented every time the engine accepts and applies an action.</summary>
     public int Version { get; init; }
 
+    public RescueObjective? Rescue { get; init; }
+
     /// <summary>
     /// Every live status effect in the encounter. Statuses live here rather than on a character because a
     /// linked relationship (Guarding on the guardian, Guarded on the protected ally) spans two characters and

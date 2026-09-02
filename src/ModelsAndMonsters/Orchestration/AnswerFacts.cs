@@ -237,6 +237,7 @@ public sealed class AnswerFactsProjector : IAnswerFactsProjector
                 CharacterDisposition.Dead => $"{other.Name} ({side}) is dead.",
                 CharacterDisposition.Escaped => $"{other.Name} ({side}) has gone out through the way out and is no longer in the room; they cannot be reached.",
                 CharacterDisposition.Surrendered => $"{other.Name} ({side}) has given up the fight on agreed terms: still here, still alive, but out of it, and cannot be struck.",
+                CharacterDisposition.Detained => $"{other.Name} ({side}) is detained here: alive and present, but confined and unable to act or be struck until released.",
                 _ => $"{other.Name} ({side}) is still fighting and is {DescribeCondition(other)}."
             };
             lines.Add(standing);

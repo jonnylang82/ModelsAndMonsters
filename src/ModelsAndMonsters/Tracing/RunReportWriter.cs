@@ -534,6 +534,7 @@ public static class RunReportWriter
 
             report.AppendLine($"- **Killed:** {Names("Dead")}");
             report.AppendLine($"- **Surrendered:** {Names("Surrendered")}");
+            report.AppendLine($"- **Detained:** {Names("Detained")}");
             report.AppendLine($"- **Escaped:** {Names("Escaped")}");
             report.AppendLine($"- **Still active:** {Names("Active")}");
             report.AppendLine();

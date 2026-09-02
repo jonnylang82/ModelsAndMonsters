@@ -9,7 +9,7 @@ namespace ModelsAndMonsters.Tests;
 public sealed class CouncilScenarioTests
 {
     [Fact]
-    public void Council_scenario_builds_with_the_four_player_characters_and_real_engine_abilities()
+    public void Council_scenario_builds_with_the_rescue_objective_and_detained_guest()
     {
         var path = Path.Combine(AppContext.BaseDirectory, "scenario_council.json");
         Assert.True(File.Exists(path), $"Expected the Council scenario at {path}.");
@@ -22,11 +22,22 @@ public sealed class CouncilScenarioTests
         var heroes = state.Characters.Where(c => c.Role == CharacterRole.Hero).ToList();
         var wardens = state.Characters.Where(c => c.Team == "Wardens").ToList();
 
-        Assert.Equal(5, heroes.Count);
+        Assert.Equal(6, heroes.Count);
         Assert.Equal(2, wardens.Count);
         Assert.Equal(
-            ["Emma Nightveil", "Mirabel Tipton", "Nema Mistsong", "Pipix Thistlegrin", "Scott Suncrest"],
+            ["Deacon", "Emma Nightveil", "Mirabel Tipton", "Nema Mistsong", "Pipix Thistlegrin", "Scott Suncrest"],
             heroes.Select(c => c.Name).OrderBy(name => name).ToArray());
+
+        var objective = Assert.Single(scenario!.Objectives);
+        Assert.Equal("rescue-deacon", objective.Id);
+        Assert.Equal("Rescue Deacon", objective.Title);
+
+        var deacon = state.RequireById("hero-deacon");
+        Assert.Equal(CharacterDisposition.Detained, deacon.Disposition);
+        Assert.True(deacon.IsAlive);
+        Assert.True(deacon.IsPresent);
+        Assert.False(deacon.CanAct);
+        Assert.False(deacon.IsCombatTarget);
 
         Assert.NotNull(state.RequireById("hero-nema").FindAbility(AbilityCatalog.RallyGruntId));
         Assert.NotNull(state.RequireById("hero-mirabel").FindAbility(AbilityCatalog.DirtyStrikeId));

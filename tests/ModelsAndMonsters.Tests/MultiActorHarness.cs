@@ -34,7 +34,8 @@ internal sealed class MultiActorHarness
         ScenarioDefinition? scenario = null,
         bool seedKnowledge = true,
         ScriptedChatClient? rulebookResolverClient = null,
-        ScriptedChatClient? historySummariserClient = null)
+        ScriptedChatClient? historySummariserClient = null,
+        ICharacterInput? characterInput = null)
     {
         DungeonMasterClient = dungeonMasterClient;
         CharacterClients = characterClients;
@@ -77,7 +78,7 @@ internal sealed class MultiActorHarness
                 definition,
                 Profile(definition.Name),
                 new TracingChatClient(client, Profile(definition.Name), Trace),
-                characterPrompts.CreateSystemPrompt(definition, definitions));
+                characterPrompts.CreateSystemPrompt(definition, definitions), characterInput);
 
             _agentsByName[definition.Name] = agent;
         }

@@ -105,6 +105,7 @@ public sealed record EncounterStoryBrief
             var partial = new List<string>();
             AppendGroup(partial, CharacterDisposition.Dead, "Killed before the record stopped");
             AppendGroup(partial, CharacterDisposition.Surrendered, "Surrendered before the record stopped");
+            AppendGroup(partial, CharacterDisposition.Detained, "Still detained when the record stopped");
             AppendGroup(partial, CharacterDisposition.Escaped, "Escaped before the record stopped");
             return partial.Count == 0 ? text : text + " " + string.Join(" ", partial);
         }
@@ -112,6 +113,7 @@ public sealed record EncounterStoryBrief
         var parts = new List<string> { TerminalCondition };
         AppendGroup(parts, CharacterDisposition.Dead, "Killed");
         AppendGroup(parts, CharacterDisposition.Surrendered, "Surrendered");
+        AppendGroup(parts, CharacterDisposition.Detained, "Detained");
         AppendGroup(parts, CharacterDisposition.Escaped, "Escaped");
         AppendGroup(parts, CharacterDisposition.Active, "Still standing");
         return string.Join(" ", parts);

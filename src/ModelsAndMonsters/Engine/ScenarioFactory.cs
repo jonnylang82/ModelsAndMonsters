@@ -84,10 +84,25 @@ public static class ScenarioFactory
 
         ValidateGlobalItemIdentity(room, characters);
 
+        RescueObjective? rescue = null;
+        if (scenario.Rescue is { } configured)
+        {
+            var detainee = characters.FirstOrDefault(c => c.Id == configured.DetaineeId);
+            if (detainee?.Disposition != CharacterDisposition.Detained
+                || !characters.Any(c => c.Team == configured.GuardTeam && c.CanAct)
+                || detainee.Team == configured.GuardTeam
+                || !room.Exits.Any(e => e.Id == configured.ExitId))
+            {
+                throw new InvalidOperationException("Rescue requires a detained character, an opposing active guard team, and a valid exit.");
+            }
+            rescue = new RescueObjective(configured.DetaineeId, configured.GuardTeam, configured.ExitId);
+        }
+
         return new GameState
         {
             Room = room,
             Characters = characters,
+            Rescue = rescue,
             Version = 0
         };
     }
@@ -156,6 +171,21 @@ public static class ScenarioFactory
             ? definition.MaxHealth
             : throw new InvalidOperationException($"Character '{definition.Id}' must have a positive MaxHealth.");
 
+        var startingHealth = Math.Clamp(definition.Health ?? maxHealth, 0, maxHealth);
+        var startingDisposition = startingHealth > 0
+            ? CharacterDisposition.Active
+            : CharacterDisposition.Dead;
+        if (!string.IsNullOrWhiteSpace(definition.StartingDisposition)
+            && (!Enum.TryParse(definition.StartingDisposition, ignoreCase: true, out startingDisposition)
+                || !Enum.IsDefined(startingDisposition)))
+        {
+            throw new InvalidOperationException(
+                $"Character '{definition.Id}' has unknown StartingDisposition '{definition.StartingDisposition}'.");
+        }
+
+        if ((startingDisposition == CharacterDisposition.Dead) != (startingHealth == 0))
+            throw new InvalidOperationException($"Character '{definition.Id}' has inconsistent health and StartingDisposition.");
+
         return new Character
         {
             Id = definition.Id,
@@ -163,7 +193,8 @@ public static class ScenarioFactory
             Role = role,
             Team = string.IsNullOrWhiteSpace(definition.Team) ? Character.DefaultTeamForRole(role) : definition.Team.Trim(),
             MaxHealth = maxHealth,
-            Health = Math.Clamp(definition.Health ?? maxHealth, 0, maxHealth),
+            Health = startingHealth,
+            Disposition = startingDisposition,
             Armour = Math.Max(0, definition.Armour),
             HitChance = Math.Clamp(definition.HitChance, 0, 100),
             Fear = FearRules.Clamp(definition.Fear),

@@ -52,9 +52,10 @@ public sealed class DispositionExitEngineTests
     [Theory]
     [InlineData(CharacterDisposition.Active, true, true, true, true)]
     [InlineData(CharacterDisposition.Surrendered, true, true, false, false)]
+    [InlineData(CharacterDisposition.Detained, true, true, false, false)]
     [InlineData(CharacterDisposition.Escaped, true, false, false, false)]
     [InlineData(CharacterDisposition.Dead, false, false, false, false)]
-    public void The_four_predicates_follow_from_disposition(
+    public void The_character_predicates_follow_from_disposition(
         CharacterDisposition disposition, bool alive, bool present, bool canAct, bool combatTarget)
     {
         var character = TestWorld.Vark() with { Disposition = disposition };

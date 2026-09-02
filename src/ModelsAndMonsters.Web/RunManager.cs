@@ -19,7 +19,13 @@ public sealed class RunSession
     private readonly List<Channel<UiEvent>> _subscribers = [];
     private bool _completed;
 
-    public RunSession(string runId) => RunId = runId;
+    public RunSession(string runId, string? guestCharacterId = null)
+    {
+        RunId = runId;
+        Guest = new GuestControl(Publish, guestCharacterId);
+    }
+
+    public GuestControl Guest { get; }
 
     public string RunId { get; }
 
@@ -84,6 +90,7 @@ public sealed class RunSession
     /// <summary>Marks the run finished and closes every viewer's stream.</summary>
     public void Complete()
     {
+        Guest.Close();
         lock (_gate)
         {
             _completed = true;
@@ -146,12 +153,12 @@ public sealed class RunManager
 
         // A provisional id so a viewer can subscribe the instant this returns; replaced with the real run id
         // once the runner reports it in the runHeader event.
-        var session = new RunSession($"pending-{Guid.NewGuid():N}");
+        var session = new RunSession($"pending-{Guid.NewGuid():N}", _scenario.Rescue?.DetaineeId);
         var scenario = _scenario; // scenario selection is a later increment.
 
         var console = new WebGameConsole(session.Publish, id => Rekey(session, id));
         var sink = new WebTraceSink(session.Publish);
-        var runner = new SimulationRunner(_options, scenario, _chatClientFactory, _prompts, console, sink);
+        var runner = new SimulationRunner(_options, scenario, _chatClientFactory, _prompts, console, sink, session.Guest);
 
         // Surface the default agent model to the status bar up front, so it shows the moment a viewer connects
         // rather than waiting for the first model response. Individual agents may override it, but the Default
@@ -160,6 +167,7 @@ public sealed class RunManager
         session.Publish(UiEvent.Config(
             string.IsNullOrWhiteSpace(defaults.ModelId) ? "(unset)" : defaults.ModelId,
             string.IsNullOrWhiteSpace(defaults.Provider) ? "" : defaults.Provider));
+        session.Publish(UiEvent.Objectives(scenario.Objectives));
 
         _runs[session.RunId] = session;
 

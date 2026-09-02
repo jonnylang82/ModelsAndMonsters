@@ -139,6 +139,15 @@ button.ghost { background: transparent; color: var(--muted); border: 1px solid v
 .roundsummary .rs-text { line-height: 1.45; }
 .line.outcome { color: var(--accent); font-size: 13px; }
 
+.objectives {
+  margin-bottom: 16px; padding: 12px 14px; background: var(--panel);
+  border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 7px;
+}
+.objective-kicker { color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em; font-size: 10px; margin-bottom: 5px; }
+.objective { display: flex; flex-direction: column; gap: 3px; }
+.objective strong { color: var(--ink); font-size: 14px; }
+.objective span { color: var(--muted); font-size: 12px; }
+
 /* The encounter's story: a popover, not a log line — see StoryPopover in App.jsx. */
 .story-backdrop {
   position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6);
@@ -173,11 +182,13 @@ button.ghost { background: transparent; color: var(--muted); border: 1px solid v
 /* v0.5 — non-combat dispositions. Surrendered and escaped characters are subdued but never shown as
    fallen: lighter than the dead treatment, with a clear label, and no grayscale death wash. */
 .card.surrendered { opacity: 0.72; border-top-color: var(--muted); }
+.card.detained { opacity: 0.82; border-top-color: var(--accent); border-style: dashed; }
 .card.escaped { opacity: 0.62; border-top-color: var(--muted); border-style: dashed; }
 .card.surrendered .hpfill, .card.escaped .hpfill { filter: grayscale(0.4); opacity: 0.7; }
 .disposition { font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px; font-weight: 700; margin-top: 4px; color: var(--muted); }
 .disposition.dead { color: var(--monsters); }
 .disposition.surrendered { color: var(--accent); }
+.disposition.detained { color: var(--accent); }
 .disposition.escaped { color: var(--heroes); }
 
 /* v0.5 — the cellar exit chip, alongside the object chips. Dashed while shut, solid + accented once open. */
@@ -257,3 +268,11 @@ button.ghost { background: transparent; color: var(--muted); border: 1px solid v
 .badge.incover { color: #6f86a8; border-color: #6f86a8; }
 .line.combat.intercepted { color: #6f86a8; font-weight: 600; }
 .line.cover { color: #6f86a8; font-size: 13px; }
+.guest-panel { padding: 1rem; margin-bottom: 1rem; border: 1px solid #766846; border-radius: 12px; background: #252820; }
+.guest-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.guest-panel p { color: #c7c6b9; font-size: .9rem; }
+.guest-panel label { display: block; margin: .6rem 0; }
+.guest-panel textarea, .guest-panel input { display: block; box-sizing: border-box; width: 100%; padding: .7rem; margin-top: .3rem; background: #161913; color: #f6f0df; border: 1px solid #77765f; border-radius: 6px; font: inherit; }
+.guest-panel textarea { min-height: 80px; }
+.guest-error { padding: .8rem; color: #ffbaba; }
+.objective-stage { color: #e9c46a; font-weight: 600; }

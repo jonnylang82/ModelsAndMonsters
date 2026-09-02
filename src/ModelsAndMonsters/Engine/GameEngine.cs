@@ -100,6 +100,18 @@ public sealed class GameEngine : IGameEngine
 
         if (result.Accepted)
         {
+            var after = result.StateAfter;
+            if (after.Rescue is { } rescue
+                && after.RequireById(rescue.DetaineeId) is { Disposition: CharacterDisposition.Detained } detainee
+                && !after.ActiveOnTeam(rescue.GuardTeam).Any()
+                && after.ActiveOnTeam(detainee.Team).Any())
+            {
+                result = result with
+                {
+                    StateAfter = after.WithCharacter(detainee with { Disposition = CharacterDisposition.Active }),
+                    ReleasedDetaineeId = detainee.Id
+                };
+            }
             // Who is outnumbered is a consequence of the action, not part of it: a death, a surrender or an
             // escape can turn the odds against somebody who was not even involved. Reconciling here, once,
             // means every accepted action gets the same treatment and no handler has to remember to do it.
@@ -3341,6 +3353,8 @@ public sealed class GameEngine : IGameEngine
                 $"{actor.Name} is dead and cannot act."),
             CharacterDisposition.Surrendered => EngineResult.Reject(action, state, EngineRejectionReason.ActorNotActive,
                 $"{actor.Name} has already given up the fight and takes no further part in it."),
+            CharacterDisposition.Detained => EngineResult.Reject(action, state, EngineRejectionReason.ActorNotActive,
+                $"{actor.Name} is detained and cannot act until released."),
             CharacterDisposition.Escaped => EngineResult.Reject(action, state, EngineRejectionReason.ActorNotActive,
                 $"{actor.Name} has already left the encounter."),
             _ => EngineResult.Reject(action, state, EngineRejectionReason.ActorNotActive,
@@ -3383,6 +3397,9 @@ public sealed class GameEngine : IGameEngine
             CharacterDisposition.Surrendered => EngineResult.Reject(action, state,
                 EngineRejectionReason.TargetHasSurrendered,
                 $"{target.Name} has given up the fight and is no longer someone to {verb}."),
+            CharacterDisposition.Detained => EngineResult.Reject(action, state,
+                EngineRejectionReason.AbilityTargetNotAvailable,
+                $"{target.Name} is detained and cannot be reached to {verb} while confined."),
             CharacterDisposition.Escaped => EngineResult.Reject(action, state,
                 EngineRejectionReason.TargetHasEscaped,
                 $"{target.Name} has fled the encounter and is no longer here to {verb}."),

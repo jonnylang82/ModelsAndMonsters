@@ -119,7 +119,8 @@ public sealed record Character
     public bool IsAlive => Disposition != CharacterDisposition.Dead;
 
     /// <summary>Physically in the room: an active or surrendered character. The escaped and the dead are not present.</summary>
-    public bool IsPresent => Disposition is CharacterDisposition.Active or CharacterDisposition.Surrendered;
+    public bool IsPresent => Disposition is CharacterDisposition.Active or CharacterDisposition.Surrendered
+        or CharacterDisposition.Detained;
 
     /// <summary>Able to take a turn — only an active character acts.</summary>
     public bool CanAct => Disposition == CharacterDisposition.Active;

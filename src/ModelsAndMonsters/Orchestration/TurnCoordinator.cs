@@ -211,6 +211,22 @@ public sealed class TurnCoordinator
         var self = _engine.State.RequireById(character.CharacterId);
         if (!self.CanAct)
         {
+            // Passive witnesses keep separate round-sized history entries without a model call.
+            // Otherwise a long detention becomes one enormous first-turn message that cannot be summarised.
+            if (self.Disposition == CharacterDisposition.Detained)
+            {
+                var witnessed = _narrationLog.TakeUndelivered(character.CharacterId);
+                if (witnessed.Count > 0)
+                {
+                    var text = string.Join("\n\n", witnessed.Select(n => n.Text));
+                    character.BeginTurn("You remain detained and cannot act. While confined, you witnessed:\n" + text);
+                    _trace.Emit(TraceEventType.NarrationDelivered, new NarrationDeliveredPayload
+                    {
+                        NarrationId = witnessed[^1].Id, Narration = text,
+                        DeliveredTo = [character.CharacterId], DeliveryMechanism = "detained-witness-history"
+                    });
+                }
+            }
             // Only an active character takes a turn. Anyone dead, surrendered or escaped is skipped without
             // any model call, and the skip is traced with its disposition so the fixed turn order stays
             // visible and uncorrupted in the record rather than a turn simply going missing.
@@ -219,6 +235,9 @@ public sealed class TurnCoordinator
                 CharacterDisposition.Surrendered =>
                     ($"{character.Name} has surrendered and takes no further turns.",
                      $"{character.Name} has surrendered; their turn is skipped."),
+                CharacterDisposition.Detained =>
+                    ($"{character.Name} is detained and cannot take a turn until released.",
+                     $"{character.Name} remains confined; their turn is skipped."),
                 CharacterDisposition.Escaped =>
                     ($"{character.Name} has escaped the encounter and takes no further turns.",
                      $"{character.Name} has escaped; their turn is skipped."),
@@ -360,12 +379,13 @@ public sealed class TurnCoordinator
         var actionAttempts = 0;
         var speechActs = 0;
         var modelCalls = 0;
+        var decisionRequests = 0;
         var outcome = TurnOutcome.AbandonedAtLimit;
         string? acceptedAction = null;
 
         while (true)
         {
-            if (modelCalls >= _limits.MaxModelCallsPerTurn)
+            if (decisionRequests >= _limits.MaxModelCallsPerTurn)
             {
                 EmitLimit(nameof(HarnessOptions.MaxModelCallsPerTurn), _limits.MaxModelCallsPerTurn,
                     $"{character.Name}'s turn was abandoned without a resolved action.");
@@ -374,7 +394,13 @@ public sealed class TurnCoordinator
 
             var allowQuestions = !_limits.QuestionsAfterFailedActionOnly || actionAttempts > 0;
             var response = await character.DecideAsync(allowQuestions, cancellationToken).ConfigureAwait(false);
-            modelCalls++;
+            decisionRequests++;
+            if (!character.LastDecisionWasHuman) modelCalls++;
+            else _trace.Emit(TraceEventType.GuestDecision, new
+            {
+                character.CharacterId, CharacterName = character.Name,
+                Calls = ModelAgent.GetToolCalls(response)
+            });
 
             var calls = ModelAgent.GetToolCalls(response);
             if (calls.Count == 0)
@@ -1538,6 +1564,26 @@ public sealed class TurnCoordinator
                 await DeliverDamageEnvironmentalObjectAsync(character, damageObject, cancellationToken).ConfigureAwait(false),
             _ => await DeliverCombatOutcomeAsync(character, engineResult, cancellationToken).ConfigureAwait(false)
         };
+
+        if (engineResult.ReleasedDetaineeId is { } releasedId)
+        {
+            var released = _engine.State.RequireById(releasedId);
+            var rescue = _engine.State.Rescue!;
+            var exit = _engine.State.ResolveExit(rescue.ExitId).Exit!.Name;
+            var text = $"With no warden still fighting, the detention gate unlocks. {released.Name} is free and can act. " +
+                $"The rescue is not finished: {released.Name} must leave alive through the {exit}.";
+            EmitDispositionChanged(released.Id, released.Name, released.Team,
+                CharacterDisposition.Detained, CharacterDisposition.Active, "archive secured; detention unlocked",
+                engineResult, null, LivingRecipients());
+            var entry = _narrationLog.Record("rescue.release", text);
+            _trace.Emit(TraceEventType.Narration, new NarrationPayload
+            {
+                Purpose = "rescue.release", StateSuppliedToDungeonMaster = "", ContextSuppliedToDungeonMaster = "",
+                Narration = text, NarrationId = entry.Id, IntendedRecipients = LivingRecipients()
+            }, "harness");
+            _console.DungeonMaster(text);
+            messageToCharacter += "\n" + text;
+        }
 
         EmitAdjudication(character, intent, ActionResolutionCategory.EngineAccepted, null, action, null);
 
@@ -4473,6 +4519,8 @@ public sealed class TurnCoordinator
                 return "dead";
             case CharacterDisposition.Surrendered:
                 return "surrendered";
+            case CharacterDisposition.Detained:
+                return "detained";
             case CharacterDisposition.Escaped:
                 return "fled";
         }

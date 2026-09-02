@@ -1353,6 +1353,8 @@ public sealed record TeamStandingPayload
 
     public int Surrendered { get; init; }
 
+    public int Detained { get; init; }
+
     public int Escaped { get; init; }
 
     public int Dead { get; init; }

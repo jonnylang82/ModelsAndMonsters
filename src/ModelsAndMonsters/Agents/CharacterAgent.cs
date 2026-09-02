@@ -20,10 +20,12 @@ public sealed class CharacterAgent : ModelAgent
         CharacterDefinition definition,
         AgentModelProfile profile,
         TracingChatClient client,
-        string systemPrompt)
+        string systemPrompt,
+        ICharacterInput? input = null)
         : base(definition.Name, profile, client, systemPrompt)
     {
         Definition = definition;
+        Input = input;
     }
 
     public CharacterDefinition Definition { get; }
@@ -31,6 +33,9 @@ public sealed class CharacterAgent : ModelAgent
     public string CharacterId => Definition.Id;
 
     public string Name => Definition.Name;
+
+    public ICharacterInput? Input { get; }
+    public bool LastDecisionWasHuman { get; private set; }
 
     /// <summary>Injects this turn's exact self-state and the narration this character has not yet heard.</summary>
     public void BeginTurn(string turnContext) => Conversation.AppendUser(turnContext);
@@ -44,9 +49,28 @@ public sealed class CharacterAgent : ModelAgent
     /// action has exposed a real ambiguity. The ordinary overload remains question-capable for existing
     /// callers and tests.
     /// </summary>
-    public Task<ChatResponse> DecideAsync(bool allowQuestions, CancellationToken cancellationToken) =>
-        CallModelAsync("character.decide", allowQuestions ? CharacterTools.All : CharacterTools.WithoutQuestions,
-            cancellationToken);
+    public async Task<ChatResponse> DecideAsync(bool allowQuestions, CancellationToken cancellationToken)
+    {
+        LastDecisionWasHuman = false;
+        var decision = Input is null ? null : await Input.ReadAsync(CharacterId, cancellationToken).ConfigureAwait(false);
+        if (decision is null)
+            return await CallModelAsync("character.decide", allowQuestions ? CharacterTools.All : CharacterTools.WithoutQuestions,
+                cancellationToken).ConfigureAwait(false);
+
+        LastDecisionWasHuman = true;
+        var arguments = new Dictionary<string, object?>
+        {
+            [decision.Pass ? CharacterTools.ReasonParameter : CharacterTools.IntentParameter] = decision.Intent
+        };
+        if (!string.IsNullOrWhiteSpace(decision.Speech))
+            arguments[CharacterTools.UtterancesParameter] = new[] { decision.Speech };
+        var call = new FunctionCallContent($"guest-{Guid.NewGuid():N}",
+            decision.Pass ? CharacterTools.EndTurnName : CharacterTools.TakeActionName, arguments);
+        var message = new ChatMessage(ChatRole.Assistant, [call]);
+        // Same conversation and same tool/result pairing: switching controllers must never reset memory.
+        Conversation.Append(message);
+        return new ChatResponse(message);
+    }
 
     /// <summary>Used when the model replied without calling either tool.</summary>
     public void AppendNudge(string text) => Conversation.AppendUser(text);

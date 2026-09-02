@@ -1,3 +1,4 @@
+using ModelsAndMonsters.Configuration;
 using ModelsAndMonsters.Domain;
 
 namespace ModelsAndMonsters.Web;
@@ -15,6 +16,9 @@ public sealed record UiEvent(string Type, object? Payload)
 
     /// <summary>Run-level metadata for the status bar: the default agent model and its provider.</summary>
     public static UiEvent Config(string model, string provider) => new("config", new { model, provider });
+
+    public static UiEvent Objectives(IEnumerable<ObjectiveDefinition> objectives) =>
+        new("objectives", objectives.Select(o => new { o.Id, o.Title, o.Description }).ToList());
 
     /// <summary>
     /// A running token tally for the status bar, republished after every model response with the cumulative
@@ -228,7 +232,9 @@ public sealed record StateDto(
     IReadOnlyList<SurrenderOfferDto> PendingOffers,
     IReadOnlyList<SurrenderOfferDto> SettledOffers,
     IReadOnlyList<SurrenderAgreementDto> Agreements,
-    IReadOnlyList<CoverDto> Cover)
+    IReadOnlyList<CoverDto> Cover,
+    string? RescueStage = null,
+    string? GuestCharacterId = null)
 {
     public static StateDto From(GameState state) => new(
         state.Version,
@@ -257,7 +263,8 @@ public sealed record StateDto(
         [.. state.Room.Objects.OfType<CoverObject>().Select(c => new CoverDto(
             c.Id, c.Name, c.State.ToString(), c.Capacity,
             c.CurrentOccupantId is null ? null : NameOf(state, c.CurrentOccupantId),
-            c.MaximumDurability, c.CurrentDurability, c.HitChanceModifier, c.Armour))]);
+            c.MaximumDurability, c.CurrentDurability, c.HitChanceModifier, c.Armour))],
+        state.Rescue?.Stage(state), state.Rescue?.DetaineeId);
 
     private static StatusDto ToStatusDto(GameState state, StatusEffectInstance status)
     {

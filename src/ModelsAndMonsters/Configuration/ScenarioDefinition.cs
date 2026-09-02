@@ -20,6 +20,24 @@ public sealed class ScenarioDefinition
     public RoomDefinition Room { get; set; } = new();
 
     public List<CharacterDefinition> Characters { get; set; } = [];
+
+    public List<ObjectiveDefinition> Objectives { get; set; } = [];
+
+    public RescueDefinition? Rescue { get; set; }
+}
+
+public sealed class RescueDefinition
+{
+    public string DetaineeId { get; set; } = "";
+    public string GuardTeam { get; set; } = "";
+    public string ExitId { get; set; } = "";
+}
+
+public sealed class ObjectiveDefinition
+{
+    public string Id { get; set; } = "";
+    public string Title { get; set; } = "";
+    public string Description { get; set; } = "";
 }
 
 public sealed class RoomDefinition
@@ -138,6 +156,9 @@ public sealed class CharacterDefinition
 
     /// <summary>Chance out of 100 that this character's attacks land. Defaults to 75.</summary>
     public int HitChance { get; set; } = 75;
+
+    /// <summary>Optional starting standing, such as <c>Detained</c>. Blank preserves the active/dead default.</summary>
+    public string? StartingDisposition { get; set; }
 
     /// <summary>
     /// Starting fear, 0-5. Zero unless a scenario deliberately opens with somebody already shaken — a

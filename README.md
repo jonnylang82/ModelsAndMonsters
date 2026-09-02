@@ -37,9 +37,31 @@ The complete corrected character sheets—including Deacon's future Guest charac
 mechanical vocabulary; for example, D&D armour class is mapped to the engine's 0–3 damage-reduction scale rather
 than copied as literal armour.
 
-This first expedition remains fully autonomous. Jon is the observer/director, not a mandatory player character.
-Director interventions and an optional guest character are the next interaction layer; the engine remains the
-authority for outcomes when those controls are added.
+### Rescue and guest control — September 2, 2026
+
+The current encounter is a single-room rescue. Deacon starts alive and detained, hears the public record,
+and cannot act or be attacked while confined. Once neither warden is active (defeated, surrendered, or gone),
+the engine unlocks detention. The encounter continues until Deacon escapes alive through the Village Stair,
+the rescue fails, or a run limit stops play. Who framed him is an unresolved story hook, not a completed objective.
+
+Jon remains an observer unless he chooses **Take control of Deacon**. Control can be reserved while Deacon
+is detained. At his next decision after release, enter an action and optional spoken words, pass, or choose
+**Return to AI**. Both controllers use the same character conversation, DM adjudication and engine. An AI
+decision already in flight finishes before takeover; cancellation and returning control release any input wait.
+Guest commands have per-request identifiers so stale or duplicate submissions cannot take a later turn.
+
+Memory persists across rounds and controller changes within one run, with existing summarisation limits.
+Starting another run is still a fresh start: campaign saves, a second room, director world edits, and speaking
+while detained are not implemented. The gate's automatic unlock is an explicit first-slice rule, not a new
+arbitrary lock-picking or movement system.
+
+The .NET 10 SDK used on Jon's machine lives at `C:\Users\jonny\Documents\Codex\.dotnet10\dotnet.exe`.
+Use that executable if plain `dotnet` resolves to the older system .NET 6 SDK. This branch does not require
+changing the global SDK installation. New regression coverage exercises rescue outcomes, detainee turn skips,
+human-to-AI history continuity, stale commands, cancellation, passive witness memory, and a complete scripted rescue run.
+Browser checks verified real server startup, reserving guest control, cancellation, and the action form's
+request payload. Jon has not yet playtested a complete live-model rescue or the post-release guest experience.
+Next check: play the rescue once with Deacon on AI, then reserve control before release on a second run.
 
 Most of you will have heard of Dungeons & Dragons, or seen it on _Stranger Things_: a group of friends sat round a table, rolling dice and taking on imaginary adventures.
 

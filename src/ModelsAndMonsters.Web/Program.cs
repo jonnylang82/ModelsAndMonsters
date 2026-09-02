@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text.Json;
 using ModelsAndMonsters.AI;
+using ModelsAndMonsters.Agents;
 using ModelsAndMonsters.Configuration;
 using ModelsAndMonsters.Prompts;
 using ModelsAndMonsters.Web;
@@ -93,6 +94,26 @@ app.MapPost("/api/runs/{id}/cancel", (string id, RunManager runs) =>
     return Results.Accepted();
 });
 
+app.MapPost("/api/runs/{id}/guest-control", (string id, GuestControlRequest body, RunManager runs) =>
+{
+    var session = runs.Get(id);
+    if (session is null) return Results.NotFound();
+    return session.Guest.SetControlled(body.Controlled) ? Results.Ok() : Results.Conflict();
+});
+
+app.MapPost("/api/runs/{id}/guest-decision", (string id, GuestDecisionRequest body, RunManager runs) =>
+{
+    var session = runs.Get(id);
+    if (session is null) return Results.NotFound();
+    if (string.IsNullOrWhiteSpace(body.RequestId) || string.IsNullOrWhiteSpace(body.Intent)
+        || body.Intent.Length > 1200 || (body.Speech?.Length ?? 0) > 500)
+        return Results.BadRequest(new { error = "An action of up to 1200 characters and optional speech of up to 500 characters are required." });
+    return session.Guest.Submit(body.RequestId, new GuestDecision(body.Intent, body.Speech, body.Pass))
+        ? Results.Ok() : Results.Conflict(new { error = "That decision is no longer waiting. Check the current turn." });
+});
+
 app.Run("http://localhost:5170");
 
 internal sealed record StartRunRequest(string? Scenario);
+internal sealed record GuestControlRequest(bool Controlled);
+internal sealed record GuestDecisionRequest(string RequestId, string Intent, string? Speech, bool Pass = false);

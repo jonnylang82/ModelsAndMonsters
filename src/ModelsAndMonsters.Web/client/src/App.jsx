@@ -24,6 +24,14 @@ export default function App() {
   const [runId, setRunId] = useState(null)
   const [status, setStatus] = useState('idle') // idle | running | done
   const [characters, setCharacters] = useState([])
+  const [objectives, setObjectives] = useState([])
+  const [rescueStage, setRescueStage] = useState(null)
+  const [guestId, setGuestId] = useState(null)
+  const [guest, setGuest] = useState({ controlled: false })
+  const [guestIntent, setGuestIntent] = useState('')
+  const [guestSpeech, setGuestSpeech] = useState('')
+  const [guestBusy, setGuestBusy] = useState(false)
+  const [error, setError] = useState('')
   const [objects, setObjects] = useState([])
   const [exits, setExits] = useState([])
   const [ground, setGround] = useState([])
@@ -55,6 +63,8 @@ export default function App() {
   const handle = useCallback((evt) => {
     const p = evt.payload || {}
     if (evt.type === 'state') {
+      setRescueStage(p.rescueStage || null)
+      setGuestId(p.guestCharacterId || null)
       setCharacters(p.characters || [])
       setObjects(p.objects || [])
       setExits(p.exits || [])
@@ -66,6 +76,8 @@ export default function App() {
       return
     }
     if (evt.type === 'turnStarted') { setTurn(p.character); return }
+    if (evt.type === 'guestControl') { setGuest(p); return }
+    if (evt.type === 'objectives') { setObjectives(Array.isArray(evt.payload) ? evt.payload : []); return }
     if (evt.type === 'config') { setModel(p.model); setProvider(p.provider); return }
     if (evt.type === 'usage') { setUsage(p); return }
     // The full text lives in the popover, not the scrolling transcript — LOG_KINDS deliberately never
@@ -88,16 +100,37 @@ export default function App() {
     setPendingOffers([]); setSettledOffers([]); setAgreements([])
     setTurn(null); setRound(null); setLog([]); setStatus('running')
     setStory(null); setShowStory(false); setUsage(null)
+    setObjectives([]); setRescueStage(null); setGuestId(null); setGuest({ controlled: false })
+    setGuestIntent(''); setGuestSpeech(''); setError('')
+    try {
     const res = await fetch(`${API}/api/runs`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
     })
+    if (!res.ok) throw new Error(`Could not start the run (${res.status}).`)
     const { runId } = await res.json()
     setRunId(runId)
     const es = new EventSource(`${API}/api/runs/${runId}/events`)
     esRef.current = es
     es.onmessage = (e) => handle(JSON.parse(e.data))
     es.onerror = () => { es.close(); setStatus((s) => (s === 'running' ? 'done' : s)) }
+    } catch (err) { setError(err.message); setStatus('idle') }
   }, [handle])
+
+  const sendGuest = async (endpoint, body) => {
+    setGuestBusy(true); setError('')
+    try {
+      const res = await fetch(`${API}/api/runs/${runId}/${endpoint}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      })
+      if (!res.ok) throw new Error(res.status === 409
+        ? 'That turn has moved on. Check the current control state and try again.'
+        : `Could not send your request (${res.status}).`)
+      if (endpoint === 'guest-decision') { setGuestIntent(''); setGuestSpeech('') }
+    } catch (err) { setError(err.message) }
+    finally { setGuestBusy(false) }
+  }
+
+  const guestCharacter = characters.find((c) => c.id === guestId)
 
   const cancel = useCallback(() => {
     if (runId) fetch(`${API}/api/runs/${runId}/cancel`, { method: 'POST' })
@@ -115,6 +148,56 @@ export default function App() {
           <button onClick={cancel} disabled={status !== 'running'} className="ghost">Cancel</button>
         </div>
       </header>
+
+      {objectives.length > 0 && (
+        <section className="objectives">
+          <div className="objective-kicker">Current objective</div>
+          {objectives.map((o) => (
+            <div key={o.id} className="objective">
+              <strong>🎯 {o.title}</strong>
+              <span>{o.description}</span>
+              {rescueStage && <span className="objective-stage">{{
+                detained: 'Deacon is still detained', extraction: 'Gate open — get Deacon to the stair',
+                completed: 'Rescue complete', failed: 'Rescue failed'
+              }[rescueStage]}</span>}
+            </div>
+          ))}
+        </section>
+      )}
+
+      {error && <div className="guest-error" role="alert">{error}</div>}
+      {guestCharacter && (
+        <section className="guest-panel" aria-label="Guest character control">
+          <div className="guest-heading">
+            <strong>{guestCharacter.name} · {guest.controlled ? 'You are controlling' : 'AI controlled'}</strong>
+            <button className="ghost" disabled={status !== 'running' || guestBusy || guest.closed
+              || ['Dead', 'Escaped', 'Surrendered'].includes(guestCharacter.disposition)}
+              onClick={() => sendGuest('guest-control', { controlled: !guest.controlled })}>
+              {guest.controlled ? 'Return to AI' : `Take control of ${guestCharacter.name}`}
+            </button>
+          </div>
+          <p>{guest.requestId ? 'Your turn. Describe one action; the DM and engine resolve it.'
+            : guestCharacter.disposition === 'Detained'
+              ? 'Confined for now. You can reserve control for his first decision after release.'
+              : guest.controlled ? 'Waiting for his next decision. An action already underway will finish first.'
+              : 'Watch the party, or step in for a turn. His memory stays with him either way.'}</p>
+          {guest.requestId && status === 'running' && <form onSubmit={(e) => {
+            e.preventDefault()
+            sendGuest('guest-decision', { requestId: guest.requestId, intent: guestIntent, speech: guestSpeech })
+          }}>
+            <label>Action<textarea maxLength={1200} required value={guestIntent}
+              onChange={(e) => setGuestIntent(e.target.value)} placeholder="I open the Village Stair and prepare to leave…" /></label>
+            <label>Say aloud (optional)<input maxLength={500} value={guestSpeech}
+              onChange={(e) => setGuestSpeech(e.target.value)} placeholder="Thanks for coming back for me." /></label>
+            <div className="controls">
+              <button disabled={guestBusy || !guestIntent.trim()}>Act as {guestCharacter.name}</button>
+              <button type="button" className="ghost" disabled={guestBusy} onClick={() => sendGuest('guest-decision', {
+                requestId: guest.requestId, intent: 'I wait and watch.', speech: guestSpeech, pass: true
+              })}>Pass this turn</button>
+            </div>
+          </form>}
+        </section>
+      )}
 
       <section className="cards">
         {characters.length === 0 && <div className="empty">Press “Start run” to begin an encounter.</div>}
@@ -307,7 +390,7 @@ const STATUS_BADGE = {
 // Disposition drives how a card reads. Only the dead are "fallen"; a surrendered or escaped character is
 // subdued and labelled but never shown as killed. An active card (still fighting) can also be highlighted
 // as the one whose turn it is.
-const DISPOSITION_LABEL = { Surrendered: 'surrendered', Escaped: 'escaped', Dead: 'fallen' }
+const DISPOSITION_LABEL = { Surrendered: 'surrendered', Detained: 'detained', Escaped: 'escaped', Dead: 'fallen' }
 
 function CharacterCard({ c, active, appearance }) {
   const pct = c.maxHealth > 0 ? Math.max(0, Math.round((c.health / c.maxHealth) * 100)) : 0

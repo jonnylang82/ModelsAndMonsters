@@ -23,5 +23,8 @@ public enum CharacterDisposition
     Escaped,
 
     /// <summary>Not alive. Uses the existing death, injury and inventory-on-death behaviour.</summary>
-    Dead
+    Dead,
+
+    /// <summary>Alive and present but confined: takes no turns and cannot be targeted until released.</summary>
+    Detained
 }

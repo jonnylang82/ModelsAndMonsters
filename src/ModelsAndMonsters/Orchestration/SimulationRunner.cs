@@ -55,6 +55,7 @@ public sealed class SimulationRunner
     private readonly PromptLibrary _prompts;
     private readonly IGameConsole _console;
     private readonly ITraceSink? _additionalSink;
+    private readonly ICharacterInput? _characterInput;
 
     /// <summary>The dependency-injected constructor used by the CLI. No live sink; the trace goes to file only.</summary>
     public SimulationRunner(
@@ -78,7 +79,8 @@ public sealed class SimulationRunner
         IChatClientFactory chatClientFactory,
         PromptLibrary prompts,
         IGameConsole console,
-        ITraceSink? additionalSink)
+        ITraceSink? additionalSink,
+        ICharacterInput? characterInput = null)
     {
         _options = options;
         _scenario = scenario;
@@ -86,6 +88,7 @@ public sealed class SimulationRunner
         _prompts = prompts;
         _console = console;
         _additionalSink = additionalSink;
+        _characterInput = characterInput;
     }
 
     public async Task<SimulationSummary> RunAsync(CancellationToken cancellationToken = default)
@@ -322,7 +325,7 @@ public sealed class SimulationRunner
                     var profile = characterProfiles[definition.Id];
                     return new CharacterAgent(
                         definition, profile, CreateTracingClient(profile, trace, clients),
-                        characterPrompts.CreateSystemPrompt(definition, _scenario.Characters));
+                        characterPrompts.CreateSystemPrompt(definition, _scenario.Characters), _characterInput);
                 })
                 .ToList();
 
@@ -772,6 +775,7 @@ public sealed class SimulationRunner
                 Total = s.Total,
                 Active = s.Active,
                 Surrendered = s.Surrendered,
+                Detained = s.Detained,
                 Escaped = s.Escaped,
                 Dead = s.Dead
             })],
@@ -855,6 +859,7 @@ public sealed class SimulationRunner
         {
             CharacterDisposition.Dead => $"{c.Name} ({c.Team}) has fallen.",
             CharacterDisposition.Surrendered => $"{c.Name} ({c.Team}) surrendered and is out of the fight.",
+            CharacterDisposition.Detained => $"{c.Name} ({c.Team}) remains detained and cannot act.",
             CharacterDisposition.Escaped => $"{c.Name} ({c.Team}) escaped the encounter alive.",
             _ => $"{c.Name} ({c.Team}) survives with {c.Health} of {c.MaxHealth} health."
         });

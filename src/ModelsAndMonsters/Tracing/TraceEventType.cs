@@ -311,5 +311,8 @@ public enum TraceEventType
     HarnessLimitReached,
 
     RunCompleted,
-    RunFailed
+    RunFailed,
+
+    /// <summary>A human supplied a character decision through the same turn pipeline as its AI.</summary>
+    GuestDecision
 }

@@ -42,6 +42,7 @@ public sealed class WorldStateFormatter
 
         builder.AppendLine();
         builder.AppendLine("CHARACTERS:");
+        builder.AppendLine(FormatRescue(state));
         AppendTeamsSummary(builder, state);
 
         foreach (var character in state.Characters)
@@ -436,7 +437,21 @@ public sealed class WorldStateFormatter
             ["statuses"] = FormatStatusesForSelf(character, state),
             ["offers"] = FormatOffersForSelf(character, state),
             ["cover"] = FormatCoverForSelf(character, state)
-        }).TrimEnd();
+        }).TrimEnd() + (state.Rescue is null ? "" : "\n\n" + FormatRescue(state));
+    }
+
+    private static string FormatRescue(GameState state)
+    {
+        if (state.Rescue is not { } rescue) return "";
+        var name = state.RequireById(rescue.DetaineeId).Name;
+        var exit = state.ResolveExit(rescue.ExitId).Exit!.Name;
+        return rescue.Stage(state) switch
+        {
+            "detained" => $"RESCUE: {name} is confined. The detention gate automatically unlocks when no member of {rescue.GuardTeam} remains fighting. Defeating them or accepting their surrender works. Do not try to open the detention gate as an ordinary door.",
+            "extraction" => $"RESCUE: The detention gate is OPEN and {name} is free, regardless of the opening scene description. {name} must leave alive through the {exit}. Open that exit if necessary, then {name} can escape through it.",
+            "completed" => $"RESCUE COMPLETE: {name} reached safety.",
+            _ => $"RESCUE FAILED: {name} could not reach safety."
+        };
     }
 
     /// <summary>
@@ -720,6 +735,8 @@ public sealed class WorldStateFormatter
     {
         CharacterDisposition.Surrendered =>
             "alive but has SURRENDERED — out of the fight, present but takes no turns, and is NOT a valid target (cannot be attacked)",
+        CharacterDisposition.Detained =>
+            "alive but DETAINED — confined here, takes no turns, and is NOT a valid target until released",
         CharacterDisposition.Escaped =>
             "alive but has ESCAPED — gone from the room, takes no turns, and cannot be reached or targeted",
         CharacterDisposition.Dead => "DEAD",
