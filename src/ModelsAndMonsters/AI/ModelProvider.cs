@@ -19,6 +19,13 @@ public enum ModelProvider
     OpenRouter,
 
     /// <summary>
+    /// LM Studio's local OpenAI-compatible chat-completions endpoint. This is separate from the generic
+    /// hosted providers because LM Studio accepts a request-level <c>reasoning_effort</c> control and needs
+    /// no API key by default.
+    /// </summary>
+    LMStudio,
+
+    /// <summary>
     /// Unsloth Studio — a local model server (default <c>http://localhost:8888</c>) that exposes both an
     /// OpenAI-compatible and an Anthropic-compatible API. Reached through the OpenAI SDK's CHAT-COMPLETIONS
     /// client, the same pattern as <see cref="OpenRouter"/>, pointed at its local base URL and carrying a

@@ -159,12 +159,72 @@ public sealed class ProviderTests
     }
 
     // ------------------------------------------------------------------------------------------
+    // LM Studio: local OpenAI-compatible chat completions with explicit reasoning control.
+    // ------------------------------------------------------------------------------------------
+
+    [Fact]
+    public void LMStudio_has_the_local_openai_compatible_capability_shape()
+    {
+        var caps = ProviderCapabilities.For(ModelProvider.LMStudio);
+
+        Assert.True(caps.SupportsTemperature);
+        Assert.True(caps.SupportsTopP);
+        Assert.True(caps.SupportsSeed);
+        Assert.True(caps.SupportsForcedToolChoice);
+        Assert.True(caps.SupportsPenalties);
+        Assert.True(caps.SupportsStructuredOutputSchema);
+        Assert.True(caps.SilentlyTruncatesHistory);
+        Assert.False(caps.SupportsTopK);
+        Assert.False(caps.SupportsContextWindow);
+    }
+
+    [Fact]
+    public void LMStudio_effort_is_applied_client_side_never_as_a_chat_option_or_a_drop()
+    {
+        var resolved = ChatOptionsFactory.Create(
+            Profile(ModelProvider.LMStudio) with { Effort = ReasoningEffort.None });
+
+        Assert.Null(resolved.Options.Reasoning);
+        Assert.DoesNotContain(nameof(AgentModelProfile.Effort), resolved.UnsupportedOptionsDropped);
+    }
+
+    [Fact]
+    public void LMStudio_reasoning_effort_maps_and_is_injected_into_chat_requests()
+    {
+        Assert.Null(ChatClientFactory.BuildLMStudioReasoningEffort(null));
+        Assert.Equal("none", ChatClientFactory.BuildLMStudioReasoningEffort(ReasoningEffort.None));
+        Assert.Equal("low", ChatClientFactory.BuildLMStudioReasoningEffort(ReasoningEffort.Low));
+        Assert.Equal("medium", ChatClientFactory.BuildLMStudioReasoningEffort(ReasoningEffort.Medium));
+        Assert.Equal("high", ChatClientFactory.BuildLMStudioReasoningEffort(ReasoningEffort.High));
+        Assert.Equal("max", ChatClientFactory.BuildLMStudioReasoningEffort(ReasoningEffort.ExtraHigh));
+
+        var chat = """{"model":"qwen/qwen3.5-9b","messages":[{"role":"user","content":"ready?"}]}""";
+        Assert.True(ChatClientFactory.TryInjectLMStudioReasoningEffort(chat, "none", out var modified));
+        var body = JsonNode.Parse(modified)!.AsObject();
+        Assert.Equal("none", body["reasoning_effort"]!.GetValue<string>());
+        Assert.NotNull(body["messages"]);
+
+        Assert.False(ChatClientFactory.TryInjectLMStudioReasoningEffort(
+            """{"foo":1}""", "none", out var untouched));
+        Assert.Equal("""{"foo":1}""", untouched);
+    }
+
+    [Fact]
+    public void LMStudio_constructs_a_client_without_an_api_key()
+    {
+        using var client = FactoryWith(new ProvidersOptions())
+            .Create(Profile(ModelProvider.LMStudio, "qwen/qwen3.5-9b"));
+
+        Assert.IsAssignableFrom<IChatClient>(client);
+    }
+
+    // ------------------------------------------------------------------------------------------
     // Unsloth Studio: an OpenAI-compatible local server reached the same way as OpenRouter, minus
     // OpenRouter's client-side reasoning injection (no per-model reasoning object to inject against).
     // ------------------------------------------------------------------------------------------
 
     [Fact]
-    public void UnslothStudio_mirrors_OpenRouter_capabilities()
+    public void UnslothStudio_exposes_its_local_server_capabilities()
     {
         var caps = ProviderCapabilities.For(ModelProvider.UnslothStudio);
 
@@ -175,14 +235,16 @@ public sealed class ProviderTests
         Assert.True(caps.SupportsPenalties);
         Assert.True(caps.AllowsTemperatureAndTopPTogether);
 
-        Assert.False(caps.SupportsTopK);
-        Assert.False(caps.SupportsContextWindow);
-        Assert.False(caps.SupportsStructuredOutputSchema);
+        Assert.True(caps.SupportsTopK);
+        Assert.True(caps.SupportsContextWindow);
+        Assert.True(caps.SupportsThinkingToggle);
+        Assert.True(caps.SupportsRepeatPenalty);
+        Assert.True(caps.SupportsStructuredOutputSchema);
         Assert.False(caps.SilentlyTruncatesHistory);
     }
 
     [Fact]
-    public void UnslothStudio_keeps_sampling_but_drops_top_k()
+    public void UnslothStudio_keeps_its_supported_sampling_options()
     {
         var profile = Profile(ModelProvider.UnslothStudio) with { Temperature = 0.7f, TopP = 0.9f, TopK = 40 };
 
@@ -190,7 +252,7 @@ public sealed class ProviderTests
 
         Assert.Equal(0.7f, resolved.Options.Temperature);
         Assert.Equal(0.9f, resolved.Options.TopP);
-        Assert.Contains(nameof(AgentModelProfile.TopK), resolved.UnsupportedOptionsDropped);
+        Assert.DoesNotContain(nameof(AgentModelProfile.TopK), resolved.UnsupportedOptionsDropped);
         Assert.DoesNotContain(nameof(AgentModelProfile.Temperature), resolved.UnsupportedOptionsDropped);
     }
 

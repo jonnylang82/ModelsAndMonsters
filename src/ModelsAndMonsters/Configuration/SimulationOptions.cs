@@ -56,6 +56,8 @@ public sealed class ProvidersOptions
 
     public OpenRouterProviderOptions OpenRouter { get; set; } = new();
 
+    public LMStudioProviderOptions LMStudio { get; set; } = new();
+
     public UnslothStudioProviderOptions UnslothStudio { get; set; } = new();
 }
 
@@ -91,6 +93,23 @@ public sealed class OpenRouterProviderOptions
 
     /// <summary>OpenRouter's OpenAI-compatible base URL. The chat-completions path is appended by the client.</summary>
     public string Endpoint { get; set; } = "https://openrouter.ai/api/v1";
+}
+
+public sealed class LMStudioProviderOptions
+{
+    /// <summary>
+    /// LM Studio's OpenAI-compatible base URL. The chat-completions path is appended by the OpenAI client.
+    /// </summary>
+    public string Endpoint { get; set; } = "http://localhost:1234/v1";
+
+    /// <summary>
+    /// Optional environment variable for installations that enable LM Studio API authentication.
+    /// A normal local server needs no key.
+    /// </summary>
+    public string ApiKeyEnvironmentVariable { get; set; } = "LM_STUDIO_API_KEY";
+
+    /// <summary>Optional API token supplied through user secrets rather than a committed config file.</summary>
+    public string? ApiKey { get; set; }
 }
 
 public sealed class UnslothStudioProviderOptions

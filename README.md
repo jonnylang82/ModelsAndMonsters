@@ -2,6 +2,29 @@
 
 Original post: <https://spencerclark.dev/blog/models-and-monsters/>
 
+## Council RPG fork: local setup
+
+This branch adds a first-class LM Studio provider for the Council RPG adaptation while preserving the
+original provider abstraction. The default configuration connects to LM Studio at
+`http://localhost:1234/v1` and uses `qwen/qwen3.5-9b` with an 8,192-token context boundary.
+
+LM Studio must have its local server running. The connector sends `reasoning_effort: "none"` for the default
+profile, preventing hidden reasoning from consuming the response allowance before narration or a tool call is
+emitted. Per-model reasoning-budget workarounds in the LM Studio UI are therefore not required by this fork.
+
+Run the observer with two terminals:
+
+```powershell
+dotnet run --project src/ModelsAndMonsters.Web/ModelsAndMonsters.Web.csproj
+```
+
+```powershell
+cd src/ModelsAndMonsters.Web/client
+npm run dev
+```
+
+Then open <http://localhost:5173/>. Ollama and the hosted providers remain available through configuration.
+
 Most of you will have heard of Dungeons & Dragons, or seen it on _Stranger Things_: a group of friends sat round a table, rolling dice and taking on imaginary adventures.
 
 I wanted to play with that idea. What would happen if I recreated it with every role played by an AI agent? Would the agents stick to the rules? Would they work together? Would their personalities affect their decisions? Would they even remember whose side they were on?

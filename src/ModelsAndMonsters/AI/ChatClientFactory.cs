@@ -53,6 +53,7 @@ public sealed class ChatClientFactory : IChatClientFactory
             ModelProvider.OpenAI => CreateOpenAIClient(profile, runId),
             ModelProvider.Anthropic => CreateAnthropicClient(profile, runId),
             ModelProvider.OpenRouter => CreateOpenRouterClient(profile, runId),
+            ModelProvider.LMStudio => CreateLMStudioClient(profile, runId),
             ModelProvider.UnslothStudio => CreateUnslothStudioClient(profile, runId),
             _ => throw new InvalidOperationException($"Unsupported provider '{profile.Provider}'.")
         };
@@ -242,6 +243,110 @@ public sealed class ChatClientFactory : IChatClientFactory
     }
 
     /// <summary>
+    /// Maps the harness reasoning control to LM Studio's OpenAI-compatible <c>reasoning_effort</c> value.
+    /// In particular, <c>none</c> prevents reasoning tokens from consuming the entire output allowance before
+    /// narration or a tool call is emitted.
+    /// </summary>
+    public static string? BuildLMStudioReasoningEffort(ReasoningEffort? effort) => effort switch
+    {
+        null => null,
+        ReasoningEffort.None => "none",
+        ReasoningEffort.Low => "low",
+        ReasoningEffort.Medium => "medium",
+        ReasoningEffort.High => "high",
+        ReasoningEffort.ExtraHigh => "max",
+        _ => null
+    };
+
+    /// <summary>Adds LM Studio's request-level reasoning control to a chat-completions JSON body.</summary>
+    public static bool TryInjectLMStudioReasoningEffort(
+        string requestBody,
+        string reasoningEffort,
+        out string modifiedBody)
+    {
+        modifiedBody = requestBody;
+
+        JsonNode? root;
+        try
+        {
+            root = JsonNode.Parse(requestBody);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+
+        if (root is not JsonObject body || !body.ContainsKey("messages"))
+        {
+            return false;
+        }
+
+        body["reasoning_effort"] = reasoningEffort;
+        modifiedBody = body.ToJsonString();
+        return true;
+    }
+
+    private sealed class LMStudioReasoningPolicy(string reasoningEffort) : PipelinePolicy
+    {
+        public override void Process(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
+        {
+            Inject(message);
+            ProcessNext(message, pipeline, currentIndex);
+        }
+
+        public override ValueTask ProcessAsync(
+            PipelineMessage message,
+            IReadOnlyList<PipelinePolicy> pipeline,
+            int currentIndex)
+        {
+            Inject(message);
+            return ProcessNextAsync(message, pipeline, currentIndex);
+        }
+
+        private void Inject(PipelineMessage message)
+        {
+            if (message.Request?.Content is not { } content)
+            {
+                return;
+            }
+
+            using var buffer = new MemoryStream();
+            content.WriteTo(buffer);
+            if (TryInjectLMStudioReasoningEffort(
+                    Encoding.UTF8.GetString(buffer.ToArray()), reasoningEffort, out var modified))
+            {
+                message.Request.Content = BinaryContent.Create(BinaryData.FromString(modified));
+            }
+        }
+    }
+
+    /// <summary>
+    /// LM Studio through its local OpenAI-compatible chat-completions endpoint. Authentication is optional;
+    /// the SDK still requires a credential object, so an inert local placeholder is used when auth is off.
+    /// </summary>
+    private IChatClient CreateLMStudioClient(AgentModelProfile profile, string? runId = null)
+    {
+        var endpoint = profile.Endpoint ?? _providers.LMStudio.Endpoint;
+        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri))
+        {
+            throw new InvalidOperationException(
+                $"Agent '{profile.AgentName}' has an invalid LM Studio endpoint '{endpoint}'.");
+        }
+
+        var clientOptions = new OpenAIClientOptions { Endpoint = uri };
+        clientOptions.AddPolicy(new VesselTagsPolicy(profile.AgentName, runId), PipelinePosition.PerCall);
+
+        if (BuildLMStudioReasoningEffort(profile.Effort) is { } effort)
+        {
+            clientOptions.AddPolicy(new LMStudioReasoningPolicy(effort), PipelinePosition.PerCall);
+        }
+
+        var apiKey = ResolveLMStudioApiKey() ?? "lm-studio-local";
+        var openAIClient = new OpenAIClient(new ApiKeyCredential(apiKey), clientOptions);
+        return openAIClient.GetChatClient(profile.ModelId).AsIChatClient();
+    }
+
+    /// <summary>
     /// Unsloth Studio through the OpenAI SDK's CHAT-COMPLETIONS client — the same pattern as OpenRouter, since
     /// Unsloth Studio (default <c>http://localhost:8888</c>) exposes an OpenAI-compatible endpoint alongside
     /// its Anthropic-compatible one. A bearer token is required (there is no unauthenticated local path the
@@ -390,6 +495,17 @@ public sealed class ChatClientFactory : IChatClientFactory
         }
 
         var variable = _providers.UnslothStudio.ApiKeyEnvironmentVariable;
+        return string.IsNullOrWhiteSpace(variable) ? null : Environment.GetEnvironmentVariable(variable);
+    }
+
+    private string? ResolveLMStudioApiKey()
+    {
+        if (!string.IsNullOrWhiteSpace(_providers.LMStudio.ApiKey))
+        {
+            return _providers.LMStudio.ApiKey;
+        }
+
+        var variable = _providers.LMStudio.ApiKeyEnvironmentVariable;
         return string.IsNullOrWhiteSpace(variable) ? null : Environment.GetEnvironmentVariable(variable);
     }
 

@@ -198,6 +198,11 @@ public static class ChatOptionsFactory
         // handled elsewhere, and genuinely takes effect.
         var openRouterHandlesEffortClientSide = profile.Provider == ModelProvider.OpenRouter;
 
+        // LM Studio's OpenAI-compatible chat endpoint accepts a top-level reasoning_effort field. The OpenAI
+        // SDK has no generic chat-completions property for it, so ChatClientFactory injects it at the transport
+        // boundary just as it does OpenRouter's provider-specific reasoning object.
+        var lmStudioHandlesEffortClientSide = profile.Provider == ModelProvider.LMStudio;
+
         // Unsloth Studio is reached through the same OpenAI chat-completions client as OpenRouter, which
         // cannot express reasoning effort on that path either (see the OpenRouter comment above) — and
         // unlike OpenRouter there is no per-provider `reasoning` object to inject client-side, since it
@@ -234,6 +239,10 @@ public static class ChatOptionsFactory
             else if (openRouterHandlesEffortClientSide)
             {
                 // no-op
+            }
+            else if (lmStudioHandlesEffortClientSide)
+            {
+                // no-op: applied by ChatClientFactory's LM Studio request policy
             }
             // Unsloth Studio has no such policy, so a raised effort is dropped-and-reported; None needs
             // nothing sent, so it is omitted.

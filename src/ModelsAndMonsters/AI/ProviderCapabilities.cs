@@ -166,6 +166,27 @@ public sealed record ProviderCapabilities
             SilentlyTruncatesHistory = false
         },
 
+        // LM Studio serves llama.cpp-backed models through an OpenAI-compatible chat endpoint. The standard
+        // request shape supports sampling, seeds, tools and schema-constrained JSON. Its model context is set
+        // when the model is loaded rather than on each chat request; the harness still enforces the configured
+        // window before sending. LM Studio can truncate overflowing prompts, so preserve truncation detection.
+        ModelProvider.LMStudio => new ProviderCapabilities
+        {
+            SupportsTemperature = true,
+            SupportsTopP = true,
+            SupportsTopK = false,
+            SupportsMaxOutputTokens = true,
+            SupportsSeed = true,
+            SupportsContextWindow = false,
+            SupportsThinkingToggle = false,
+            SupportsForcedToolChoice = true,
+            AllowsTemperatureAndTopPTogether = true,
+            SupportsPenalties = true,
+            SupportsRepeatPenalty = false,
+            SupportsStructuredOutputSchema = true,
+            SilentlyTruncatesHistory = true
+        },
+
         // Unsloth Studio is reached through the OpenAI chat-completions client, exactly like OpenRouter, so
         // its capability shape mirrors OpenRouter's. It is a single local server rather than a zoo of
         // backends, but nothing here can tell which model is actually loaded, so the same conservative
