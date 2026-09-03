@@ -282,16 +282,18 @@ public sealed class TurnCoordinator
         // would on a turn they had actually taken.
         if (startUpkeep.ActorIncapacitated)
         {
+            var incapacity = _engine.State.StatusOn(character.CharacterId, StatusEffectKind.Sleeping) is not null
+                ? "asleep" : "stunned and reeling";
             _trace.Emit(TraceEventType.TurnSkipped, new TurnSkippedPayload
             {
                 CharacterId = character.CharacterId,
                 CharacterName = character.Name,
                 Team = self.Team,
-                Reason = $"{character.Name} is stunned and reeling, and loses the turn.",
+                Reason = $"{character.Name} is {incapacity}, and loses the turn.",
                 Disposition = self.Disposition.ToString()
             });
 
-            _console.Notice($"{character.Name} is stunned and reeling, and can do nothing this turn.");
+            _console.Notice($"{character.Name} is {incapacity}, and can do nothing this turn.");
 
             ApplyUpkeep(_engine.EndActorTurn(character.CharacterId, round, turn), "turn-end", character.Name);
 
@@ -1549,6 +1551,7 @@ public sealed class TurnCoordinator
             DemandSurrenderOutcome demand => await DeliverDemandAsync(character, demand, cancellationToken).ConfigureAwait(false),
             AcceptSurrenderOutcome accepted => await DeliverAcceptedSurrenderAsync(character, accepted, engineResult, cancellationToken).ConfigureAwait(false),
             GuardAllyOutcome guard => await DeliverAbilityOutcomeAsync(character, guard, "ability-guard-ally", cancellationToken).ConfigureAwait(false),
+            SpellEffectOutcome spell => await DeliverAbilityOutcomeAsync(character, spell, "ability-spell", cancellationToken).ConfigureAwait(false),
             HealingPrayerOutcome heal => await DeliverAbilityOutcomeAsync(character, heal, "ability-healing-prayer", cancellationToken).ConfigureAwait(false),
             RallyOutcome rally => await DeliverAbilityOutcomeAsync(character, rally, "ability-rally", cancellationToken).ConfigureAwait(false),
             DefendOutcome defend => await DeliverAbilityOutcomeAsync(character, defend, "combat-defend", cancellationToken).ConfigureAwait(false),
@@ -1617,6 +1620,11 @@ public sealed class TurnCoordinator
         {
             narration = engineResult.Outcome!.Summary;
         }
+
+        // Never feed a model-invented wound back into the party's memories after a harmless attack.
+        // The authoritative summary also preserves cover damage and other real secondary effects.
+        if (engineResult.Outcome is AttackOutcome { DamageDealt: 0 } harmless)
+            narration = harmless.Summary + $" {harmless.TargetName} suffered no injury from this attack.";
 
         // A lethal blow is a disposition change (Active -> Dead), recorded alongside surrender and escape so
         // every way a character leaves active combat shares one auditable event trail.
@@ -3923,6 +3931,7 @@ public sealed class TurnCoordinator
         var target = engineResult.Outcome switch
         {
             GuardAllyOutcome guard => (guard.AllyId, guard.AllyName),
+            SpellEffectOutcome spell => (spell.TargetId, spell.TargetName),
             HealingPrayerOutcome heal => (heal.TargetId, heal.TargetName),
             RallyOutcome rally => (rally.AllyId, rally.AllyName),
             DefendOutcome defend => (defend.ActorId, defend.ActorName),

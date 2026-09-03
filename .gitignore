@@ -1,5 +1,6 @@
 bin/
 obj/
+TestResults/
 
 # Experiment output. Runs are reproducible artefacts, not source.
 runs/

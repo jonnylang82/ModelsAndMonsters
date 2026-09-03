@@ -75,14 +75,14 @@ public static class DungeonMasterTools
 
     public static readonly AIFunctionDeclaration UseItem = AIFunctionFactory.CreateDeclaration(
         UseItemName,
-        "Resolve a character using an item from their own inventory on themselves — drinking a healing item (which is consumed), or attuning to a focus item to rekindle one of their own spent abilities (which is not consumed).",
+        "Use a carried healing item on yourself or a named living companion (consumed), or a recharging focus on yourself to restore a spent ability (not consumed). Merely holding an item ready is not use.",
         ToolSchema.Parse($$"""
         {
           "type": "object",
           "properties": {
             "{{ActorParameter}}": { "type": "string", "description": "Name of the character using the item, exactly as given in the authoritative state." },
             "{{ItemParameter}}":  { "type": "string", "description": "Name of the item, exactly as given in that character's inventory." },
-            "{{TargetParameter}}": { "type": "string", "description": "Optional. Only the character using the item is supported." }
+            "{{TargetParameter}}": { "type": "string", "description": "Optional; defaults to self. Healing may name a living present ally. Recharging focuses are self-only." }
           },
           "required": ["{{ActorParameter}}", "{{ItemParameter}}"]
         }

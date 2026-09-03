@@ -464,7 +464,7 @@ public sealed class SurrenderNegotiationEngineTests
     [Fact]
     public void Consuming_a_promised_item_invalidates_the_pending_offer_at_once()
     {
-        var engine = Engine();
+        var engine = Engine(characters: [TestWorld.RowanV07(), TestWorld.ElaraV07(), TestWorld.VarkV07(health: 6), TestWorld.SkritV07()]);
         var offer = engine.Execute(new OfferSurrenderAction("Vark", "Rowan", ["goblin-salve"], ForfeitWeapon: false));
 
         var used = engine.Execute(new UseItemAction("Vark", "goblin-salve"));

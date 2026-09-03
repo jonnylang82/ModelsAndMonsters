@@ -30,7 +30,7 @@ namespace ModelsAndMonsters.Engine;
 /// none can be created by a model.
 /// </para>
 /// </remarks>
-public sealed class GameEngine : IGameEngine
+public sealed partial class GameEngine : IGameEngine
 {
     private readonly IRng _rng;
     private readonly CombatRules _combatRules;
@@ -70,6 +70,25 @@ public sealed class GameEngine : IGameEngine
     public EngineResult Execute(GameAction action)
     {
         ArgumentNullException.ThrowIfNull(action);
+
+        var actingRef = action switch
+        {
+            AttackCharacterAction a => a.AttackerRef, UseItemAction a => a.ActorRef,
+            OpenContainerAction a => a.ActorRef, TakeItemAction a => a.ActorRef,
+            InspectObjectAction a => a.ActorRef, OpenExitAction a => a.ActorRef,
+            EscapeEncounterAction a => a.ActorRef, OfferSurrenderAction a => a.OffererRef,
+            AcceptSurrenderAction a => a.RecipientRef, DemandSurrenderAction a => a.DemanderRef,
+            UseAbilityAction a => a.ActorRef, DefendAction a => a.ActorRef,
+            GiveItemAction a => a.GiverRef, PresentItemAction a => a.ActorRef,
+            DropItemAction a => a.ActorRef, StealItemAction a => a.ThiefRef,
+            IntimidateCharacterAction a => a.ActorRef, SteadyAllyAction a => a.ActorRef,
+            TakeCoverAction a => a.ActorRef, LeaveCoverAction a => a.ActorRef,
+            DamageEnvironmentalObjectAction a => a.ActorRef, _ => null
+        };
+        if (actingRef is not null && _state.Resolve(actingRef) is { } acting &&
+            _state.StatusOn(acting.Id, StatusEffectKind.Sleeping) is not null)
+            return EngineResult.Reject(action, _state, EngineRejectionReason.ActorNotActive,
+                $"{acting.Name} is asleep and cannot act until awakened.");
 
         var result = action switch
         {
@@ -595,12 +614,12 @@ public sealed class GameEngine : IGameEngine
         CurrentRound = round;
         CurrentTurn = turn;
 
-        var due = _state.Statuses.Where(status => status.AppliedTurn < turn && status.ExpiryRule switch
+        var due = _state.Statuses.Where(status => status.ExpiresAtRound <= round || (status.AppliedTurn < turn && status.ExpiryRule switch
         {
             StatusExpiryRule.StartOfSourceNextTurn => Same(status.SourceCharacterId, actorId),
             StatusExpiryRule.StartOfTargetNextTurn => Same(status.TargetCharacterId, actorId),
             _ => false
-        }).ToList();
+        })).ToList();
 
         var events = new List<StatusEvent>();
         var state = ExpireStatuses(_state, due, "reached its expiry at the start of the holder's next turn", events);
@@ -609,10 +628,11 @@ public sealed class GameEngine : IGameEngine
         // the turn clock (WhileConditionHolds, so it is not in `due` above); it is consumed HERE, in the same
         // breath that it costs the turn, so a stun is worth exactly one skipped turn and no more. The character
         // stays alive, present and a valid target — only the turn is taken.
-        var incapacitated = false;
+        var incapacitated = state.StatusOn(actorId, StatusEffectKind.Sleeping) is not null;
         var stun = state.StatusesOn(actorId).FirstOrDefault(s => s.Kind == StatusEffectKind.Stunned && s.AppliedTurn < turn);
         if (stun is not null)
         {
+            state = EndConcentration(state, actorId, "caster is incapacitated", events);
             var name = state.FindById(actorId)?.Name ?? actorId;
             state = state.WithoutStatuses([stun.Id]);
             events.Add(new StatusEvent(StatusEventKind.Consumed, stun with { Consumed = true },
@@ -832,6 +852,10 @@ public sealed class GameEngine : IGameEngine
         }
 
         var baseHitChance = attacker.HitChance;
+        if (state.StatusOn(target.Id, StatusEffectKind.FaerieFire) is { } outlined)
+            modifiers.Add(new RngModifier("FaerieFire", outlined.SourceCharacterId, 15, order++, Consumed: false));
+        if (state.StatusOn(target.Id, StatusEffectKind.Sleeping) is { } sleepingTarget)
+            modifiers.Add(new RngModifier("Sleeping", sleepingTarget.SourceCharacterId, 15, order++, Consumed: false));
         var preCoverEffectiveHitChance = Math.Clamp(baseHitChance + modifiers.Sum(m => m.Value), 0, 100);
         var healthBefore = target.Health;
 
@@ -918,6 +942,7 @@ public sealed class GameEngine : IGameEngine
         var quality = AttackQuality.Solid;
         var baseDamage = 0;
         var damage = 0;
+        var radiantDamage = 0;
         var defendReduction = 0;
         var healthAfter = healthBefore;
         var died = false;
@@ -956,6 +981,11 @@ public sealed class GameEngine : IGameEngine
             // Magical fire ignores armour entirely (Firebolt); every other blow is reduced by it as usual.
             baseDamage = ignoresArmour ? weapon.Damage : Math.Max(0, weapon.Damage - target.Armour);
             damage = CombatRules.DamageFor(quality, baseDamage);
+            if (!ignoresArmour && state.StatusOn(attacker.Id, StatusEffectKind.DivineFavor) is not null)
+            {
+                radiantDamage = SpellDie(action, attacker, target, 4, "spell.divine-favor-damage", draws);
+                damage += radiantDamage;
+            }
 
             // Defending applies last: after armour and after glancing, never below zero, and consumed by any
             // blow that lands — including one that armour had already reduced to nothing.
@@ -1015,10 +1045,12 @@ public sealed class GameEngine : IGameEngine
             changed = true;
         }
 
+        after = SpellDamageUpkeep(after, action, target, damage, statusEvents, draws);
+
         // ---- Morale. A blow that frightens does so exactly once, whatever combination of reasons applies:
         // a critical hit that ALSO took a quarter of the target's health is one terrifying blow, not two.
         // A dead target is never frightened; there is nobody left to frighten. ----
-        if (hit && !died)
+        if (hit && damage > 0 && !died)
         {
             var large = damage >= FearRules.LargeHitThreshold(target.MaxHealth) && damage > 0;
             var critical = quality == AttackQuality.Critical;
@@ -1042,7 +1074,7 @@ public sealed class GameEngine : IGameEngine
 
         // Landing a critical blow steadies the one who landed it, whether or not it killed. This is the
         // counterplay to fear: a frightened character can fight their way back out of it.
-        if (hit && quality == AttackQuality.Critical)
+        if (hit && damage > 0 && quality == AttackQuality.Critical)
         {
             var attackerBefore = after.FindById(attacker.Id);
             if (attackerBefore is { Fear: > FearRules.Minimum })
@@ -1089,6 +1121,7 @@ public sealed class GameEngine : IGameEngine
                 var stunned = NewStatus(StatusEffectKind.Stunned, attacker.Id, target.Id,
                     0, StatusExpiryRule.WhileConditionHolds, ability.Id);
                 after = after.WithStatus(stunned);
+                after = EndConcentration(after, target.Id, "caster was stunned", statusEvents);
                 statusEvents.Add(new StatusEvent(StatusEventKind.Applied, stunned,
                     $"{attacker.Name} left {target.Name} reeling and stunned with {ability.Name}"));
                 changed = true;
@@ -1157,6 +1190,7 @@ public sealed class GameEngine : IGameEngine
             Quality = quality,
             BaseDamage = baseDamage,
             DamageDealt = damage,
+            RadiantDamage = radiantDamage,
             DefendReduction = defendReduction,
             TargetHealthBefore = healthBefore,
             TargetHealthAfter = healthAfter,
@@ -1220,22 +1254,12 @@ public sealed class GameEngine : IGameEngine
             return RejectInactiveActor(action, state, actor);
         }
 
-        // v0.1 only supports using an item on oneself.
-        if (!string.IsNullOrWhiteSpace(action.TargetRef))
-        {
-            var target = state.Resolve(action.TargetRef);
-            if (target is null)
-            {
-                return EngineResult.Reject(action, state, EngineRejectionReason.UnknownTarget,
-                    $"There is no character called '{action.TargetRef}' in the room.");
-            }
-
-            if (!Same(target.Id, actor.Id))
-            {
-                return EngineResult.Reject(action, state, EngineRejectionReason.ItemTargetNotSupported,
-                    "The engine can only apply an item to the character using it. Using items on other characters is not supported.");
-            }
-        }
+        var target = string.IsNullOrWhiteSpace(action.TargetRef) ? actor : state.Resolve(action.TargetRef);
+        if (target is null)
+            return EngineResult.Reject(action, state, EngineRejectionReason.UnknownTarget, "That recipient is not here.");
+        if (!target.CanAct || !target.IsPresent || (!Same(target.Id, actor.Id) && !actor.IsAllyOf(target)))
+            return EngineResult.Reject(action, state, EngineRejectionReason.ItemTargetNotSupported,
+                "A healing item can be administered only to yourself or a living, active, present companion.");
 
         var (item, ambiguousItem) = actor.ResolveItem(action.ItemRef);
         if (ambiguousItem)
@@ -1253,6 +1277,9 @@ public sealed class GameEngine : IGameEngine
         // repeatable turn whose only cost is the turn itself.
         if (item.IsFocusItem)
         {
+            if (!Same(target.Id, actor.Id))
+                return EngineResult.Reject(action, state, EngineRejectionReason.ItemTargetNotSupported,
+                    "A recharging focus restores only its user's own power.");
             return ResolveFocusItem(action, state, actor, item);
         }
 
@@ -1263,16 +1290,23 @@ public sealed class GameEngine : IGameEngine
         }
 
         var healing = item.HealingAmount!.Value;
-        var healthBefore = actor.Health;
-        var healthAfter = Math.Min(actor.MaxHealth, healthBefore + healing);
+        if (target.Health >= target.MaxHealth)
+            return EngineResult.Reject(action, state, EngineRejectionReason.TargetAlreadyAtFullHealth,
+                $"{target.Name} is already unhurt; keep the item for a wound.");
+        var healthBefore = target.Health;
+        var healthAfter = Math.Min(target.MaxHealth, healthBefore + healing);
 
         var updatedActor = actor with
         {
-            Health = healthAfter,
             Inventory = RemoveFirst(actor, item)
         };
 
-        var after = state.WithCharacter(updatedActor) with { Version = state.Version + 1 };
+        var after = state.WithCharacter(updatedActor);
+        after = after.WithCharacter(after.RequireById(target.Id) with { Health = healthAfter });
+        var itemStatusEvents = new List<StatusEvent>();
+        if (!Same(target.Id, actor.Id))
+            after = ApplyExposure(after, ExposeIfInCover(state, actor.Id), "reached out to administer a healing item", itemStatusEvents);
+        after = after with { Version = state.Version + 1 };
 
         // Consuming an item that was promised in a pending surrender offer makes that offer unenforceable.
         var transitions = new List<OfferTransition>();
@@ -1284,12 +1318,14 @@ public sealed class GameEngine : IGameEngine
             ActorName = actor.Name,
             ItemName = item.DisplayName,
             HealingAmount = healing,
+            TargetId = target.Id,
+            TargetName = target.Name,
             HealthBefore = healthBefore,
             HealthAfter = healthAfter,
-            MaxHealth = actor.MaxHealth
+            MaxHealth = target.MaxHealth
         };
 
-        return EngineResult.Accept(action, state, after, outcome, offerTransitions: transitions);
+        return EngineResult.Accept(action, state, after, outcome, statusEvents: itemStatusEvents, offerTransitions: transitions);
     }
 
     /// <summary>
@@ -1737,7 +1773,7 @@ public sealed class GameEngine : IGameEngine
 
         // Defend is a plain combat option everybody has, so it needs no entry on a character's ability list.
         var held = actor.FindAbility(definition.Id);
-        if (held is null && definition.EffectKind != AbilityEffectKind.Defend)
+        if (held is null && definition.EffectKind is not (AbilityEffectKind.Defend or AbilityEffectKind.Wake))
         {
             return EngineResult.Reject(action, state, EngineRejectionReason.AbilityNotHeld,
                 $"{actor.Name} has never learned {definition.InWorldName}.");
@@ -1759,6 +1795,9 @@ public sealed class GameEngine : IGameEngine
 
         return definition.EffectKind switch
         {
+            AbilityEffectKind.Sleep or AbilityEffectKind.Wake or AbilityEffectKind.HealingWord or
+                AbilityEffectKind.FaerieFire or AbilityEffectKind.DivineFavor =>
+                ResolveCouncilSpell(action, state, actor, target, definition, held),
             AbilityEffectKind.GuardAlly => ResolveGuardAlly(action, state, actor, target, definition, held),
             AbilityEffectKind.Heal => ResolveHealingAbility(action, state, actor, target, definition, held),
             AbilityEffectKind.Rally => ResolveRally(action, state, actor, target, definition, held),
@@ -3121,7 +3160,8 @@ public sealed class GameEngine : IGameEngine
         var changed = false;
 
         var affected = state.Statuses
-            .Where(s => Same(s.TargetCharacterId, characterId) || Same(s.SourceCharacterId, characterId))
+            .Where(s => Same(s.TargetCharacterId, characterId) ||
+                (Same(s.SourceCharacterId, characterId) && s.Kind != StatusEffectKind.Sleeping))
             .ToList();
 
         if (affected.Count > 0)

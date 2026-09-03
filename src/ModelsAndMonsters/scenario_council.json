@@ -7,7 +7,7 @@
       {
         "Id": "rescue-deacon",
         "Title": "Rescue Deacon",
-        "Description": "Secure the archive by defeating the wardens or accepting their surrender. The detention gate then opens. Get Deacon safely out through the Village Stair."
+        "Description": "Get Deacon safely out through the Village Stair. Establish Council identity and negotiate the wardens standing down, or overcome them if you choose. Accepting their surrender or defeating them unlocks detention."
       }
     ],
     "Rescue": { "DetaineeId": "hero-deacon", "GuardTeam": "Wardens", "ExitId": "village-stair" },
@@ -76,6 +76,10 @@
     "Characters": [
       {
         "Id": "hero-nema",
+        "SpellcastingModifier": 3,
+        "SpellSaveDC": 13,
+        "DexteritySaveModifier": 3,
+        "ConstitutionSaveModifier": 1,
         "Name": "Nema Mistsong",
         "Role": "Hero",
         "Team": "Heroes",
@@ -87,7 +91,7 @@
         "Inventory": [
           { "Id": "nema-healing-potion", "Name": "Nema's Healing Potion", "Description": "A stoppered red potion carried for emergencies.", "HealingAmount": 4 }
         ],
-        "Abilities": ["rally-grunt"],
+        "Abilities": ["rally-grunt", "sleep"],
         "Persona": {
           "Backstory": "You are Nema Mistsong, a human bard and entertainer. You and Mirabel survived the streets together as children: you drew every eye with music while she investigated unattended purses. She is your sister in every way that matters. You met Pipix and Scott during the tavern brawl that ended with Mirabel unconscious, four poachers down and a repair bill nobody paid. Your pan flute can focus a companion through noise and fear. You came below the village because the impossible bell-tone fascinated you, not because anyone assigned you a role.",
           "Personality": "Friendly, curious and quick. Follow whatever detail genuinely catches your attention. Talk like a person in the room: react, interrupt when it matters, ask short questions, joke when it comes naturally, and do not recap what everybody just said. Everyone in this engine is already within reach, so never spend time asking where people are standing or how far away they are.",
@@ -98,6 +102,7 @@
       },
       {
         "Id": "hero-mirabel",
+        "DexteritySaveModifier": 5,
         "Name": "Mirabel Tipton",
         "Role": "Hero",
         "Team": "Heroes",
@@ -120,6 +125,9 @@
       },
       {
         "Id": "hero-emma",
+        "SpellcastingModifier": 2,
+        "SpellSaveDC": 12,
+        "DexteritySaveModifier": 1,
         "Name": "Emma Nightveil",
         "Role": "Hero",
         "Team": "Heroes",
@@ -142,6 +150,10 @@
       },
       {
         "Id": "hero-pipix",
+        "SpellcastingModifier": 3,
+        "SpellSaveDC": 13,
+        "ConstitutionSaveModifier": 1,
+        "ImmuneToSleep": true,
         "Name": "Pipix Thistlegrin",
         "Role": "Hero",
         "Team": "Heroes",
@@ -153,7 +165,7 @@
         "Inventory": [
           { "Id": "pipix-alchemy-kit", "Name": "Pipix's Alchemy Kit", "Description": "Tiny labelled bottles, folded tools and several unlabeled seeds." }
         ],
-        "Abilities": ["healing-prayer"],
+        "Abilities": ["healing-word", "faerie-fire"],
         "Persona": {
           "Backstory": "You are Pipix Thistlegrin, an elven druid and wizardly scholar who treats nature and arcane magic as two languages describing the same truth. You care deeply for living things and are alarmingly willing to injure anyone who harms them. You met Scott when poachers bragged about skinning a living animal: you crossed the tavern and Scott joyfully joined the resulting brawl. You later tended the unconscious Mirabel together. Scott never expects you to be serene, and you never expect him to be a symbol. You can speak a short healing charm once during the encounter.",
           "Personality": "Warm, precise and quietly funny. You enjoy useful details but do not lecture unless somebody asks. Respond to the actual moment instead of summarising the conversation.",
@@ -164,6 +176,10 @@
       },
       {
         "Id": "hero-scott",
+        "SpellcastingModifier": 3,
+        "SpellSaveDC": 13,
+        "DexteritySaveModifier": 3,
+        "ConstitutionSaveModifier": 2,
         "Name": "Scott Suncrest",
         "Role": "Hero",
         "Team": "Heroes",
@@ -175,7 +191,7 @@
         "Inventory": [
           { "Id": "scott-field-bandage", "Name": "Scott's Field Bandage", "Description": "A soldier's clean bandage and bitter coagulant.", "HealingAmount": 3 }
         ],
-        "Abilities": ["guard-ally"],
+        "Abilities": ["guard-ally", "divine-favor"],
         "Persona": {
           "Backstory": "You are Scott Suncrest, an aasimar paladin and former soldier who grew tired of other people treating celestial blood as permission to decide what man you must be. During the Ashen Concord you fought Emma Nightveil from the opposite side, repeatedly and with suspiciously survivable results. You call the flirting tactical. You met Pipix in a tavern brawl over poachers and Mirabel while she was cutting your purse. You thought both were excellent introductions. You carry a shield and longsword and can spend a turn putting yourself between a companion and the next attack meant for them.",
           "Personality": "Friendly, optimistic and energetic without being oblivious. You look for a path forward and enjoy the adventure. Speak naturally; a grin or quick joke is welcome, a motivational speech every turn is not.",
@@ -186,6 +202,10 @@
       },
       {
         "Id": "hero-deacon",
+        "SpellcastingModifier": 2,
+        "SpellSaveDC": 13,
+        "DexteritySaveModifier": 6,
+        "ConstitutionSaveModifier": 3,
         "Name": "Deacon",
         "Role": "Hero",
         "Team": "Heroes",
@@ -209,6 +229,10 @@
       },
       {
         "Id": "warden-iron",
+        "ImmuneToSleep": true,
+        "IsConstructOrUndead": true,
+        "DexteritySaveModifier": -1,
+        "ConstitutionSaveModifier": 3,
         "Name": "The Iron Curator",
         "Role": "Monster",
         "Team": "Wardens",
@@ -229,6 +253,8 @@
       },
       {
         "Id": "warden-inkling",
+        "IsConstructOrUndead": true,
+        "DexteritySaveModifier": 2,
         "Name": "Smut",
         "Role": "Monster",
         "Team": "Wardens",

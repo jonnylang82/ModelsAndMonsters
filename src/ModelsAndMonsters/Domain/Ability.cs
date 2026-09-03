@@ -56,7 +56,12 @@ public enum AbilityEffectKind
     /// Performs one ordinary weapon attack and, on a hit, applies <see cref="StatusEffectKind.Stunned"/> —
     /// damaging the target and costing them their entire next turn (v0.11). Once per encounter.
     /// </summary>
-    StrikeAndStun
+    StrikeAndStun,
+    Sleep,
+    Wake,
+    HealingWord,
+    FaerieFire,
+    DivineFavor
 }
 
 /// <summary>Who an ability may be used on. Validated authoritatively by the engine.</summary>
@@ -287,7 +292,7 @@ public static class AbilityCatalog
         Description =
             "A snapped word and a hurled bolt of fire that scorches one enemy — magic, so it burns straight " +
             "through armour as if it were not there, and lands hard enough to stagger all but the hardiest. It " +
-            "can be loosed once in an encounter and no more, so choosing the moment is the whole of the art. It " +
+            "uses one charge. If you carry a recharging focus, spend a turn using it to restore a spent charge. It " +
             "reaches only an enemy still in the fight and, like any thrown blow, it can be turned aside by solid " +
             "cover or simply go wide.",
         TargetRule = AbilityTargetRule.Opponent,
@@ -338,8 +343,31 @@ public static class AbilityCatalog
     };
 
     /// <summary>Every ability the engine can resolve, in a stable order.</summary>
+    public static readonly AbilityDefinition Sleep = Spell("sleep", "Sleep", AbilityEffectKind.Sleep,
+        AbilityTargetRule.Opponent, "Lull one chosen opponent to sleep without injuring them, if a roll of five eight-sided dice covers their current health. The slumber lasts ten rounds, ends on damage or when someone shakes them awake, and does not release a prisoner or count as surrender. Undead and sleep-immune creatures are unaffected. This encounter adapts the area spell to one target.");
+    public static readonly AbilityDefinition HealingWord = Spell("healing-word", "Healing Word", AbilityEffectKind.HealingWord,
+        AbilityTargetRule.SelfOrAlly, "Speak a healing word over yourself or one living companion. Restores a four-sided die plus your spellcasting modifier in health. Cannot heal constructs, undead or the dead. Here it costs your whole turn, not a bonus action.");
+    public static readonly AbilityDefinition FaerieFire = Spell("faerie-fire", "Faerie Fire", AbilityEffectKind.FaerieFire,
+        AbilityTargetRule.Opponent, "Outline one opponent in light unless they resist with Dexterity. Attacks against them have a better chance to hit while you concentrate, up to ten rounds. Here the area spell affects one target and the advantage is a fifteen-point hit-chance bonus. Taking damage may break concentration; another concentration spell replaces it.");
+    public static readonly AbilityDefinition DivineFavor = Spell("divine-favor", "Divine Favor", AbilityEffectKind.DivineFavor,
+        AbilityTargetRule.SelfOnly, "Bless your weapon attacks with an extra four-sided die of radiant damage on a hit, while concentrating for up to ten rounds. Does not empower spell attacks. Here casting costs your whole turn. Taking damage may break concentration; another concentration spell replaces it.");
+    public static readonly AbilityDefinition Wake = new()
+    {
+        Id = "wake", Name = "Wake Sleeper", InWorldName = "shaking a sleeping companion awake",
+        Category = AbilityCategory.BasicAction, EffectKind = AbilityEffectKind.Wake,
+        TargetRule = AbilityTargetRule.OtherAlly, MaxUsesPerEncounter = null, RuleId = "ability.wake",
+        Description = "Spend your turn shaking one sleeping companion awake without harming them. This does not heal, revive the dead or release detention."
+    };
+
+    private static AbilityDefinition Spell(string id, string name, AbilityEffectKind effect, AbilityTargetRule target, string description) => new()
+    {
+        Id = id, Name = name, InWorldName = $"casting {name}", Category = AbilityCategory.Spell,
+        EffectKind = effect, TargetRule = target, Description = description,
+        MaxUsesPerEncounter = 1, RuleId = $"ability.{id}"
+    };
+
     public static readonly ImmutableArray<AbilityDefinition> All =
-        [GuardAlly, HealingPrayer, RallyGrunt, DirtyStrike, Firebolt, Stun, Defend];
+        [GuardAlly, HealingPrayer, RallyGrunt, DirtyStrike, Firebolt, Stun, Defend, Sleep, HealingWord, FaerieFire, DivineFavor, Wake];
 
     private static readonly Dictionary<string, AbilityDefinition> ById =
         All.ToDictionary(a => a.Id, StringComparer.OrdinalIgnoreCase);

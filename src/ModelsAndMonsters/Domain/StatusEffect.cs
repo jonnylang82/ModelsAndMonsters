@@ -46,7 +46,10 @@ public enum StatusEffectKind
     /// exactly one turn and no more. The holder stays alive, present and a valid target throughout: being
     /// stunned takes the turn, not the character.
     /// </summary>
-    Stunned
+    Stunned,
+    Sleeping,
+    FaerieFire,
+    DivineFavor
 }
 
 /// <summary>
@@ -97,6 +100,8 @@ public enum StatusVisibility
 /// </remarks>
 public sealed record StatusEffectInstance
 {
+    public int? ExpiresAtRound { get; init; }
+    public bool RequiresConcentration { get; init; }
     public required string Id { get; init; }
 
     public required StatusEffectKind Kind { get; init; }
@@ -143,6 +148,9 @@ public sealed record StatusEffectInstance
     /// </summary>
     public string ShortLabel => Kind switch
     {
+        StatusEffectKind.Sleeping => "asleep",
+        StatusEffectKind.FaerieFire => "outlined in light",
+        StatusEffectKind.DivineFavor => "divine favor",
         StatusEffectKind.Guarding => "guarding an ally",
         StatusEffectKind.Guarded => "guarded by an ally",
         StatusEffectKind.Rallied => "rallied",
@@ -157,6 +165,9 @@ public sealed record StatusEffectInstance
     /// <summary>A short human-readable line for prompts, traces and the observer UI.</summary>
     public string Describe() => Kind switch
     {
+        StatusEffectKind.Sleeping => "asleep — cannot act; damage or a companion's waking action ends the slumber",
+        StatusEffectKind.FaerieFire => "outlined in light — attacks against this target are easier while the caster concentrates",
+        StatusEffectKind.DivineFavor => "divine favor — weapon hits add radiant damage while concentrating",
         StatusEffectKind.Guarding => "guarding an ally — the next enemy blow aimed at them lands on this character instead",
         StatusEffectKind.Guarded => "guarded by an ally — the next enemy blow aimed at this character is taken by the guardian",
         StatusEffectKind.Rallied => $"rallied — next attack is {Modifier:+#;-#;0} to land",

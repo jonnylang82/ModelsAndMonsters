@@ -197,6 +197,12 @@ public static class ScenarioFactory
             Disposition = startingDisposition,
             Armour = Math.Max(0, definition.Armour),
             HitChance = Math.Clamp(definition.HitChance, 0, 100),
+            SpellcastingModifier = Math.Clamp(definition.SpellcastingModifier, -5, 10),
+            SpellSaveDC = Math.Clamp(definition.SpellSaveDC, 1, 30),
+            DexteritySaveModifier = Math.Clamp(definition.DexteritySaveModifier, -5, 20),
+            ConstitutionSaveModifier = Math.Clamp(definition.ConstitutionSaveModifier, -5, 20),
+            ImmuneToSleep = definition.ImmuneToSleep,
+            IsConstructOrUndead = definition.IsConstructOrUndead,
             Fear = FearRules.Clamp(definition.Fear),
             Weapon = ToWeapon(definition),
             Inventory = [.. definition.Inventory.Select(ToItem)],
@@ -252,6 +258,7 @@ public static class ScenarioFactory
             abilities.Add(CharacterAbility.From(AbilityCatalog.Defend));
         }
 
+        if (!abilities.Any(a => a.AbilityId == "wake")) abilities.Add(CharacterAbility.From(AbilityCatalog.Wake));
         return [.. abilities];
     }
 

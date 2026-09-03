@@ -795,7 +795,7 @@ public sealed class WorldStateFormatter
 
         if (item.IsFocusItem)
         {
-            return $"{item.DisplayName} (a focus crystal: ONCE one of your own powers is spent, a whole turn spent attuning to it draws that power back; not used up, and useless while your powers are still ready)";
+            return $"{item.DisplayName} (recharging focus: use it for a whole turn to restore one spent power; reusable, but does nothing while all powers are ready)";
         }
 
         return item.HealingAmount is { } healing ? $"{item.DisplayName} (restores {healing} health)" : item.DisplayName;

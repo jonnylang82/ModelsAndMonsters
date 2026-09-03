@@ -12,6 +12,14 @@ namespace ModelsAndMonsters.Domain;
 /// </remarks>
 public sealed record Character
 {
+    // Scenario-authored spell statistics; never supplied by an acting model.
+    public int SpellcastingModifier { get; init; }
+    public int SpellSaveDC { get; init; } = 12;
+    public int DexteritySaveModifier { get; init; }
+    public int ConstitutionSaveModifier { get; init; }
+    public bool ImmuneToSleep { get; init; }
+    public bool IsConstructOrUndead { get; init; }
+
     public required string Id { get; init; }
 
     public required string Name { get; init; }

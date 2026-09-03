@@ -280,7 +280,7 @@ public sealed class CoverEngineTests
     [Fact]
     public void Defending_and_using_an_item_on_oneself_do_not_break_cover()
     {
-        var engine = Engine(characters: [TestWorld.Elara(inventory: [TestWorld.HealingPotion()])]);
+        var engine = Engine(characters: [TestWorld.Elara(health: 6, inventory: [TestWorld.HealingPotion()])]);
         Assert.True(engine.Execute(new TakeCoverAction("Elara", TestWorld.WorkbenchId)).Accepted);
 
         Assert.True(engine.Execute(new UseAbilityAction("Elara", AbilityCatalog.DefendId)).Accepted);

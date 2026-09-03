@@ -14,7 +14,7 @@ public sealed class RulebookRetrievalTests
     private static readonly RuleCatalog Catalog = new();
 
     // Comfortably above the current catalog, matching the shipped defaults.
-    private const int Ceiling = 32;
+    private const int Ceiling = 40;
     private const int CharCeiling = 32000;
 
     [Fact]

@@ -76,6 +76,35 @@ The complete corrected character sheets—including Deacon's future Guest charac
 mechanical vocabulary; for example, D&D armour class is mapped to the engine's 0–3 damage-reduction scale rather
 than copied as literal armour.
 
+### Rulebook-informed spells and encounter tuning — September 2, 2026
+
+The default cap is now **20 rounds**. Characters are no longer instructed to treat everyone outside
+their party as a target, and can ask one question before committing to an action. Scott's self-defense
+lookup also supplies Guard Ally, so protecting a named companion can be distinguished from self-defense.
+An attack doing zero damage now feeds the actual engine result back to the party instead of an invented
+wound; harmless criticals no longer generate injury-related morale changes.
+
+New playable options: **Nema — Sleep; Pipix — Healing Word and Faerie Fire; Scott — Divine Favor**.
+Everyone can wake a sleeping ally. Healing consumables can be used on companions, spending the user's
+item and healing only the recipient. New spell rolls, saves, concentration, expiry and charges are
+engine-owned and traced. Ordinary equipment still has no effect unless one is implemented.
+
+Read [the rules adapter](docs/council-rules.md) for the supplied PDF/page references and exact differences
+from D&D: single targets, one turn per action, per-spell encounter charges instead of shared slots,
+the existing percent-hit/armour system, and unchanged public perception while sleeping. No full D&D
+conversion, movement hazards, second room, or campaign persistence is claimed. Context remains 8192 tokens.
+
+Verification: **1,157 automated tests pass**, including 16 new spell/item/routing cases. A real Qwen/LM Studio
+one-round smoke run (`20260903-041857Z-e914832c`) completed, generated its trace/report, and exposed all new
+spell labels and charges in the browser. It was deliberately capped at one round for testing; the saved
+default is 20. Nema used Rally Grunt after an initial misclassification; the character prompt now asks
+agents to name a chosen ability directly. Other compound-action and surrender mistakes still occurred.
+The new spells' mechanics were exercised by deterministic tests, not all cast in that live round.
+
+Next check: start a fresh 20-round rescue and review spell choices, item use, Scott's protection targets,
+repetitive actions, and whether Deacon actually escapes. Better options and more rounds do not guarantee
+better model decisions; a full live rescue with these changes is not yet confirmed by Jon.
+
 ### Rescue and guest control — September 2, 2026
 
 The current encounter is a single-room rescue. Deacon starts alive and detained, hears the public record,

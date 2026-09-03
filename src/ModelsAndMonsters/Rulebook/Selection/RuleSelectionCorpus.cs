@@ -82,6 +82,11 @@ public static class RuleSelectionCorpus
 {
     public static IReadOnlyList<RuleSelectionCase> Cases { get; } =
     [
+        new() { Id = "council-sleep", Category = "council spells", Intent = "I cast Sleep on Smut, trying to stop him without killing him.", RequiredRuleIds = ["ability.sleep"], ExpectedAction = "use_ability", Clarity = IntentClarity.Clear, Note = "Sleep is a supported spell, not surrender or weapon damage." },
+        new() { Id = "council-healing-word", Category = "council spells", Intent = "I speak Healing Word to restore Nema's wounds.", RequiredRuleIds = ["ability.healing-word"], ExpectedAction = "use_ability", Clarity = IntentClarity.Clear, Note = "Use the named spell, not the older fixed Healing Prayer or an item." },
+        new() { Id = "council-faerie-fire", Category = "council spells", Intent = "I outline the Iron Curator with Faerie Fire so our attacks can find him.", RequiredRuleIds = ["ability.faerie-fire"], ExpectedAction = "use_ability", Clarity = IntentClarity.Clear, Note = "Outline and concentration, never Firebolt damage." },
+        new() { Id = "council-divine-favor", Category = "council spells", Intent = "I cast Divine Favor on myself to empower my sword for the next blow.", RequiredRuleIds = ["ability.divine-favor"], ExpectedAction = "use_ability", Clarity = IntentClarity.Clear, Note = "A setup action, not an immediate attack." },
+        new() { Id = "council-wake", Category = "council spells", Intent = "I shake my sleeping companion awake without hurting him.", RequiredRuleIds = ["ability.wake"], ExpectedAction = "use_ability", Clarity = IntentClarity.Clear, Note = "Available to everyone; no healing or attack." },
         // ---- Attack versus ability use ------------------------------------------------------------
         new()
         {
@@ -643,7 +648,8 @@ public static class RuleSelectionCorpus
     /// v0.9/v0.10 cards and this refresh moved it here (25 cards; the DistinguishedFrom routing metadata added
     /// in the same refresh is part of the hash but changes no required-card or expected-action label).
     /// </summary>
-    public const string LabelledAgainstRulebookVersion = "rulebook-50add9fb19";
+    // Council adapter: five explicit spell/wake cases; guard, item-use and attack boundaries rechecked.
+    public const string LabelledAgainstRulebookVersion = "rulebook-2ede6695e1";
 
     /// <summary>
     /// Cards that no case requires, on purpose, each with the reason it genuinely cannot be exercised as a

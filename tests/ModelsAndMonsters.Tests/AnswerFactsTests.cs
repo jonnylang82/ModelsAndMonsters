@@ -38,7 +38,8 @@ public sealed class AnswerFactsTests
     public void A_consumed_item_is_absent_from_the_current_facts_and_named_as_gone()
     {
         var (projector, ledger, _) = Build();
-        var engine = TestWorld.V07Engine(new SeededRng(1), CombatRules.NoGlancing);
+        var engine = TestWorld.V07Engine(new SeededRng(1), CombatRules.NoGlancing,
+            TestWorld.RowanV07(), TestWorld.ElaraV07(), TestWorld.VarkV07(health: 6), TestWorld.SkritV07());
 
         // Everyone can see what Vark openly carries, including the salve.
         var possession = ledger.GetOrAddItemPossessionFact("goblin-salve", "Vial of Goblin Salve", "Vark", 0);

@@ -32,7 +32,7 @@ public sealed class RulebookConsultationTests
         var trace = new ExperimentTrace("t", new RecordingTraceSink());
         var resolverClient = new ScriptedChatClient(resolverResponses);
         var resolver = new RulebookResolver(profile, new TracingChatClient(resolverClient, profile, trace), Prompts);
-        var retriever = new RuleRetriever(Catalog, maxCards: 32, maxInputChars: 32000);
+        var retriever = new RuleRetriever(Catalog, maxCards: 40, maxInputChars: 32000);
         var consultant = new RulebookConsultant(
             Catalog, retriever, resolver, new RuleGuidanceValidator(Catalog), new RuleGuidanceCache(), trace,
             new RulebookConsultationOptions(MaxCards: 32, MaxInputChars: 32000, OutputTokenLimit: 600, CacheEnabled: false));

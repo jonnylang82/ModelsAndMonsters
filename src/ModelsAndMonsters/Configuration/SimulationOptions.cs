@@ -549,7 +549,7 @@ public sealed class HarnessOptions
     /// this many cards the retriever throws at startup (fails visibly) rather than silently dropping cards,
     /// which would risk hiding the one action an intent needs. Set with headroom above the current catalog.
     /// </summary>
-    public int RulebookMaxCards { get; set; } = 32;
+    public int RulebookMaxCards { get; set; } = 40;
 
     /// <summary>A hard CEILING (not a budget) on the total size, in characters, of the cards sent to the resolver. Exceeding it fails visibly at startup rather than trimming.</summary>
     public int RulebookMaxInputChars { get; set; } = 32000;

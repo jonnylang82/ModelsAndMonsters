@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using ModelsAndMonsters.Agents;
+using ModelsAndMonsters.Domain;
 
 namespace ModelsAndMonsters.Rulebook;
 
@@ -20,7 +21,8 @@ public sealed class RuleCatalog : IRuleRepository
 
     public RuleCatalog()
     {
-        AllCards = BuildCards();
+        var core = BuildCards();
+        AllCards = [.. core.Where(c => c.RuleId != RejectRuleId), .. CouncilSpellCards(), core.Single(c => c.RuleId == RejectRuleId)];
         _byId = AllCards.ToDictionary(c => c.RuleId, StringComparer.OrdinalIgnoreCase);
 
         // A separator-tolerant index alongside the exact one. Weak models routinely transcribe a rule id with
@@ -73,7 +75,33 @@ public sealed class RuleCatalog : IRuleRepository
         return "rulebook-" + Convert.ToHexStringLower(hash)[..10];
     }
 
+    private static IEnumerable<RuleCard> CouncilSpellCards() =>
+        new[] { AbilityCatalog.Sleep, AbilityCatalog.HealingWord, AbilityCatalog.FaerieFire, AbilityCatalog.DivineFavor, AbilityCatalog.Wake }
+        .Select(a => new RuleCard
+        {
+            RuleId = a.RuleId, Summary = $"{a.Name}: {a.InWorldName}.",
+            ActionName = DungeonMasterTools.UseAbilityName,
+            Description = $"{a.Id}: " + (a.EffectKind switch
+            {
+                AbilityEffectKind.Sleep => "Lull one foe to sleep, not surrender.",
+                AbilityEffectKind.HealingWord => "Heal self or one wounded ally remotely.",
+                AbilityEffectKind.FaerieFire => "Outline one foe for easier attacks; no fire damage.",
+                AbilityEffectKind.DivineFavor => "Empower later weapon hits; not an attack now.",
+                _ => "Shake a sleeping ally awake, without injury."
+            }),
+            RelatedRuleIds = [],
+            RequiredBindings = ["actor", $"ability '{a.Id}'", $"target according to {a.TargetRule}"],
+            Preconditions = [a.EffectKind == AbilityEffectKind.Wake ? "awake actor; sleeping ally" : "awake caster; known charged spell; valid target"],
+            TurnCost = "one whole turn (house rule: no separate bonus actions)",
+            RngRequirement = "only the engine rolls dice; never invent a save, damage or success",
+            Visibility = "public visible effect; no hidden information is revealed",
+            SuccessBehaviour = a.Description + " Engine spends one encounter charge; Wake is unlimited.",
+            FailureBehaviour = "invalid targets spend nothing; a resisted or insufficient-power spell spends its charge",
+            Exclusions = ["area targets, resurrection, freeing detainees"]
+        });
+
     private static IReadOnlyList<RuleCard> BuildCards() =>
+    // Spell descriptions are authored engine adaptations, not runtime copies of the rulebooks.
     [
         new RuleCard
         {
@@ -84,26 +112,26 @@ public sealed class RuleCatalog : IRuleRepository
             // blow — a threat is speech (intimidation), not an attack. Both are live-proven confusions.
             DistinguishedFrom = [DungeonMasterTools.DamageEnvironmentalObjectName, DungeonMasterTools.IntimidateCharacterName],
             ActionName = DungeonMasterTools.AttackCharacterName,
-            Description = "One character striking another with the weapon they are carrying — a direct melee blow that MAKES CONTACT. What makes it an attack is the BLOW, never the movement: a swing, slash, stab, cut, chop or thrust that lands. Rushing, lunging or stepping toward somebody counts only when a blow is what arrives; rushing to them to hand them something, to shield them or to speak to them is the rule for that deed, not this one. A character moving, readying, threatening or posturing with no blow described is NOT attacking. This is still the right action when the target is sheltering behind cover — cover changes what the one roll can mean, never which action to call.",
+            Description = "Strike another character with the carried weapon, including against cover. A blow must be attempted; threatening, movement and posturing alone are not attacks.",
             RequiredBindings = ["the acting character (attacker)", "the target character", "the attacker's weapon"],
-            Preconditions = ["attacker is active and armed", "a blow is actually described making contact with the target — not merely a threat, an advance, or a readied weapon", "target is another active character (not dead, surrendered or escaped, and not the attacker)"],
+            Preconditions = ["active armed attacker; explicit strike", "another active target, not self"],
             TurnCost = "consumes the turn",
             RngRequirement = "the engine rolls to hit and, on a hit, ONE quality roll deciding glancing (half damage), solid or critical (double) — never a roll per kind. The resolver never decides the outcome",
             Visibility = "public: the whole room sees the blow and its result",
             SuccessBehaviour = "the engine applies damage and may record an injury or a death; only the engine decides whether it lands. A critical blow also moves morale",
             FailureBehaviour = "a miss changes nothing but still spends the turn",
-            Exclusions = ["throwing a weapon", "shoving, grappling or knocking down", "raising a guard, bracing, standing one's ground or readying to parry — that is the defend rule, not an attack", "frightening a foe into yielding", "a threatening step, advance, stance or menacing gesture that lands no blow — posturing is not an attack", "brandishing, gripping, raising, levelling or readying a weapon without actually striking — a weapon held up to make somebody afraid, with no blow, is the intimidation rule", "feinting, intimidating or 'making ready' — with no blow described, this is the intimidation rule, the defend rule, or nothing, never attack_character", "shielding a companion from a blow — that is the guard-ally technique", "rushing or lunging to a companion to press something into their hand — that is the giving rule, however urgent the movement"]
+            Exclusions = ["throwing, shoving, grappling, knocking down", "raising a guard, bracing or readying a parry: defend rule", "menacing or brandishing with no blow is the intimidation rule", "shielding a companion: guard-ally", "rushing to hand over an item: give_item", "striking an object: damage_environmental_object"]
         },
         new RuleCard
         {
             RuleId = "inventory.use",
-            Summary = "Using an item on yourself — drinking a healing item, or attuning to an item to rekindle a spent power.",
+            Summary = "Using your healing item on yourself or a companion, or using a focus to restore your own spent power.",
             RelatedRuleIds = [],
             // A drunk salve is an item; a prayer that closes a wound is an ability. Same hoped-for outcome,
             // different rule — the live-proven use-item-vs-heal-ability confusion.
             DistinguishedFrom = [DungeonMasterTools.UseAbilityName],
             ActionName = DungeonMasterTools.UseItemName,
-            Description = "A character using an item from their own inventory on themselves: drinking a healing item, OR ATTUNING to a focus item to rekindle one of their OWN spent powers — attuning to a crystal or focus to draw a spent spell back and recover a used ability, even when the intent names the spell recovered.",
+            Description = "Use a carried healing item on yourself or a named living, active ally; specify target for an ally. A focus item restores only the user's OWN spent power. Use the item only when the intent actually drinks, administers or focuses: merely holding it ready is NOT using it. Caltrops and alchemy tools have no implemented effect yet; do not invent one.",
             RequiredBindings = ["the acting character", "the item from their own inventory"],
             Preconditions = ["actor is active and carries the item", "the item has a supported effect: a healing item, or a focus item that restores a spent ability"],
             TurnCost = "consumes the turn",
@@ -111,7 +139,7 @@ public sealed class RuleCatalog : IRuleRepository
             Visibility = "public: the room sees the item used",
             SuccessBehaviour = "the engine applies the item's effect: a healing item restores health and is consumed; a focus item restores one spent charge of the user's own limited ability and is NOT consumed",
             FailureBehaviour = "refused if the actor does not carry the item, it has no supported effect, or a focus item is used with no spent power left to restore",
-            Exclusions = ["using an item on another character", "attuning to recharge another's ability — a focus item rekindles only its user's own"]
+            Exclusions = ["healing dead, detained or absent characters", "attuning to recharge another's ability — a focus item rekindles only its user's own", "using an item merely because the actor readies it"]
         },
         new RuleCard
         {
@@ -344,7 +372,7 @@ public sealed class RuleCatalog : IRuleRepository
         {
             RuleId = "combat.defend",
             Summary = "Spending the whole turn braced behind your guard instead of striking — NOT behind a named piece of cover.",
-            RelatedRuleIds = ["combat.attack", "environment.take-cover"],
+            RelatedRuleIds = ["combat.attack", "environment.take-cover", "ability.guard-ally"],
             // One's own guard, told apart from sheltering behind a named object — naming a real object to get
             // behind is take-cover, whatever defensive word accompanies it. The sharpest boundary in the book.
             DistinguishedFrom = [DungeonMasterTools.TakeCoverName],
@@ -462,13 +490,13 @@ public sealed class RuleCatalog : IRuleRepository
         new RuleCard
         {
             RuleId = "ability.firebolt",
-            Summary = "The spell that hurls a bolt of fire at one enemy, burning through armour, once in an encounter.",
+            Summary = "A charged bolt of fire at one opponent, burning through armour; a focus can recharge it.",
             RelatedRuleIds = ["combat.attack", "environment.cover", "combat.morale"],
             // A hurled bolt of fire reads like an attack; declaring the boundary means routing to attack also
             // surfaces this card, and the resolver picks the ability when the intent names fire or a spell.
             DistinguishedFrom = [DungeonMasterTools.AttackCharacterName],
             ActionName = DungeonMasterTools.UseAbilityName,
-            Description = "Ability 'firebolt' (Firebolt), a spell usable ONCE per encounter: the caster looses a bolt of fire at ONE opposing character; the magical fire ignores armour. Recognise it in loosing or hurling a bolt or lance of fire at a foe. No weapon needed.",
+            Description = "Ability 'firebolt' (Firebolt): the caster spends one charge to loose a bolt of fire at ONE opposing character; the magical fire ignores armour. A recharging focus can restore a spent charge on a separate turn. No weapon needed. This charged attack is the demo's house rule, not the at-will D&D cantrip.",
             RequiredBindings = ["the acting character (the caster)", "the ability id 'firebolt'", "the opposing character it is aimed at"],
             Preconditions = ["the caster is the current actor, active, holds firebolt, and has a use left", "the target is a living, present, active OPPOSING character"],
             TurnCost = "consumes the turn",
@@ -476,7 +504,7 @@ public sealed class RuleCatalog : IRuleRepository
             Visibility = "public: everyone present sees the bolt of fire",
             SuccessBehaviour = "on a hit, fire damage is applied IGNORING the target's armour, and one use is spent; solid cover can still turn the bolt aside, and a critical or heavy hit moves morale as any blow does",
             FailureBehaviour = "a miss, or a bolt turned aside by cover, deals nothing but still spends the turn and the use. Refused, WITHOUT spending the use, if the ability is not held, has no uses left, or the target is an ally, dead, surrendered or fled",
-            Exclusions = ["aiming it at an ally or oneself", "using it more than once in an encounter", "setting scenery alight, lingering fire, or any effect beyond the one bolt", "drawing a spent firebolt back to recover it — that is inventory.use (attuning to the focus), not casting it"]
+            Exclusions = ["aiming it at an ally or oneself", "casting with no charge remaining", "setting scenery alight, lingering fire, or any effect beyond the one bolt", "drawing a spent firebolt back to recover it — that is inventory.use (attuning to the focus), not casting it"]
         },
         new RuleCard
         {

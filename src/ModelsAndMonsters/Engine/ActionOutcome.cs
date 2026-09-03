@@ -16,6 +16,7 @@ public abstract record ActionOutcome
 
 public sealed record AttackOutcome : ActionOutcome
 {
+    public int RadiantDamage { get; init; }
     public required string AttackerId { get; init; }
     public required string AttackerName { get; init; }
     public required string TargetId { get; init; }
@@ -223,11 +224,12 @@ public sealed record AttackOutcome : ActionOutcome
             var coverBypassed = CoverId is not null
                 ? $" The blow found {TargetName} despite {CoverName} (covered chance {HitChance})."
                 : "";
+            var radiant = RadiantDamage > 0 ? $" plus {RadiantDamage} radiant damage from Divine Favor, " : "";
             var damageBreakdown = IgnoredArmour
                 ? $"Fire damage {WeaponDamage}, ignoring armour = {BaseDamage}, "
                 : $"Weapon damage {WeaponDamage} minus armour {TargetArmour} = {BaseDamage}, ";
             return $"{AttackerName} hit {TargetName}{via} with {WeaponName} — {quality} (rolled {HitRoll} against {chance}). " +
-                   $"{damageBreakdown}" +
+                   $"{damageBreakdown}{radiant}" +
                    $"{DamageDealt} damage dealt. " +
                    $"{TargetName} health {TargetHealthBefore} -> {TargetHealthAfter}. {status}{defended}{applied}{injury}{morale}{loot}{coverBypassed}{redirect}";
         }
@@ -236,6 +238,8 @@ public sealed record AttackOutcome : ActionOutcome
 
 public sealed record HealOutcome : ActionOutcome
 {
+    public string? TargetId { get; init; }
+    public string? TargetName { get; init; }
     public required string ActorId { get; init; }
     public required string ActorName { get; init; }
     public required string ItemName { get; init; }
@@ -248,7 +252,7 @@ public sealed record HealOutcome : ActionOutcome
 
     public override string Summary =>
         $"{ActorName} used {ItemName} (heals {HealingAmount}). " +
-        $"{ActorName} health {HealthBefore} -> {HealthAfter} of {MaxHealth}. The item was consumed.";
+        $"{TargetName ?? ActorName} health {HealthBefore} -> {HealthAfter} of {MaxHealth}. The item was consumed.";
 }
 
 /// <summary>

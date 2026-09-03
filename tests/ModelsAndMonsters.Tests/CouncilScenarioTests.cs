@@ -42,7 +42,10 @@ public sealed class CouncilScenarioTests
         Assert.NotNull(state.RequireById("hero-nema").FindAbility(AbilityCatalog.RallyGruntId));
         Assert.NotNull(state.RequireById("hero-mirabel").FindAbility(AbilityCatalog.DirtyStrikeId));
         Assert.NotNull(state.RequireById("hero-emma").FindAbility(AbilityCatalog.FireboltId));
-        Assert.NotNull(state.RequireById("hero-pipix").FindAbility(AbilityCatalog.HealingPrayerId));
+        Assert.NotNull(state.RequireById("hero-pipix").FindAbility("healing-word"));
+        Assert.NotNull(state.RequireById("hero-pipix").FindAbility("faerie-fire"));
+        Assert.NotNull(state.RequireById("hero-nema").FindAbility("sleep"));
+        Assert.NotNull(state.RequireById("hero-scott").FindAbility("divine-favor"));
         Assert.NotNull(state.RequireById("hero-scott").FindAbility(AbilityCatalog.GuardAllyId));
 
         Assert.Single(state.Room.Objects.OfType<CoverObject>());

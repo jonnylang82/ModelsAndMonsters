@@ -133,6 +133,13 @@ public sealed class ContainerDefinition
 
 public sealed class CharacterDefinition
 {
+    public int SpellcastingModifier { get; set; }
+    public int SpellSaveDC { get; set; } = 12;
+    public int DexteritySaveModifier { get; set; }
+    public int ConstitutionSaveModifier { get; set; }
+    public bool ImmuneToSleep { get; set; }
+    public bool IsConstructOrUndead { get; set; }
+
     public string Id { get; set; } = "";
 
     public string Name { get; set; } = "";
