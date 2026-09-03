@@ -25,6 +25,45 @@ npm run dev
 
 Then open <http://localhost:5173/>. Ollama and the hosted providers remain available through configuration.
 
+### Private phone access (prepared; device setup pending)
+
+The web host can now serve the built interface and API together at `http://localhost:5170/`.
+Browser requests are relative to that address, including the live event stream and guest controls.
+The development interface on port 5173 proxies `/api` to the same backend.
+
+Build in this order from the repository root, then start the web host:
+
+```powershell
+npm --prefix src/ModelsAndMonsters.Web/client run build
+dotnet build src/ModelsAndMonsters.Web/ModelsAndMonsters.Web.csproj
+dotnet src/ModelsAndMonsters.Web/bin/Debug/net10.0/ModelsAndMonsters.Web.dll
+```
+
+Use the local .NET 10 executable described below if needed. Keep the PC awake, LM Studio running,
+and the web host running. Only the built client goes into `wwwroot`; configuration, prompts and run
+files are outside the public static-file directory.
+
+For off-site phone access, install Tailscale on both devices and sign into the same personal tailnet.
+After Windows installation approval and PC sign-in, inspect `tailscale serve status` for existing routes,
+then configure **Serve**, not public **Funnel**:
+
+```powershell
+& 'C:\Program Files\Tailscale\tailscale.exe' serve --bg http://127.0.0.1:5170
+```
+
+Follow any HTTPS-enablement prompt and open the resulting private HTTPS address on the phone with
+Tailscale connected. Do not forward router ports or expose LM Studio, Vite, or the repository.
+The game has no separate user authentication: anyone allowed to reach this service through the tailnet
+can view and control it. Keep access restricted to trusted personal devices; this is not a public-hosting setup.
+Tailscale's background route does not itself start the game or LM Studio after reboot.
+
+Verification: 1,141 tests passed; a 390px browser viewport loaded portraits, started a real run,
+received live state, reserved Deacon control, and cancelled successfully using one origin with no
+page errors or horizontal overflow. Configuration/source/run-file probes returned 404.
+Actual off-site phone/HTTPS testing is pending: the Tailscale installer was waiting on Windows
+administrator approval while Jon was away. No tailnet sign-in or Serve route has been configured.
+Next session: finish installation/sign-in, configure the private route, then test from Jon's phone.
+
 The branch now boots into **The Archive Wakes**, the first Council-native encounter. Nema Mistsong, Mirabel
 Tipton, Emma Nightveil, Pipix Thistlegrin and Scott Suncrest are independent hero agents facing two archive wardens. Their
 names, equipment, concise behavioural grounding and supported abilities live in

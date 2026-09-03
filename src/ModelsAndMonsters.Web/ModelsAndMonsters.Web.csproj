@@ -17,6 +17,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Build the client first (npm run build); publish only dist, never the repo or development server. -->
+    <Content Remove="client\dist\**\*" />
+    <Content Include="client\dist\**\*" Link="wwwroot\%(RecursiveDir)%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Reuse the core app's configuration and prompt templates so the web host is self-contained. -->
     <Content Include="..\ModelsAndMonsters\appsettings.json" Link="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\ModelsAndMonsters\scenario*.json" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />

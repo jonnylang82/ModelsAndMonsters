@@ -276,3 +276,12 @@ button.ghost { background: transparent; color: var(--muted); border: 1px solid v
 .guest-panel textarea { min-height: 80px; }
 .guest-error { padding: .8rem; color: #ffbaba; }
 .objective-stage { color: #e9c46a; font-weight: 600; }
+
+@media (max-width: 600px) {
+  .top { flex-wrap: wrap; gap: 12px; }
+  .controls { flex-wrap: wrap; }
+  .statusbar { flex-wrap: wrap; gap: 4px; }
+  .sb-tokens { gap: 8px; font-size: 11px; }
+  .app { padding-bottom: 90px; }
+  .guest-panel input, .guest-panel textarea { font-size: 16px; }
+}

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 
-const API = 'http://localhost:5170'
+// Same origin works on the desktop and through a private HTTPS reverse proxy on a phone.
+const API = ''
 
 // How each streamed event renders in the transcript. Structured events (state/turnStarted) are handled
 // separately and drive the cards, not the log.

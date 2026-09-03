@@ -12,7 +12,8 @@ using ModelsAndMonsters.Web;
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
     Args = args,
-    ContentRootPath = AppContext.BaseDirectory
+    ContentRootPath = AppContext.BaseDirectory,
+    WebRootPath = Path.Combine(AppContext.BaseDirectory, "wwwroot")
 });
 
 // Reuse the core app's configuration: appsettings.json, the scenario file, and user secrets (so an OpenAI
@@ -40,6 +41,9 @@ builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy
 
 var app = builder.Build();
 app.UseCors();
+// Only the built interface is public. Configuration, prompts and run files remain outside wwwroot.
+app.UseDefaultFiles();
+app.UseStaticFiles();
 
 var json = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
