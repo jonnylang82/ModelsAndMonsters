@@ -57,7 +57,7 @@ public sealed class RulebookOrchestrationTests
 
         // The DM adjudication call was exposed exactly the candidate action plus rejection — not the whole surface.
         var dmTools = harness.DungeonMasterClient.RequestOptions[0]!.Tools!.Select(t => t.Name).ToList();
-        Assert.Equal([DungeonMasterTools.AttackCharacterName, DungeonMasterTools.RejectActionName], dmTools);
+        Assert.Equal([DungeonMasterTools.AttackCharacterName, DungeonMasterTools.RejectActionName, CharacterTools.RequestName], dmTools);
     }
 
     [Fact]
@@ -82,7 +82,7 @@ public sealed class RulebookOrchestrationTests
         Assert.Equal([DungeonMasterTools.RejectActionName], consultation.DmCandidateTools);
 
         var dmTools = harness.DungeonMasterClient.RequestOptions[0]!.Tools!.Select(t => t.Name).ToList();
-        Assert.Equal([DungeonMasterTools.RejectActionName], dmTools);
+        Assert.Equal([DungeonMasterTools.RejectActionName, CharacterTools.RequestName], dmTools);
 
         Assert.Contains(harness.Sink.Payloads<DmAdjudicationPayload>(TraceEventType.DmAdjudication),
             a => a.Category == nameof(ActionResolutionCategory.DmUnsupported));

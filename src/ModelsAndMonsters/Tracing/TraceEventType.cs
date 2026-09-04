@@ -6,6 +6,7 @@ namespace ModelsAndMonsters.Tracing;
 public enum TraceEventType
 {
     RunStarted,
+    ConversationRequest,
     ScenarioSeeded,
     RoundStarted,
     TurnStarted,

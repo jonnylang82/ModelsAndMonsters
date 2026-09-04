@@ -741,6 +741,12 @@ public sealed partial class GameEngine : IGameEngine
                 $"{attacker.Name} cannot attack themselves.");
         }
 
+        if (_combatRules.PreventFriendlyHostility && target.IsAllyOf(attacker))
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.TargetIsNotAnOpponent,
+                $"{target.Name} is {attacker.Name}'s ally. This encounter does not support attacking companions.");
+        }
+
         // Only an active combatant can be struck. A character who is dead, has surrendered, or has escaped
         // is out of the fight, and each is refused with its own reason so the DM can explain it in-world.
         if (!target.IsCombatTarget)
@@ -2680,6 +2686,12 @@ public sealed partial class GameEngine : IGameEngine
         {
             return EngineResult.Reject(action, state, EngineRejectionReason.TargetIsSelf,
                 $"{thief.Name} cannot steal from themselves.");
+        }
+
+        if (_combatRules.PreventFriendlyHostility && target.IsAllyOf(thief))
+        {
+            return EngineResult.Reject(action, state, EngineRejectionReason.TargetIsNotAnOpponent,
+                $"{target.Name} is {thief.Name}'s ally. Ask them for the item; they may agree or refuse. Do not take it for them.");
         }
 
         // Both must be active and present: a surrendered, escaped or dead character is out of the fight and

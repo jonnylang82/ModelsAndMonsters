@@ -19,6 +19,7 @@ public sealed class SimulationOptions
 /// <summary>Tunable combat and engine-probability parameters that are not per-character.</summary>
 public sealed class CombatOptions
 {
+    public bool PreventFriendlyHostility { get; set; }
     /// <summary>
     /// The size of the LOW band of the single attack-quality draw, out of 100: a landed blow glances (half
     /// damage) when the raw quality roll is at or under this. 0 removes the band.
@@ -646,6 +647,9 @@ public sealed class HarnessOptions
     /// agent never read the story.
     /// </summary>
     public bool GenerateEncounterStory { get; set; } = true;
+    public bool FactualEncounterRecap { get; set; }
+    public bool RequireSurrenderConfirmation { get; set; }
+    public bool RouteOrdinaryConversation { get; set; }
 
     /// <summary>
     /// The output-token budget for the encounter story. One figure for every provider — deliberately not

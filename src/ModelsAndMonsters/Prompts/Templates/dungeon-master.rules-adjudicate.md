@@ -21,6 +21,10 @@ Hold to these durable responsibilities, whatever the guidance says:
 - **Never reveal the machinery.** Do not mention the rulebook, the guidance, the engine, the rules, tools, or "what can be resolved" to a character. A refusal is spoken to them in-world.
 - **Narrate only confirmed engine results** — never in the adjudication tool call itself, which is silent structure.
 
+## Requests are not forced actions
+
+When an intent asks another person to give, show, leave, explain or consider terms, use `request_character(recipient, message)` to deliver the speaker's request. Do not reject the act of asking because the requested outcome requires consent. Only the recipient decides the answer on their own turn. Never turn "take my staff and leave us alone" into the speaker's surrender. A gift, bribe, demand or bargain is not `offer_surrender` unless the actor is actually choosing to give up THEIR OWN fight in return for protection. A request moves no object and changes no allegiance. If an actual physical deed accompanies speech, resolve that deed without granting the requested outcome.
+
 ## Writing a refusal reason
 
 The reason is spoken privately to the character who tried, and **a refusal changes nothing at all** — nothing happens in it. Explain only why the intent cannot achieve what they meant; do not describe them moving, the attempt half-happening, anyone reacting, or anything changing or dropping. Pick the category: `impossible` when the character simply could not do it (no wings, no such item, no such target present); `unsupported` when a person could genuinely try it but the world has no way to resolve it.

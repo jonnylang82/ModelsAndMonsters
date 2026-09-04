@@ -182,7 +182,8 @@ public sealed class KnowledgeOrchestrationTests
                 ScriptedChatClient.Text("Elara studies the case again.")),
             ("Elara", new ScriptedChatClient(
                 ScriptedChatClient.Call("e-1", CharacterTools.TakeActionName, ("intent", "I examine the case closely.")),
-                ScriptedChatClient.Call("e-2", CharacterTools.TakeActionName, ("intent", "I examine the case closely once more.")))));
+                ScriptedChatClient.Call("e-2", CharacterTools.TakeActionName, ("intent", "I examine the case closely once more.")),
+                ScriptedChatClient.Call("e-3", CharacterTools.EndTurnName, ("reason", "I already know that.")))));
 
         await harness.RunTurn("Elara", round: 1, turn: 1);
         await harness.RunTurn("Elara", round: 2, turn: 2);
@@ -191,10 +192,11 @@ public sealed class KnowledgeOrchestrationTests
         Assert.Single(harness.Ledger.RecordsFor(TestWorld.ElaraId),
             r => harness.Ledger.FindFact(r.FactId)!.FactType == FactType.ContainerExteriorMarking);
 
-        // The second inspection reported learning nothing new.
+        // The redundant inspection was refused without spending the action or exposing new knowledge.
         var observations = harness.Sink.Payloads<PrivateObservationDeliveredPayload>(TraceEventType.PrivateObservationDelivered).ToList();
-        Assert.Equal(2, observations.Count);
-        Assert.Contains("nothing beyond what you already know", observations[1].Observation, StringComparison.OrdinalIgnoreCase);
+        Assert.Single(observations);
+        Assert.Contains(harness.Sink.Payloads<EngineActionPayload>(TraceEventType.EngineAction),
+            e => !e.Accepted && e.RejectionReason == "NothingToInspect");
     }
 
     // ------------------------------------------------------------------------------------------

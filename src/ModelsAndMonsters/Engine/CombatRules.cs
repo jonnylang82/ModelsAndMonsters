@@ -43,7 +43,8 @@ public sealed record CombatRules(
     int GlancingBlowChance,
     int BaseStealChance = 40,
     int CriticalHitChance = 25,
-    int BaseIntimidationChance = IntimidationRules.DefaultBaseChance)
+    int BaseIntimidationChance = IntimidationRules.DefaultBaseChance,
+    bool PreventFriendlyHostility = false)
 {
     /// <summary>Default rules: equal glancing and critical bands, and the default base theft chance.</summary>
     public static CombatRules Default { get; } = new(GlancingBlowChance: 25);

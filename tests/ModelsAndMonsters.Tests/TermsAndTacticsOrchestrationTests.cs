@@ -597,7 +597,7 @@ public sealed class TermsAndTacticsOrchestrationTests
         Assert.Equal(["reject_action"], consultation.DmCandidateTools);
 
         var dmTools = harness.DungeonMasterClient.RequestOptions[0]!.Tools!.Select(t => t.Name).ToList();
-        Assert.Equal([DungeonMasterTools.AcceptSurrenderName, DungeonMasterTools.RejectActionName], dmTools);
+        Assert.Equal([DungeonMasterTools.AcceptSurrenderName, DungeonMasterTools.RejectActionName, CharacterTools.RequestName], dmTools);
 
         Assert.Equal(CharacterDisposition.Surrendered, harness.Engine.State.RequireById(TestWorld.VarkId).Disposition);
     }
@@ -630,7 +630,7 @@ public sealed class TermsAndTacticsOrchestrationTests
         await harness.RunTurn("Rowan", round: 1, turn: 1);
 
         var dmTools = harness.DungeonMasterClient.RequestOptions[0]!.Tools!.Select(t => t.Name).ToList();
-        Assert.Equal([DungeonMasterTools.RejectActionName], dmTools);
+        Assert.Equal([DungeonMasterTools.RejectActionName, CharacterTools.RequestName], dmTools);
     }
 
     [Fact]

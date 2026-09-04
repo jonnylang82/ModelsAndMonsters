@@ -35,11 +35,13 @@ internal sealed class MultiActorHarness
         bool seedKnowledge = true,
         ScriptedChatClient? rulebookResolverClient = null,
         ScriptedChatClient? historySummariserClient = null,
-        ICharacterInput? characterInput = null)
+        ICharacterInput? characterInput = null,
+        ScriptedChatClient? conversationParserClient = null)
     {
         DungeonMasterClient = dungeonMasterClient;
         CharacterClients = characterClients;
         Limits = limits ?? new HarnessOptions { MaxQuestionsPerTurn = 2, MaxActionAttemptsPerTurn = 3, MaxModelCallsPerTurn = 8 };
+        if (conversationParserClient is not null) Limits.RouteOrdinaryConversation = true;
         Trace = new ExperimentTrace("test-run", Sink);
 
         Engine = new GameEngine(
@@ -115,7 +117,9 @@ internal sealed class MultiActorHarness
 
         Coordinator = new TurnCoordinator(
             Engine, DungeonMaster, SharedPrompts, new WorldStateFormatter(SharedPrompts),
-            NarrationLog, Ledger, Trace, Console, Limits, summariser: summariser, rulebook: rulebook);
+            NarrationLog, Ledger, Trace, Console, Limits, summariser: summariser, rulebook: rulebook,
+            intentParser: conversationParserClient is null ? null : new IntentParser(Profile("IntentParser"),
+                new TracingChatClient(conversationParserClient, Profile("IntentParser"), Trace), SharedPrompts));
     }
 
     /// <summary>The scripted resolver client, when the rulebook stage is wired; null otherwise.</summary>

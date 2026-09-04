@@ -734,7 +734,7 @@ public sealed class ModelConfigurationTests
         // accept_surrender, demand_surrender, use_ability, defend, give_item, present_item, drop_item, steal_item,
         // intimidate_character, steady_ally, take_cover, leave_cover, damage_environmental_object,
         // reject_action (22).
-        Assert.Equal(26, allTools.Count);
+        Assert.Equal(28, allTools.Count);
     }
 
     [Fact]

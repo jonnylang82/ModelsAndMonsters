@@ -3,7 +3,7 @@ using Microsoft.Extensions.AI;
 namespace ModelsAndMonsters.Agents;
 
 /// <summary>
-/// The only two tools a character agent ever sees. Both take free-form natural language.
+/// The character's natural-language action, speech and request tools. No direct engine access.
 /// </summary>
 /// <remarks>
 /// These are <see cref="AIFunctionDeclaration"/>s, not invocable functions. They carry a name,
@@ -16,6 +16,8 @@ public static class CharacterTools
     public const string TakeActionName = "take_action";
     public const string SayName = "say";
     public const string EndTurnName = "end_turn";
+    public const string RequestName = "request_character";
+    public const string RespondName = "respond_request";
     public const string QuestionParameter = "question";
     public const string IntentParameter = "intent";
     public const string MessageParameter = "message";
@@ -91,6 +93,10 @@ public static class CharacterTools
         {
           "type": "object",
           "properties": {
+            "surrender_self": {
+              "type": "boolean",
+              "description": "Set true ONLY if you personally choose to give up YOUR OWN fight in return for being spared. Never for requesting an enemy's surrender, a gift, bribe or safe-passage bargain."
+            },
             "{{IntentParameter}}": {
               "type": "string",
               "description": "What you attempt to do, as you would say it. For example: 'I bring my sword down hard on the goblin's shoulder.'"
@@ -109,15 +115,16 @@ public static class CharacterTools
     /// </summary>
     public static readonly AIFunctionDeclaration Say = AIFunctionFactory.CreateDeclaration(
         SayName,
-        "Say something out loud. Everyone still alive in the room hears it. Speaking does not use up your turn, and you may speak at most once per turn.",
+        "Say something out loud. Everyone still alive in the room hears it. Speaking does not use up your action. For a request needing a reply, use request_character instead.",
         ToolSchema.Parse($$"""
         {
           "type": "object",
           "properties": {
             "{{MessageParameter}}": {
               "type": "string",
-              "description": "The exact words you speak aloud, as you would say them. For example: 'Get whatever is in that chest — I'll hold them off.'"
-            }
+              "description": "The exact words you speak aloud, as you would say them. For requests use request_character."
+            },
+            "addressed_to": {"type":"string", "description":"Optional exact name of the person being addressed; everyone present still hears this."}
           },
           "required": ["{{MessageParameter}}"]
         }
@@ -146,14 +153,35 @@ public static class CharacterTools
         """),
         returnJsonSchema: null);
 
-    public static readonly IReadOnlyList<AITool> All = [AskDm, TakeAction, Say, EndTurn];
+    public static readonly AIFunctionDeclaration Request = AIFunctionFactory.CreateDeclaration(
+        RequestName,
+        "Ask one person to do something or propose a bargain. They decide on their turn: yes, no, counteroffer or silence. This is public speech, not an action, transfer or surrender. Use this for 'give me the seal' or 'take my staff and let us pass'.",
+        ToolSchema.Parse("""
+        {"type":"object","properties":{
+          "recipient":{"type":"string","description":"Exact name of the person you ask."},
+          "message":{"type":"string","description":"Your exact spoken request; no invented answer or outcome."}
+        },"required":["recipient","message"]}
+        """), returnJsonSchema: null);
+
+    public static readonly AIFunctionDeclaration Respond = AIFunctionFactory.CreateDeclaration(
+        RespondName,
+        "Answer a pending request addressed to you. Acceptance is only speech, never a transfer or surrender. Use take_action separately if you choose to carry out your promise. You may refuse or bargain; agreement is not required.",
+        ToolSchema.Parse("""
+        {"type":"object","properties":{
+          "request_id":{"type":"string"},
+          "decision":{"type":"string","enum":["accept","decline","counter","ignore"]},
+          "message":{"type":"string","description":"Exact reply, or empty for deliberate silence."}
+        },"required":["request_id","decision","message"]}
+        """), returnJsonSchema: null);
+
+    public static readonly IReadOnlyList<AITool> All = [AskDm, TakeAction, Say, EndTurn, Request, Respond];
 
     /// <summary>
     /// The opening decision surface for action-first play. A refused action can unlock <see cref="All"/> on
     /// the next model call, but agents cannot spend a free opening call asking the same obvious question.
     /// </summary>
-    public static readonly IReadOnlyList<AITool> WithoutQuestions = [TakeAction, Say, EndTurn];
+    public static readonly IReadOnlyList<AITool> WithoutQuestions = [TakeAction, Say, EndTurn, Request, Respond];
 
     /// <summary>The tool names, used to recognise a tool call a model wrote as prose.</summary>
-    public static readonly IReadOnlyList<string> Names = [AskDmName, TakeActionName, SayName, EndTurnName];
+    public static readonly IReadOnlyList<string> Names = [AskDmName, TakeActionName, SayName, EndTurnName, RequestName, RespondName];
 }

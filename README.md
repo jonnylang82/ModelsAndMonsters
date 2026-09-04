@@ -25,6 +25,53 @@ npm run dev
 
 Then open <http://localhost:5173/>. Ollama and the hosted providers remain available through configuration.
 
+### Conversation and state-integrity fixes — September 3, 2026
+
+Council configuration now blocks attacks and theft against the actor's own team before dice or state
+changes. The engine flag defaults off for other scenarios, preserving upstream friendly-fire behaviour.
+This is a fixed-team safeguard, not a new betrayal/allegiance mechanic.
+
+Characters can use `request_character` and `respond_request` for public requests, refusals, acceptance,
+counteroffers and deliberate silence. Pending requests are injected at the recipient's next available
+turn, separately from summarised history. Agreement alone **never** transfers an item, releases someone,
+or creates surrender: the owner must choose and execute the corresponding supported action. Requests
+use the existing speech allowance, not a combat action; pending requests do not grant extra turns.
+They are run-local, recipient-bound, and replaced per sender/recipient pair when revised.
+
+`Harness.RouteOrdinaryConversation` also runs a small, context-limited intent classification for normal
+speech and action text, so models need not always select the new tools themselves. The speaker's explicit
+`addressed_to` wins over an inferred recipient. Unavailable routing leaves the speech public without
+inventing consent. Classification adds model calls and remains fallible; ambiguous references can still
+be missed or misdirected. Prefer explicit names for requests. This does not introduce a private channel.
+
+`Harness.RequireSurrenderConfirmation` requires `take_action.surrender_self=true` before the DM can
+interpret an actor's words as that actor offering their own surrender. A bargain or demand for the
+enemy's surrender is not consent to surrender oneself. The current human guest form does not yet expose
+this confirmation or structured request replies; humans are not blocked by the AI-only response guard.
+
+Repeated inspection of an unchanged container already inspected by the actor (or shared through the
+existing discovery policy) is refused without spending the action. Changes to open/closed state, clues
+or visible contents invalidate that reminder. No new private facts are shared by this safeguard.
+The last three action refusals are also carried into the next turn outside the generative summary.
+
+`Harness.FactualEncounterRecap` uses chronological engine events for the final recap. In the reported
+bad run, the seal really moved from Smut to the living Curator before Smut escaped; Mirabel later stole
+it from the Curator. The generated ending muddled that sequence. The new final recap cannot rewrite it;
+opening, action and round narration are still generated and may still contain mistakes.
+
+Verification: **1,172 tests passed**, including request decisions, owner-controlled transfers, explicit
+surrender, allied-hostility rejection, shared-inspection deduplication, routing failure and declared
+addressee precedence. Live LM Studio run `20260903-143251Z-69fd0932` completed one round: ordinary speech
+created pending requests, the Curator recorded a refusal rather than auto-agreeing, and Smut displayed
+the seal while retaining ownership. No items were transferred or surrender offers created. That run
+also exposed ambiguous-recipient classification and repeated dialogue; subsequent changes tightened
+recipient guidance and acknowledge routed requests to discourage repeated action attempts. Focused
+local-model probes exercised the revised prompt; the full 20-round rescue has **not** been revalidated.
+
+Next check: refresh the observer and start a new run (default remains 20 rounds). Inspect request/response
+trace events alongside actual inventory and action events. Tactical choices and repetition still need
+live evaluation; passing safety tests is not evidence that every character now plays intelligently.
+
 ### Private phone access (prepared; device setup pending)
 
 The web host can now serve the built interface and API together at `http://localhost:5170/`.

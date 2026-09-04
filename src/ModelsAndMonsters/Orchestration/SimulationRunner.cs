@@ -114,7 +114,8 @@ public sealed class SimulationRunner
                 _options.Combat.GlancingBlowChance,
                 _options.Combat.BaseStealChance,
                 _options.Combat.CriticalHitChance,
-                _options.Combat.BaseIntimidationChance));
+                _options.Combat.BaseIntimidationChance,
+                _options.Combat.PreventFriendlyHostility));
 
         // The application-owned knowledge ledger, seeded with the scenario's private backstory knowledge.
         // It is separate from authoritative game state: game state is current mechanical truth, this is the
@@ -538,8 +539,9 @@ public sealed class SimulationRunner
             // encounter ends" and then goes quiet for a while reads as hung rather than as still working.
             _console.Notice("Generating the encounter's story...");
 
-            var written = await summariser.SummariseAsync(_scenario.Name, brief, cancellationToken)
-                .ConfigureAwait(false);
+            var written = _options.Harness.FactualEncounterRecap
+                ? brief.RenderFactualRecap()
+                : await summariser.SummariseAsync(_scenario.Name, brief, cancellationToken).ConfigureAwait(false);
 
             if (string.IsNullOrWhiteSpace(written))
             {

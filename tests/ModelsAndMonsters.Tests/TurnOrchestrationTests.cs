@@ -285,7 +285,7 @@ public sealed class TurnOrchestrationTests
         // The character sees only its four natural in-world tools, never any engine action.
         var heroTools = harness.HeroClient.RequestOptions[0]!.Tools!.Select(t => t.Name).ToList();
         Assert.Equal(
-            [CharacterTools.AskDmName, CharacterTools.TakeActionName, CharacterTools.SayName, CharacterTools.EndTurnName],
+            [CharacterTools.AskDmName, CharacterTools.TakeActionName, CharacterTools.SayName, CharacterTools.EndTurnName, CharacterTools.RequestName, CharacterTools.RespondName],
             heroTools);
         Assert.DoesNotContain(DungeonMasterTools.OpenContainerName, heroTools);
         Assert.DoesNotContain(DungeonMasterTools.TakeItemName, heroTools);
@@ -306,7 +306,7 @@ public sealed class TurnOrchestrationTests
                 DungeonMasterTools.StealItemName, DungeonMasterTools.IntimidateCharacterName,
                 DungeonMasterTools.SteadyAllyName, DungeonMasterTools.TakeCoverName,
                 DungeonMasterTools.LeaveCoverName, DungeonMasterTools.DamageEnvironmentalObjectName,
-                DungeonMasterTools.RejectActionName
+                DungeonMasterTools.RejectActionName, CharacterTools.RequestName
             ],
             dungeonMasterTools);
 
@@ -334,7 +334,7 @@ public sealed class TurnOrchestrationTests
 
         var firstRequestTools = harness.HeroClient.RequestOptions[0]!.Tools!.Select(t => t.Name).ToList();
         Assert.DoesNotContain(CharacterTools.AskDmName, firstRequestTools);
-        Assert.Equal([CharacterTools.TakeActionName, CharacterTools.SayName, CharacterTools.EndTurnName],
+        Assert.Equal([CharacterTools.TakeActionName, CharacterTools.SayName, CharacterTools.EndTurnName, CharacterTools.RequestName, CharacterTools.RespondName],
             firstRequestTools);
     }
 

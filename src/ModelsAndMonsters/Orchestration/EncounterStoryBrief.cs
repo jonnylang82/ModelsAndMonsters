@@ -43,6 +43,11 @@ public sealed record EncounterStoryBrief
 
     public bool EventsTrimmed => ChronologicalEvents.Count < EventsTotal;
 
+    /// <summary>No generative rewriting: item ownership and chronology remain exactly as recorded.</summary>
+    public string RenderFactualRecap() => "## Encounter record\n\n"
+        + (EventsTrimmed ? $"{EventsTotal - ChronologicalEvents.Count} earlier events omitted for length.\n\n" : "")
+        + string.Join("\n", ChronologicalEvents.Select((entry, index) => $"{index + 1}. {entry}"));
+
     /// <summary>True when the harness stopped the encounter on a round or idle limit rather than a decision.</summary>
     public bool EndedUnresolvedAtRoundLimit => Outcome == EncounterOutcome.HarnessLimit;
 

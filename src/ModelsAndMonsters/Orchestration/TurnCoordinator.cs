@@ -26,7 +26,7 @@ namespace ModelsAndMonsters.Orchestration;
 /// arrive after the turn is already decided. Leaving one unanswered would corrupt the agent's history.
 /// </para>
 /// </remarks>
-public sealed class TurnCoordinator
+public sealed partial class TurnCoordinator
 {
     private readonly IGameEngine _engine;
     private readonly DungeonMasterAgent _dungeonMaster;
@@ -309,10 +309,14 @@ public sealed class TurnCoordinator
         }
 
         _speechThisTurn = null;
+        _speechActsCurrent = 0;
+        _routedRequestsThisTurn.Clear();
         _speechAddressedToThisTurn = null;
         self = _engine.State.RequireById(character.CharacterId);
 
-        var selfState = _formatter.FormatCharacterSelfState(self, _engine.State);
+        var selfState = _formatter.FormatCharacterSelfState(self, _engine.State)
+            + "\n" + _requests.Render(character.CharacterId, _engine.State)
+            + RenderRecentFailures(character.CharacterId);
         var pendingNarration = _narrationLog.TakeUndelivered(character.CharacterId);
 
         if (pendingNarration.Count > 0)
@@ -480,7 +484,10 @@ public sealed class TurnCoordinator
                 // else are just punctuation.
                 if (call.Name is CharacterTools.AskDmName or CharacterTools.TakeActionName or CharacterTools.EndTurnName)
                 {
-                    speechActs += DeliverDeclaredUtterances(character, call, round, turn, speechActs);
+                    var delivered = DeliverDeclaredUtterances(character, call, round, turn, speechActs);
+                    speechActs += delivered;
+                    if (delivered > 0)
+                        await RouteConversationAsync(character, string.Join(" ", ToolArguments.GetStringList(call, CharacterTools.UtterancesParameter, splitLooseStrings: false)), false, cancellationToken).ConfigureAwait(false);
                 }
 
                 switch (call.Name)
@@ -512,6 +519,11 @@ public sealed class TurnCoordinator
 
                     case CharacterTools.TakeActionName:
                     {
+                        if (MustAnswerRequest(character))
+                        {
+                            DispatchAndRecord(character, call, "Use respond_request first: accept, decline, counter or deliberately ignore. Then act.", "awaiting-request-response");
+                            break;
+                        }
                         // Every attempt we were handed is adjudicated — a decision we requested is never
                         // refused unheard just because it is the last one allowed. The cap governs whether
                         // we ask for a *further* decision, not whether we honour this one; once it is
@@ -520,6 +532,9 @@ public sealed class TurnCoordinator
                         // later are caught by the turn-ended guard above once this one resolves the turn.)
                         actionAttempts++;
                         var attempt = await HandleTakeActionAsync(character, call, cancellationToken).ConfigureAwait(false);
+                        speechActs = _speechActsCurrent;
+                        if (attempt.Category == ActionResolutionCategory.ConversationOnly)
+                            actionAttempts--; // Speech is bounded separately; it is not a failed physical action.
 
                         if (attempt.ConsumesTurn)
                         {
@@ -535,6 +550,14 @@ public sealed class TurnCoordinator
                             outcome = TurnOutcome.AbandonedAtLimit;
                         }
 
+                        break;
+                    }
+
+                    case CharacterTools.RequestName:
+                    case CharacterTools.RespondName:
+                    {
+                        HandleConversationCall(character, call, round, turn);
+                        speechActs = _speechActsCurrent;
                         break;
                     }
 
@@ -563,6 +586,11 @@ public sealed class TurnCoordinator
 
                     case CharacterTools.EndTurnName:
                     {
+                        if (MustAnswerRequest(character))
+                        {
+                            DispatchAndRecord(character, call, "Use respond_request to answer or deliberately ignore the pending request before ending your turn.", "awaiting-request-response");
+                            break;
+                        }
                         await HandleEndTurnAsync(character, call, cancellationToken).ConfigureAwait(false);
                         turnEnded = true;
                         outcome = TurnOutcome.EndedByCharacter;
@@ -860,12 +888,14 @@ public sealed class TurnCoordinator
             return false;
         }
 
-        DeliverSpeech(character, message!.Trim(), round, turn, speechIndex);
+        DeliverSpeech(character, message!.Trim(), round, turn, speechIndex,
+            ToolArguments.GetString(call, CharacterTools.AddressedToParameter));
+        var routed = await RouteConversationAsync(character, message.Trim(), false, cancellationToken).ConfigureAwait(false);
 
         // Answer the say tool so the speaker's history stays valid; its own words are already present in
         // that history as the tool-call argument, so the result is only an acknowledgement.
         RecordToolResult(character, call,
-            "Your words carry across the room. You may still ask, act, or end your turn.");
+            routed ?? "Your words carry across the room. You may still ask, act, or end your turn.");
         return true;
     }
 
@@ -876,6 +906,7 @@ public sealed class TurnCoordinator
     private void DeliverSpeech(
         CharacterAgent character, string spoken, int round, int turn, int speechIndex, string? addressedToRef = null)
     {
+        _speechActsCurrent = Math.Max(_speechActsCurrent, speechIndex);
         // The declared addressee is resolved against the snapshot here and nowhere else. An unresolvable
         // name is treated as no addressee at all rather than as a refusal: a character calling somebody by a
         // name the world does not know has still spoken, and the room still hears it.
@@ -989,6 +1020,7 @@ public sealed class TurnCoordinator
         CancellationToken cancellationToken)
     {
         var intent = ToolArguments.GetString(call, CharacterTools.IntentParameter);
+        _surrenderConfirmed = string.Equals(ToolArguments.GetString(call, "surrender_self"), "true", StringComparison.OrdinalIgnoreCase);
 
         _trace.Emit(TraceEventType.ToolCallDispatched, new ToolCallDispatchPayload
         {
@@ -1014,9 +1046,12 @@ public sealed class TurnCoordinator
 
         _console.CharacterActs(character.Name, intent);
 
-        var outcome = await AdjudicateAsync(character, intent, cancellationToken).ConfigureAwait(false);
+        var conversationResult = await RouteConversationAsync(character, intent, true, cancellationToken).ConfigureAwait(false);
+        var outcome = conversationResult is null
+            ? await AdjudicateAsync(character, intent, cancellationToken).ConfigureAwait(false)
+            : new ActionAttemptOutcome { Category = ActionResolutionCategory.ConversationOnly, MessageToCharacter = conversationResult };
 
-        var messageToCharacter = outcome.ConsumesTurn
+        var messageToCharacter = outcome.ConsumesTurn || outcome.Category == ActionResolutionCategory.ConversationOnly
             ? outcome.MessageToCharacter
             : $"Your attempt did not happen. {outcome.MessageToCharacter} You may try something else.";
 
@@ -1067,6 +1102,11 @@ public sealed class TurnCoordinator
                 guidanceForDm += Environment.NewLine + widening;
             }
         }
+
+        candidateTools = [.. candidateTools ?? DungeonMasterTools.All, CharacterTools.Request];
+        guidanceForDm += "\nA conversational request is always allowed via request_character, even if no physical action fits. "
+            + "Deliver the request to its named recipient; never decide their answer. "
+            + "Offering a gift or bargain to make someone ELSE leave is not the speaker surrendering.";
 
         var response = await _dungeonMaster
             .ProposeActionAsync(stateText, character.Name, _actingKnowledgeView, intent, cancellationToken,
@@ -1155,6 +1195,7 @@ public sealed class TurnCoordinator
 
         return primary.Name switch
         {
+            CharacterTools.RequestName => HandleAdjudicatedRequest(character, intent, primary),
             DungeonMasterTools.RejectActionName =>
                 await HandleDungeonMasterRejection(character, intent, primary, cancellationToken).ConfigureAwait(false),
             DungeonMasterTools.AttackCharacterName or DungeonMasterTools.UseItemName
@@ -1297,6 +1338,14 @@ public sealed class TurnCoordinator
             EmitAdjudication(character, intent, failure.Category, ex.Message, null, null);
             _console.CharacterRefused(character.Name, failure.MessageToCharacter);
             return failure;
+        }
+
+        if (_limits.RequireSurrenderConfirmation && action is OfferSurrenderAction && !_surrenderConfirmed)
+        {
+            const string clarification = "That would offer YOUR surrender. If you truly mean to give up your own fight, confirm with surrender_self: true. If asking them to leave or proposing a trade, use request_character instead. Nothing changed.";
+            RecordDungeonMasterToolResult(call, clarification);
+            EmitAdjudication(character, intent, ActionResolutionCategory.DmUnsupported, clarification, action, null);
+            return new ActionAttemptOutcome { Category = ActionResolutionCategory.DmUnsupported, MessageToCharacter = clarification, Action = action };
         }
 
         // The Rulebook Resolver is stateless by design: it reads the intent and the cards and never sees the
@@ -1445,7 +1494,10 @@ public sealed class TurnCoordinator
             : null;
 
         // The engine, not the Dungeon Master, decides what actually happens.
-        var engineResult = _engine.Execute(action);
+        var engineResult = IsRedundantInspection(character.CharacterId, action)
+            ? EngineResult.Reject(action, _engine.State, EngineRejectionReason.NothingToInspect,
+                "You already know these markings and contents. Nothing observable has changed; choose something else without spending your turn.")
+            : _engine.Execute(action);
 
         // Every random draw the engine made, recorded in full before its consequence, so behaviour can
         // be compared and reproduced from the trace alone rather than inferred from the final result.
@@ -1513,6 +1565,7 @@ public sealed class TurnCoordinator
 
         if (!engineResult.Accepted)
         {
+            RememberFailure(character.CharacterId, action.Describe(), engineResult.RejectionMessage ?? "Refused.");
             // Rendered from the rejection CODE and the names already bound in the action — not from the
             // engine's operator-facing message, and not by asking a model to turn that message into fiction.
             // The old path did both, and every run found another phrasing the leak detector did not have,
@@ -2322,6 +2375,7 @@ public sealed class TurnCoordinator
     /// </summary>
     private async Task<string> DeliverInspectionAsync(CharacterAgent character, InspectObjectOutcome outcome, CancellationToken cancellationToken)
     {
+        RememberInspection(character.CharacterId, outcome.ObjectId);
         // Inspection does not change the world, so the observation is at the current version.
         var worldVersion = _engine.State.Version;
         var discoveredFactIds = new List<string>();

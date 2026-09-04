@@ -8,6 +8,7 @@ namespace ModelsAndMonsters.Orchestration;
 /// </summary>
 public enum ActionResolutionCategory
 {
+    ConversationOnly,
     /// <summary>DM_IMPOSSIBLE — not plausible for this character in this world. No engine call made.</summary>
     DmImpossible,
 
